@@ -4,69 +4,8 @@ Here are the python codes all 4 classes with docstring and descriptions of the e
 
 
 ```python
-from typing import List, Optional
-from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
 
-class Word(BaseModel):
-    """A Pydantic model representing a word in the text.
 
-    Attributes:
-        id (UUID): A unique identifier for the word.
-        content (str): The actual content of the word.
-        length (int): The number of characters in the word.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    content: str
-    length: int = len(content)
-
-class Sentence(BaseModel):
-    """A Pydantic model representing a sentence in the text.
-
-    Attributes:
-        id (UUID): A unique identifier for the sentence.
-        words (List[Word]): The list of words that make up this sentence.
-        length (int): The number of characters in the sentence.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    words: List[Word]
-    length: int = sum([word.length for word in words])
-
-class Paragraph(BaseModel):
-    """A Pydantic model representing a paragraph in the text.
-
-    Attributes:
-        id (UUID): A unique identifier for the paragraph.
-        sentences (List[Sentence]): The list of sentences that make up this paragraph.
-        length (int): The number of characters in the paragraph.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    sentences: List[Sentence]
-    length: int = sum([sentence.length for sentence in sentences])
-
-class Chapter(BaseModel):
-    """A Pydantic model representing a chapter in the text.
-
-    Attributes:
-        id (UUID): A unique identifier for the chapter.
-        paragraphs (List[Paragraph]): The list of paragraphs that make up this chapter.
-        length (int): The number of characters in the chapter.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    paragraphs: List[Paragraph]
-    length: int = sum([paragraph.length for paragraph in paragraphs])
-
-class Book(BaseModel):
-    """A Pydantic model representing a book.
-
-    Attributes:
-        id (UUID): A unique identifier for the book.
-        chapters (List[Chapter]): The list of chapters that make up this book.
-        length (int): The number of characters in the entire book.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    chapters: List[Chapter]
-    length: int = sum([chapter.length for chapter in chapters])
 ```
 
 In this example, we have created four Pydantic models representing different components of a book (Word, Sentence, Paragraph, and Chapter). Each model has its own unique identifier (UUID) and the ability to calculate its length based on the content it contains. The Book model is at the top level and holds references to all chapters in the book.

@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='Cynde',
+    name='Abstractions',
     packages=find_packages(),    
 )
