@@ -5,3 +5,6 @@ abstractions-venv/*
 dist/*
 build/*
 Abstractions.egg-info/*
+abstractions/__pycache__/*
+
+*.pyc
