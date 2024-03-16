@@ -66,8 +66,6 @@ class Shadow(BaseModel):
         for node in nodes:
             if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
                 raise ValueError(f"Node {node} is outside the specified shadow radius")
-            if node.blocks_light:
-                raise ValueError(f"Node {node} blocks light and should not be included in the shadow")
         return nodes
 
 class RayCast(BaseModel):
@@ -129,41 +127,45 @@ class Node(BaseModel, RegistryHolder):
     position: Position = Field(default_factory=Position, description="The position of the node")
     entities: List[GameEntity] = Field(default_factory=list, description="The game entities contained within the node")
     grid_map: Optional[GridMap] = Field(default=None, exclude=True, description="The grid map the node belongs to")
-
+    blocks_movement: bool = Field(default=False, description="Indicates if the node blocks movement")
+    blocks_light: bool = Field(default=False, description="Indicates if the node blocks light")
+    
     class Config(ConfigDict):
         arbitrary_types_allowed = True
-
+    
     def __init__(self, **data: Any):
         super().__init__(**data)
         self.register(self)
-
+    
     def __hash__(self):
         return hash(self.id)
-
+    
     def non_verbose_repr(self):
         return f"Node(id={self.id}, position={self.position.value})"
-
+    
     def add_entity(self, entity: GameEntity):
         self.entities.append(entity)
         entity.node = self
-
+        self.update_blocking_properties()
+    
     def remove_entity(self, entity: GameEntity):
         self.entities.remove(entity)
         entity.node = None
-
-    @property
-    def blocks_movement(self) -> bool:
-        return any(entity.blocks_movement.value for entity in self.entities)
-
-    @property
-    def blocks_light(self) -> bool:
-        return any(entity.blocks_light.value for entity in self.entities)
-
+        self.update_blocking_properties()
+    
+    def update_blocking_properties(self):
+        self.blocks_movement = any(entity.blocks_movement.value for entity in self.entities)
+        self.blocks_light = any(entity.blocks_light.value for entity in self.entities)
+    
+    def reset(self):
+        self.entities.clear()
+        self.blocks_movement = False
+        self.blocks_light = False
+    
     def neighbors(self) -> List[Node]:
         if self.grid_map:
             return self.grid_map.get_neighbors(self.position.value)
         return []
-    
 
 import heapq
 
@@ -279,50 +281,6 @@ class GridMap:
     def _get_distance(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:
         return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
-    def cast_light(self, origin: Tuple[int, int], max_radius: int, angle: float) -> List[Tuple[int, int]]:
-        x0, y0 = origin
-        x1 = x0 + int(max_radius * math.cos(angle))
-        y1 = y0 + int(max_radius * math.sin(angle))
-        dx, dy = abs(x1 - x0), abs(y1 - y0)
-        x, y = x0, y0
-        n = 1 + dx + dy
-        x_inc = 1 if x1 > x0 else -1
-        y_inc = 1 if y1 > y0 else -1
-        error = dx - dy
-        dx *= 2
-        dy *= 2
-        line_points = []
-        for _ in range(n):
-            if self._is_within_bounds((x, y)):
-                line_points.append((x, y))
-                if self.get_node((x, y)).blocks_light:
-                    break
-            if error > 0:
-                x += x_inc
-                error -= dy
-            else:
-                y += y_inc
-                error += dx
-        return line_points
-
-    def line(self, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:
-        dx, dy = end[0] - start[0], end[1] - start[1]
-        distance = math.sqrt(dx * dx + dy * dy)
-        angle = math.atan2(dy, dx)
-        return self.cast_light(start, math.ceil(distance), angle)
-
-    def line_of_sight(self, start: Tuple[int, int], end: Tuple[int, int]) -> Tuple[bool, List[Tuple[int, int]]]:
-        line_points = self.line(start, end)
-        visible_points = []
-        for point in line_points:
-            if point == end:
-                return True, visible_points
-            if self.get_node(point).blocks_light:
-                return False, visible_points
-            visible_points.append(point)
-        return True, visible_points
-
-    
 
     def raycast(self, source: Node, target: Node) -> Tuple[bool, List[Node]]:
         start = source.position.value
@@ -345,16 +303,59 @@ class GridMap:
     def shadow_casting(self, origin: Tuple[int, int], max_radius: int = None) -> List[Tuple[int, int]]:
         max_radius = max_radius or max(self.width, self.height)
         visible_cells = [origin]
-        step_size = 0.5
-        for angle in range(int(360 / step_size)):
-            has_path, path_cells = self.line_of_sight(origin, (origin[0] + int(max_radius * math.cos(math.radians(angle * step_size))), origin[1] + int(max_radius * math.sin(math.radians(angle * step_size)))))
-            if has_path:
-                visible_cells.extend(path_cells)
-        visible_cells = list(set(visible_cells))
+        step_size = 0.5  # Decrease the step size for better accuracy
+        for angle in range(int(360 / step_size)):  # Adjust the loop range based on the new step size
+            visible_cells.extend(self.cast_light(origin, max_radius, math.radians(angle * step_size)))
+        visible_cells = list(set(visible_cells))  # Take only unique values of visible cells
         return visible_cells
+
+    def cast_light(self, origin: Tuple[int, int], max_radius: int, angle: float) -> List[Tuple[int, int]]:
+        x0, y0 = origin
+        x1 = x0 + int(max_radius * math.cos(angle))
+        y1 = y0 + int(max_radius * math.sin(angle))
+        dx, dy = abs(x1 - x0), abs(y1 - y0)
+        x, y = x0, y0
+        n = 1 + dx + dy
+        x_inc = 1 if x1 > x0 else -1
+        y_inc = 1 if y1 > y0 else -1
+        error = dx - dy
+        dx *= 2
+        dy *= 2
+        line_points = []
+        first_iteration = True
+        for _ in range(n):
+            if self._is_within_bounds((x, y)):
+                line_points.append((x, y))
+                if not first_iteration and self.get_node((x, y)).blocks_light:
+                    break
+            first_iteration = False
+            if error > 0:
+                x += x_inc
+                error -= dy
+            else:
+                y += y_inc
+                error += dx
+        return line_points
+
+    def line(self, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        distance = math.sqrt(dx * dx + dy * dy)
+        angle = math.atan2(dy, dx)
+        return self.cast_light(start, math.ceil(distance), angle)
+
+    def line_of_sight(self, start: Tuple[int, int], end: Tuple[int, int]) -> Tuple[bool, List[Tuple[int, int]]]:
+        line_points = self.line(start, end)
+        visible_points = []
+        for point in line_points[1:]:  # Skip the starting point and iterate through the rest of the points
+            if self.get_node(point).blocks_light:
+                return False, visible_points
+            else:
+                visible_points.append(point)
+        return True, visible_points
 
     def get_shadow(self, source: Node, max_radius: int) -> Shadow:
         visible_cells = self.shadow_casting(source.position.value, max_radius)
+        print(visible_cells)
         nodes = [self.get_node(cell) for cell in visible_cells]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
 
@@ -380,8 +381,8 @@ class GridMap:
                     row += "\033[92m+\033[0m "  # Green color for shadow
                 elif raycast and node in raycast.nodes:
                     row += "\033[92mR\033[0m "  # Green color for raycast
-                elif node.entities:
-                    row += "E "
+                # elif node.entities:
+                #     row += "E "
                 else:
                     row += ". "
             print(row)
