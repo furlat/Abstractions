@@ -206,14 +206,17 @@ class GridMap:
                 node = self.grid[x][y]
                 if node.blocks_movement:
                     row += "# "
+                elif path and node == path.nodes[0]:
+                    row += "\033[92mS\033[0m "  # Green color for start
+                elif path and node == path.nodes[-1]:
+                    row += "\033[91mG\033[0m "  # Red color for goal
                 elif path and node in path.nodes:
-                    row += "* "
+                    row += "\033[93m*\033[0m "  # Orange color for path
                 elif node.entities:
                     row += "E "
                 else:
                     row += ". "
             print(row)
-
     def get_nodes_in_radius(self, position: Tuple[int, int], radius: int) -> List[Node]:
         x, y = position
         nodes = []
