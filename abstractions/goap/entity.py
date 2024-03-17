@@ -58,7 +58,7 @@ class Entity(BaseModel, RegistryHolder):
     
     @field_validator('*', mode='after')
     def check_attributes_and_entities(cls, v: Any, info: ValidationInfo):
-        if info.field_name not in ['id', 'name'] and not isinstance(v, (Attribute, Entity)):
+        if info.field_name not in ['id', 'name',"node"] and not isinstance(v, (Attribute, Entity)):
             raise ValueError(f"Attributes must be instances of Attribute or Entity, got {type(v).__name__} for field {info.field_name}")
         return v
 

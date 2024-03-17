@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
 from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict
-from pydantic import Field, BaseModel, validator, ConfigDict
+from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
 import uuid
 import math
 
@@ -91,6 +91,8 @@ class RayCast(BaseModel):
                 if node.blocks_light:
                     raise ValueError(f"Node {node} blocks vision along the raycast path")
         return nodes
+
+
 class GameEntity(Entity):
     blocks_movement: BlocksMovement = Field(default_factory=BlocksMovement, description="Attribute indicating if the entity blocks movement")
     blocks_light: BlocksLight = Field(default_factory=BlocksLight, description="Attribute indicating if the entity blocks light")
@@ -110,6 +112,13 @@ class GameEntity(Entity):
         if self.node:
             self.node.remove_entity(self)
             self.node = None
+
+    def update_attributes(self, attributes: Dict[str, Attribute]) -> "GameEntity":
+        updated_entity = self.__class__(id=self.id, **attributes)
+        if self.node:
+            updated_entity.set_node(self.node)
+            self.node.update_entity(self, updated_entity)
+        return updated_entity
 
     def __repr__(self):
         attrs = {}
@@ -166,6 +175,11 @@ class Node(BaseModel, RegistryHolder):
         if self.grid_map:
             return self.grid_map.get_neighbors(self.position.value)
         return []
+    
+    def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
+        print(f"Updating entity {old_entity} to {new_entity}")
+        self.remove_entity(old_entity)
+        self.add_entity(new_entity)
 
 import heapq
 
