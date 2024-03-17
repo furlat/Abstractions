@@ -177,7 +177,6 @@ class Node(BaseModel, RegistryHolder):
         return []
     
     def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
-        print(f"Updating entity {old_entity} to {new_entity}")
         self.remove_entity(old_entity)
         self.add_entity(new_entity)
 

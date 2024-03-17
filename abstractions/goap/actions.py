@@ -54,11 +54,9 @@ class Action(BaseModel):
             updated_source = source
 
         if updated_target != target:
-            print("Target is updated")
             self.propagate_spatial_consequences(updated_source, updated_target)
             self.propagate_inventory_consequences(updated_source, updated_target)
         else:
-            print("Target is not updated")
             updated_target = target
 
         return updated_source, updated_target
