@@ -2,10 +2,10 @@ import os
 import pygame
 import random
 from pydantic import BaseModel, Field
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Union
 from enum import Enum
 from pathlib import Path
-from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node
+from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius
 from abstractions.goap.entity import RegistryHolder
 
 
@@ -14,6 +14,12 @@ class CameraControl(BaseModel):
     move: Tuple[int, int] = (0, 0)
     zoom: int = 0
     recenter: bool = False
+    toggle_path: bool = False
+    toggle_shadow: bool = False
+    toggle_raycast: bool = False
+    toggle_radius: bool = False
+    toggle_ascii: bool = False
+    toggle_fov: bool = False
 
 class InputHandler:
     def __init__(self):
@@ -35,6 +41,18 @@ class InputHandler:
                 self.camera_control.move = (0, 1)  # Move camera down
             elif event.key == pygame.K_SPACE:
                 self.camera_control.recenter = True  # Recenter the camera on the player
+            elif event.key == pygame.K_p:
+                self.camera_control.toggle_path = True
+            elif event.key == pygame.K_s:
+                self.camera_control.toggle_shadow = True
+            elif event.key == pygame.K_c:
+                self.camera_control.toggle_raycast = True
+            elif event.key == pygame.K_r:
+                self.camera_control.toggle_radius = True
+            elif event.key == pygame.K_q:
+                self.camera_control.toggle_ascii = True
+            elif event.key == pygame.K_f:
+                self.camera_control.toggle_fov = True
 
     def reset(self):
         self.camera_control = CameraControl()
@@ -74,8 +92,13 @@ class Renderer:
         self.grid_surface = pygame.Surface((grid_map_visual.width * cell_size, grid_map_visual.height * cell_size))
         self.grid_surface.convert()
         self.font = pygame.font.Font(None, cell_size)
+        self.fov_mode = False
+        self.show_path = False
+        self.show_shadow = False
+        self.show_raycast = False
+        self.show_radius = False
 
-    def render(self, camera_control: CameraControl):
+    def render(self, camera_control: CameraControl, path: Optional[Path] = None, shadow: Optional[Shadow] = None, raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,fov_vision: Optional[Union[Shadow, Radius]] = None):
         # Update camera position based on camera control
         self.camera_pos[0] = max(0, min(self.grid_map_visual.width - 1, self.camera_pos[0] + camera_control.move[0]))
         self.camera_pos[1] = max(0, min(self.grid_map_visual.height - 1, self.camera_pos[1] + camera_control.move[1]))
@@ -90,6 +113,9 @@ class Renderer:
         if camera_control.recenter:
             self.center_camera_on_player()
 
+        if camera_control.toggle_ascii:
+            self.ascii_mode = not self.ascii_mode
+
         self.grid_surface.fill((0, 0, 0))  # Clear the grid surface
 
         # Calculate the visible range based on the camera position and screen size
@@ -98,31 +124,88 @@ class Renderer:
         end_x = min(self.grid_map_visual.width, start_x + self.screen.get_width() // self.cell_size + 1)
         end_y = min(self.grid_map_visual.height, start_y + self.screen.get_height() // self.cell_size + 1)
 
+        if camera_control.toggle_fov:
+            self.fov_mode = not self.fov_mode
+
         for x in range(start_x, end_x):
             for y in range(start_y, end_y):
                 position = (x, y)
                 if position in self.grid_map_visual.node_visuals:
                     node_visual = self.grid_map_visual.node_visuals[position]
+                    if not self.fov_mode or (fov_vision and position in [node.position.value for node in fov_vision.nodes]):
+                        screen_x = (x - start_x) * self.cell_size
+                        screen_y = (y - start_y) * self.cell_size
+
+                        if self.ascii_mode:
+                            if node_visual.entity_visuals:
+                                # Draw the most salient entity in ASCII mode
+                                ascii_char = node_visual.entity_visuals[0].ascii_char
+                                ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
+                                ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
+                                self.grid_surface.blit(ascii_surface, ascii_rect)
+                        else:
+                            # Draw all entities in sprite mode (in opposite salience order)
+                            for entity_visual in reversed(node_visual.entity_visuals):
+                                sprite_path = entity_visual.sprite_path
+                                sprite_surface = self.load_sprite(sprite_path)
+                                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
+                                self.grid_surface.blit(scaled_sprite_surface, (screen_x, screen_y))
+        if camera_control.toggle_path:
+            self.show_path = not self.show_path
+        if camera_control.toggle_shadow:
+            self.show_shadow = not self.show_shadow
+        if camera_control.toggle_raycast:
+            self.show_raycast = not self.show_raycast
+        if camera_control.toggle_radius:
+            self.show_radius = not self.show_radius
+        # Draw path
+        if self.show_path and path:
+            for node in path.nodes:
+                x, y = node.position.value
+                if start_x <= x < end_x and start_y <= y < end_y:
                     screen_x = (x - start_x) * self.cell_size
                     screen_y = (y - start_y) * self.cell_size
+                    pygame.draw.rect(self.grid_surface, (0, 255, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
 
-                    if self.ascii_mode:
-                        if node_visual.entity_visuals:
-                            # Draw the most salient entity in ASCII mode
-                            ascii_char = node_visual.entity_visuals[0].ascii_char
-                            ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
-                            self.grid_surface.blit(ascii_surface, (screen_x, screen_y))
-                    else:
-                        # Draw all entities in sprite mode (in opposite salience order)
-                        for entity_visual in reversed(node_visual.entity_visuals):
-                            sprite_path = entity_visual.sprite_path
-                            sprite_surface = self.load_sprite(sprite_path)
-                            scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
-                            self.grid_surface.blit(scaled_sprite_surface, (screen_x, screen_y))
+        # Draw shadow
+        if self.show_shadow and shadow:
+            for node in shadow.nodes:
+                x, y = node.position.value
+                if start_x <= x < end_x and start_y <= y < end_y:
+                    screen_x = (x - start_x) * self.cell_size
+                    screen_y = (y - start_y) * self.cell_size
+                    pygame.draw.rect(self.grid_surface, (255, 255, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
+
+        # Draw raycast
+        if self.show_raycast and raycast:
+            for node in raycast.nodes:
+                x, y = node.position.value
+                if start_x <= x < end_x and start_y <= y < end_y:
+                    screen_x = (x - start_x) * self.cell_size
+                    screen_y = (y - start_y) * self.cell_size
+                    pygame.draw.rect(self.grid_surface, (255, 0, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
+
+        # Draw radius
+        if self.show_radius and radius:
+            for node in radius.nodes:
+                x, y = node.position.value
+                if start_x <= x < end_x and start_y <= y < end_y:
+                    screen_x = (x - start_x) * self.cell_size
+                    screen_y = (y - start_y) * self.cell_size
+                    pygame.draw.rect(self.grid_surface, (0, 0, 255), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
 
         self.screen.blit(self.grid_surface, (0, 0))
         pygame.display.flip()
 
+    def get_node_at_mouse_position(self, mouse_position: Tuple[int, int], grid_map: GridMap) -> Optional[Node]:
+        x, y = mouse_position
+        start_x = max(0, self.camera_pos[0] - self.screen.get_width() // (2 * self.cell_size))
+        start_y = max(0, self.camera_pos[1] - self.screen.get_height() // (2 * self.cell_size))
+        grid_x = start_x + x // self.cell_size
+        grid_y = start_y + y // self.cell_size
+        if 0 <= grid_x < grid_map.width and 0 <= grid_y < grid_map.height:
+            return grid_map.get_node((grid_x, grid_y))
+        return None
 
     def center_camera_on_player(self):
         player_position = self.find_player_position()
@@ -272,7 +355,14 @@ player = GameEntity(name="Player")
 goal = GameEntity(name="Goal")
 grid_map.get_node(player_pos).add_entity(player)
 grid_map.get_node(goal_pos).add_entity(goal)
-
+# Precompute payloads
+start_node = grid_map.get_node(player_pos)
+goal_node = grid_map.get_node(goal_pos)
+path = grid_map.a_star(start_node, goal_node)
+shadow = grid_map.get_shadow(start_node, max_radius=10)
+fov_vision = shadow 
+raycast = grid_map.get_raycast(start_node, shadow.nodes[-1])
+radius = grid_map.get_radius(start_node, max_radius=5)
 # Generate the payload
 payload = PayloadGenerator.generate_payload()
 
@@ -289,16 +379,28 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                renderer.ascii_mode = not renderer.ascii_mode
-            else:
-                input_handler.handle_input(event)
-
-    renderer.render(input_handler.camera_control)
+            input_handler.handle_input(event)
+        elif event.type == pygame.MOUSEMOTION:
+            mouse_pos = pygame.mouse.get_pos()
+            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
+            if target_node:
+                try:
+                    print(f'trying to pathfind to {target_node.position}')
+                    path = grid_map.a_star(start_node, target_node)
+                except Exception as e:
+                    print(f"pathfind failed: {str(e)}")
+                    path = None
+                try:
+                    print('trying to raycast')
+                    raycast = grid_map.get_raycast(start_node, target_node)
+                except Exception as e:
+                    print(f"raycast failed: {str(e)}")
+                    raycast = None
+    
+    renderer.render(input_handler.camera_control, path=path, shadow=shadow, raycast=raycast, radius=radius, fov_vision=fov_vision)
     input_handler.reset()
-
     clock.tick(60)  # Limit the frame rate to 60 FPS
-
+    
     # Display FPS
     fps = clock.get_fps()
     fps_text = renderer.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))
