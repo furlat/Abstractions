@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 from typing import Dict, Tuple, Optional, List, Union
 from enum import Enum
 from pathlib import Path
-from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius
+from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius, ActionsPayload, ActionInstance
 from abstractions.goap.entity import RegistryHolder
+from abstractions.goap.movement import MoveStep, Character
 
 from abstractions.goap.procedural import generate_dungeon
 
@@ -24,8 +25,9 @@ class CameraControl(BaseModel):
 class InputHandler:
     def __init__(self):
         self.camera_control = CameraControl()
+        self.actions_payload = ActionsPayload(actions=[])
 
-    def handle_input(self, event):
+    def handle_input(self, event, player_id: Optional[str] = None):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_1:
                 self.camera_control.zoom = 1  # Zoom in
@@ -43,7 +45,7 @@ class InputHandler:
                 self.camera_control.recenter = True  # Recenter the camera on the player
             elif event.key == pygame.K_p:
                 self.camera_control.toggle_path = True
-            elif event.key == pygame.K_s:
+            elif event.key == pygame.K_t:
                 self.camera_control.toggle_shadow = True
             elif event.key == pygame.K_c:
                 self.camera_control.toggle_raycast = True
@@ -53,9 +55,63 @@ class InputHandler:
                 self.camera_control.toggle_ascii = True
             elif event.key == pygame.K_f:
                 self.camera_control.toggle_fov = True
+            elif event.key == pygame.K_w and player_id: 
+                self.generate_move_step(player_id, (0, -1))  # Move up
+            elif event.key == pygame.K_s and player_id:
+                self.generate_move_step(player_id, (0, 1))  # Move down
+            elif event.key == pygame.K_a and player_id:
+                self.generate_move_step(player_id, (-1, 0))  # Move left
+            elif event.key == pygame.K_d and player_id:
+                self.generate_move_step(player_id, (1, 0))  # Move right
+
+    def handle_mouse_click(self, event, player_id, grid_map: GridMap, renderer: 'Renderer'):
+        if event.button == 3:  # Right mouse button
+            mouse_pos = pygame.mouse.get_pos()
+            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
+            if target_node:
+                player = GameEntity.get_instance(player_id)
+                start_node = player.node
+                path = grid_map.a_star(start_node, target_node)
+                if path:
+                    move_actions = self.generate_move_actions(player_id, path)
+                    return move_actions
+        return []
+
+    def generate_move_actions(self, player_id, path):
+        move_actions = []
+        for i in range(len(path.nodes) - 1):
+            source_node = path.nodes[i]
+            target_node = path.nodes[i + 1]
+            floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
+            if floor_entities:
+                target_id = floor_entities[0].id
+                move_action = ActionInstance(source_id=player_id, target_id=target_id, action=MoveStep())
+                move_actions.append(move_action)
+        return move_actions
+    
+    def generate_move_step(self, player_id, direction):
+        player = GameEntity.get_instance(player_id)
+        current_node = player.node
+        target_position = (current_node.position.x + direction[0], current_node.position.y + direction[1])
+        target_node = current_node.grid_map.get_node(target_position)
+        if target_node:
+            floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
+            if floor_entities:
+                target_id = floor_entities[0].id
+                move_action = ActionInstance(source_id=player_id, target_id=target_id, action=MoveStep())
+                self.actions_payload.actions.append(move_action)
+
+    def reset_actions_payload(self):
+        self.actions_payload = ActionsPayload(actions=[])
+    
+    def reset_camera_control(self):
+        self.camera_control = CameraControl()
 
     def reset(self):
-        self.camera_control = CameraControl()
+        self.reset_actions_payload()
+        # self.camera_control.recenter = False
+        
+    
 
 class EntityType(Enum):
     FLOOR = "floor"
@@ -97,6 +153,13 @@ class Renderer:
         self.show_shadow = False
         self.show_raycast = False
         self.show_radius = False
+
+    def update_grid_map_visual(self, grid_map_visual: GridMapVisual):
+        self.grid_map_visual = grid_map_visual
+
+    def update_player_position(self, player_position: Tuple[int, int]):
+        self.camera_pos = list(player_position)
+
 
     def render(self, camera_control: CameraControl, path: Optional[Path] = None, shadow: Optional[Shadow] = None, raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,fov_vision: Optional[Union[Shadow, Radius]] = None):
         # Update camera position based on camera control
@@ -207,11 +270,13 @@ class Renderer:
             return grid_map.get_node((grid_x, grid_y))
         return None
 
+    def update_camera_position(self, player_position: Tuple[int, int]):
+        self.camera_pos = list(player_position)
+
     def center_camera_on_player(self):
         player_position = self.find_player_position()
         if player_position:
-            self.camera_pos = list(player_position)
-
+            self.update_camera_position(player_position)
     def find_player_position(self) -> Optional[Tuple[int, int]]:
         for position, node_visual in self.grid_map_visual.node_visuals.items():
             for entity_visual in node_visual.entity_visuals:
@@ -315,7 +380,7 @@ floor_tiles = [(x, y) for x in range(grid_map.width) for y in range(grid_map.hei
 player_pos, goal_pos = random.sample(floor_tiles, 2)
 
 # Place the player and goal entities
-player = GameEntity(name="Player")
+player = Character(name="Player")
 goal = GameEntity(name="Goal")
 grid_map.get_node(player_pos).add_entity(player)
 grid_map.get_node(goal_pos).add_entity(goal)
@@ -338,33 +403,66 @@ input_handler = InputHandler()
 
 clock = pygame.time.Clock()
 running = True
+move_actions = []
+action_index = 0
+
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.KEYDOWN:
-            input_handler.handle_input(event)
+            input_handler.handle_input(event, player.id)
         elif event.type == pygame.MOUSEMOTION:
             mouse_pos = pygame.mouse.get_pos()
             target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
             if target_node:
                 try:
                     print(f'trying to pathfind to {target_node.position}')
+                    start_node = grid_map.get_node(player_pos)
                     path = grid_map.a_star(start_node, target_node)
                 except Exception as e:
                     print(f"pathfind failed: {str(e)}")
                     path = None
                 try:
                     print('trying to raycast')
+                    start_node = grid_map.get_node(player_pos)
                     raycast = grid_map.get_raycast(start_node, target_node)
                 except Exception as e:
                     print(f"raycast failed: {str(e)}")
                     raycast = None
-    
-    renderer.render(input_handler.camera_control, path=path, shadow=shadow, raycast=raycast, radius=radius, fov_vision=fov_vision)
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            move_actions = input_handler.handle_mouse_click(event, player.id, grid_map, renderer)
+            action_index = 0
+
+    print(input_handler.actions_payload)
+
+    if move_actions and action_index < len(move_actions):
+        action = move_actions[action_index]
+        actions_payload = ActionsPayload(actions=[action])
+        actions_results = grid_map.apply_actions_payload(actions_payload)
+        if actions_results.results and actions_results.results[0].success:
+            updated_player = GameEntity.get_instance(player.id)
+            player_pos = updated_player.node.position.value
+            radius = grid_map.get_radius(grid_map.get_node(player_pos), max_radius=10)
+            shadow = grid_map.get_shadow(grid_map.get_node(player_pos), max_radius=10)
+            payload = PayloadGenerator.generate_payload()
+            renderer.update_grid_map_visual(payload)
+            action_index += 1
+    else:
+        actions_results = grid_map.apply_actions_payload(input_handler.actions_payload)
+        if actions_results.results and actions_results.results[0].success:
+            updated_player = GameEntity.get_instance(player.id)
+            player_pos = updated_player.node.position.value
+            radius = grid_map.get_radius(grid_map.get_node(player_pos), max_radius=10)
+            shadow = grid_map.get_shadow(grid_map.get_node(player_pos), max_radius=10)
+            payload = PayloadGenerator.generate_payload()
+            renderer.update_grid_map_visual(payload)
+
+    renderer.render(input_handler.camera_control, path=path, shadow=shadow, raycast=raycast, radius=radius, fov_vision=shadow)
+    input_handler.reset_camera_control()
     input_handler.reset()
     clock.tick(60)  # Limit the frame rate to 60 FPS
-    
+
     # Display FPS
     fps = clock.get_fps()
     fps_text = renderer.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))

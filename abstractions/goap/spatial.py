@@ -132,29 +132,22 @@ class GameEntity(Entity):
             self.node = None
 
     def update_attributes(self, attributes: Dict[str, Union[Attribute, Node]]) -> "GameEntity":
-        updated_attributes = {}
+        updated_attributes = {"name": self.name}  # Preserve the name attribute
         new_node = None
         for attr_name, value in attributes.items():
             if attr_name == "node" and isinstance(value, Node):
                 new_node = value
-                # print(f"new node: {new_node}")
             elif isinstance(value, Attribute):
                 updated_attributes[attr_name] = value
-
-        updated_entity = self.__class__(id=self.id, **updated_attributes)
-
         if new_node:
-            
             if self.node:
-                self.node.remove_entity(self)
-            new_node.add_entity(updated_entity)
-            
-            updated_entity.set_node(new_node)
-        elif self.node:
-            updated_entity.set_node(self.node)
-            self.node.update_entity(self, updated_entity)
+                self.node.remove_entity(self)  # Remove the entity from its current node
+            new_node.add_entity(self)  # Add the entity to the new node
+            self.node = new_node  # Update the entity's node reference
+        for attr_name, value in updated_attributes.items():
+            setattr(self, attr_name, value)  # Update the entity's attributes
+        return self
 
-        return updated_entity
     
     def __repr__(self):
         attrs = {}
@@ -409,6 +402,8 @@ class GridMap:
     
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
+        if len(payload.actions) >0:
+            print(f"Applying {len(payload.actions)} actions")
         for action_instance in payload.actions:
             source = GameEntity.get_instance(action_instance.source_id)
             target = GameEntity.get_instance(action_instance.target_id)
