@@ -1,12 +1,13 @@
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
-from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict
+from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union
 from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
 import uuid
 import math
 
 if TYPE_CHECKING:
-    from abstractions.goap.spatial import Node
+    # from abstractions.goap.spatial import Node
+    from abstractions.goap.actions import Action
 
 class Position(Attribute):
     value: Tuple[int, int] = Field(default=(0, 0), description="The (x, y) coordinates of the entity")
@@ -91,6 +92,23 @@ class RayCast(BaseModel):
                 if node.blocks_light:
                     raise ValueError(f"Node {node} blocks vision along the raycast path")
         return nodes
+    
+
+class ActionInstance(BaseModel):
+    source_id: str
+    target_id: str
+    action: Action
+
+class ActionsPayload(BaseModel):
+    actions: List[ActionInstance]
+
+class ActionResult(BaseModel):
+    action_instance: ActionInstance
+    success: bool
+    error: str = None
+
+class ActionsResults(BaseModel):
+    results: List[ActionResult]
 
 
 class GameEntity(Entity):
@@ -113,13 +131,31 @@ class GameEntity(Entity):
             self.node.remove_entity(self)
             self.node = None
 
-    def update_attributes(self, attributes: Dict[str, Attribute]) -> "GameEntity":
-        updated_entity = self.__class__(id=self.id, **attributes)
-        if self.node:
+    def update_attributes(self, attributes: Dict[str, Union[Attribute, Node]]) -> "GameEntity":
+        updated_attributes = {}
+        new_node = None
+        for attr_name, value in attributes.items():
+            if attr_name == "node" and isinstance(value, Node):
+                new_node = value
+                # print(f"new node: {new_node}")
+            elif isinstance(value, Attribute):
+                updated_attributes[attr_name] = value
+
+        updated_entity = self.__class__(id=self.id, **updated_attributes)
+
+        if new_node:
+            
+            if self.node:
+                self.node.remove_entity(self)
+            new_node.add_entity(updated_entity)
+            
+            updated_entity.set_node(new_node)
+        elif self.node:
             updated_entity.set_node(self.node)
             self.node.update_entity(self, updated_entity)
-        return updated_entity
 
+        return updated_entity
+    
     def __repr__(self):
         attrs = {}
         for key, value in self.__dict__.items():
@@ -368,10 +404,41 @@ class GridMap:
 
     def get_shadow(self, source: Node, max_radius: int) -> Shadow:
         visible_cells = self.shadow_casting(source.position.value, max_radius)
-        print(visible_cells)
         nodes = [self.get_node(cell) for cell in visible_cells]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
-
+    
+    def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
+        results = []
+        for action_instance in payload.actions:
+            source = GameEntity.get_instance(action_instance.source_id)
+            target = GameEntity.get_instance(action_instance.target_id)
+            action = action_instance.action
+            
+            if action.is_applicable(source, target):
+                try:
+                    updated_source, updated_target = action.apply(source, target)
+                    results.append(ActionResult(action_instance=action_instance, success=True))
+                except ValueError as e:
+                    results.append(ActionResult(action_instance=action_instance, success=False, error=str(e)))
+                    break
+            else:
+                # Check which prerequisite failed and provide a detailed error message
+                failed_prerequisites = []
+                for statement in action.prerequisites.source_statements:
+                    if not statement.validate_condition(source):
+                        failed_prerequisites.append(f"Source prerequisite failed: {statement}")
+                for statement in action.prerequisites.target_statements:
+                    if not statement.validate_condition(target):
+                        failed_prerequisites.append(f"Target prerequisite failed: {statement}")
+                for statement in action.prerequisites.source_target_statements:
+                    if not statement.validate_comparisons(source, target):
+                        failed_prerequisites.append(f"Source-Target prerequisite failed: {statement}")
+                
+                error_message = "Prerequisites not met:\n" + "\n".join(failed_prerequisites)
+                results.append(ActionResult(action_instance=action_instance, success=False, error=error_message))
+                break
+    
+        return ActionsResults(results=results)
     
     def print_grid(self, path: Optional[Path] = None, radius: Optional[Radius] = None, shadow: Optional[Shadow] = None, raycast: Optional[RayCast] = None):
         for y in range(self.height):

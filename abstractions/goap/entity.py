@@ -112,7 +112,11 @@ class Statement(BaseModel, RegistryHolder):
             target_value = getattr(target, target_attr, None)
             if source_value is None or target_value is None:
                 return False
-            if not comparison_func(source_value.value, target_value.value):
+            elif source_attr == "node" and target_attr == "node":
+                if not comparison_func(source_value, target_value):
+                    return False
+                return True
+            elif not comparison_func(source_value.value, target_value.value):
                 return False
         return True
     

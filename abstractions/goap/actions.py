@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Tuple, Callable, Any
 from pydantic import BaseModel, Field
 from abstractions.goap.entity import Entity, Statement, Attribute
-from abstractions.goap.spatial import GameEntity
+from abstractions.goap.spatial import GameEntity, ActionInstance, Node
 
 class Prerequisites(BaseModel):
     source_statements: List[Statement] = Field(default_factory=list, description="Statements involving only the source entity")
@@ -16,23 +16,47 @@ class Prerequisites(BaseModel):
 class Consequences(BaseModel):
     source_transformations: Dict[str, Any] = Field(default_factory=dict, description="Attribute transformations for the source entity")
     target_transformations: Dict[str, Any] = Field(default_factory=dict, description="Attribute transformations for the target entity")
-
+   
     def apply(self, source: Entity, target: Entity) -> Tuple[Entity, Entity]:
-        updated_source_attributes = {attr_name: Attribute(name=attr_name, value=value) for attr_name, value in self.source_transformations.items()}
-        updated_target_attributes = {attr_name: Attribute(name=attr_name, value=value) for attr_name, value in self.target_transformations.items()}
-
+        updated_source_attributes = {}
+        updated_target_attributes = {}
+       
+        for attr_name, value in self.source_transformations.items():
+            if callable(value):
+                result = value(source=source, target=target)
+                if attr_name == "node" and isinstance(result, Node):
+                    updated_source_attributes[attr_name] = result
+                else:
+                    updated_source_attributes[attr_name] = Attribute(name=attr_name, value=result)
+            elif attr_name == "node" and isinstance(value, Node):
+                updated_source_attributes[attr_name] = value
+            else:
+                updated_source_attributes[attr_name] = Attribute(name=attr_name, value=value)
+       
+        for attr_name, value in self.target_transformations.items():
+            if callable(value):
+                result = value(source=source, target=target)
+                if attr_name == "node" and isinstance(result, Node):
+                    updated_target_attributes[attr_name] = result
+                else:
+                    updated_target_attributes[attr_name] = Attribute(name=attr_name, value=result)
+            elif attr_name == "node" and isinstance(value, Node):
+                updated_target_attributes[attr_name] = value
+            else:
+                updated_target_attributes[attr_name] = Attribute(name=attr_name, value=value)
+       
         if isinstance(source, GameEntity):
             updated_source = source.update_attributes(updated_source_attributes)
         else:
             updated_source = source
-
+       
         if isinstance(target, GameEntity):
             updated_target = target.update_attributes(updated_target_attributes)
         else:
             updated_target = target
-
+       
         return updated_source, updated_target
-
+    
 class Action(BaseModel):
     name: str = Field("", description="The name of the action")
     prerequisites: Prerequisites = Field(default_factory=Prerequisites, description="The prerequisite conditions for the action")
@@ -68,3 +92,4 @@ class Action(BaseModel):
     def propagate_inventory_consequences(self, source: Entity, target: Entity) -> None:
         # Implement inventory consequence propagation logic here
         pass
+ActionInstance.model_rebuild()
