@@ -2,6 +2,7 @@ from abstractions.goap.actions import Action, Prerequisites, Consequences
 from abstractions.goap.entity import Attribute, Statement
 from abstractions.goap.spatial import GameEntity, Node
 from typing import Callable
+from typing import Dict, Tuple, Optional, List, Union
 
 def source_node_comparison(source: Node, target: Node) -> bool:
 
