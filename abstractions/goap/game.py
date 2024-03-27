@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius, ActionsPayload, ActionInstance
 from abstractions.goap.entity import RegistryHolder
-from abstractions.goap.movement import MoveStep, Character
+from abstractions.goap.interactions import MoveStep, Character
 
 from abstractions.goap.procedural import generate_dungeon
 
