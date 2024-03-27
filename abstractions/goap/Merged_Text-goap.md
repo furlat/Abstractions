@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-03-27T15:44:23.000725`
+- Created: `2024-03-27T19:08:55.942489`
 
 ## init
 
@@ -35,52 +35,67 @@ class Consequences(BaseModel):
     def apply(self, source: Entity, target: Entity) -> Tuple[Entity, Entity]:
         updated_source_attributes = {}
         updated_target_attributes = {}
-       
+
         for attr_name, value in self.source_transformations.items():
             if callable(value):
                 result = value(source=source, target=target)
                 if attr_name == "node" and isinstance(result, Node):
-                    updated_source_attributes[attr_name] = result
+                    updated_source_attributes[attr_name] = result.id  # Store the ID of the Node
+                elif attr_name == "stored_in" and (isinstance(result, GameEntity) or result is None):
+                    updated_source_attributes[attr_name] = result.id if result else None  # Store the ID of the entity or None
+                elif attr_name == "inventory":
+                    updated_source_attributes[attr_name] = [item.id for item in result]  # Store the IDs of the entities in the inventory
                 else:
                     updated_source_attributes[attr_name] = Attribute(name=attr_name, value=result)
             elif attr_name == "node" and isinstance(value, Node):
-                updated_source_attributes[attr_name] = value
+                updated_source_attributes[attr_name] = value.id  # Store the ID of the Node
+            elif attr_name == "stored_in" and (isinstance(value, GameEntity) or value is None):
+                updated_source_attributes[attr_name] = value.id if value else None  # Store the ID of the entity or None
+            elif attr_name == "inventory":
+                updated_source_attributes[attr_name] = [item.id for item in value]  # Store the IDs of the entities in the inventory
             else:
                 updated_source_attributes[attr_name] = Attribute(name=attr_name, value=value)
-       
+
         for attr_name, value in self.target_transformations.items():
             if callable(value):
                 result = value(source=source, target=target)
                 if attr_name == "node" and isinstance(result, Node):
-                    updated_target_attributes[attr_name] = result
+                    updated_target_attributes[attr_name] = result.id  # Store the ID of the Node
+                elif attr_name == "stored_in" and (isinstance(result, GameEntity) or result is None):
+                    updated_target_attributes[attr_name] = result.id if result else None  # Store the ID of the entity or None
+                elif attr_name == "inventory":
+                    updated_target_attributes[attr_name] = [item.id for item in result]  # Store the IDs of the entities in the inventory
                 else:
                     updated_target_attributes[attr_name] = Attribute(name=attr_name, value=result)
             elif attr_name == "node" and isinstance(value, Node):
-                updated_target_attributes[attr_name] = value
+                updated_target_attributes[attr_name] = value.id  # Store the ID of the Node
+            elif attr_name == "stored_in" and (isinstance(value, GameEntity) or value is None):
+                updated_target_attributes[attr_name] = value.id if value else None  # Store the ID of the entity or None
+            elif attr_name == "inventory":
+                updated_target_attributes[attr_name] = [item.id for item in value]  # Store the IDs of the entities in the inventory
             else:
                 updated_target_attributes[attr_name] = Attribute(name=attr_name, value=value)
-       
+
         if isinstance(source, GameEntity):
             updated_source = source.update_attributes(updated_source_attributes)
         else:
             updated_source = source
-       
+
         if isinstance(target, GameEntity):
             updated_target = target.update_attributes(updated_target_attributes)
         else:
             updated_target = target
-       
+
         return updated_source, updated_target
-    
 class Action(BaseModel):
     name: str = Field("", description="The name of the action")
     prerequisites: Prerequisites = Field(default_factory=Prerequisites, description="The prerequisite conditions for the action")
     consequences: Consequences = Field(default_factory=Consequences, description="The consequences of the action")
 
-    def is_applicable(self, source: Entity, target: Entity) -> bool:
+    def is_applicable(self, source: GameEntity, target: GameEntity) -> bool:
         return self.prerequisites.is_satisfied(source, target)
 
-    def apply(self, source: Entity, target: Entity) -> Tuple[Entity, Entity]:
+    def apply(self, source: GameEntity, target: GameEntity) -> Tuple[GameEntity, GameEntity]:
         if not self.is_applicable(source, target):
             raise ValueError("Action prerequisites are not met")
 
@@ -250,7 +265,7 @@ from enum import Enum
 from pathlib import Path
 from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius, ActionsPayload, ActionInstance
 from abstractions.goap.entity import RegistryHolder
-from abstractions.goap.movement import MoveStep, Character
+from abstractions.goap.interactions import MoveStep, Character
 
 from abstractions.goap.procedural import generate_dungeon
 
@@ -716,15 +731,14 @@ pygame.quit()
 
 ---
 
-## movement
+## interactions
 
 from abstractions.goap.actions import Action, Prerequisites, Consequences
 from abstractions.goap.entity import Attribute, Statement
-from abstractions.goap.spatial import GameEntity, Node
-from typing import Callable
+from abstractions.goap.spatial import GameEntity, Node, BlocksMovement
+from typing import Callable, Dict, Tuple, Optional, List, Union
 
 def source_node_comparison(source: Node, target: Node) -> bool:
-
     return source in target.neighbors()
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
@@ -750,6 +764,64 @@ class MoveStep(Action):
 
 class Character(GameEntity):
     can_act: Attribute = Attribute(name="can_act", value=True)
+
+class TestItem(GameEntity):
+    is_pickupable: Attribute = Attribute(name="is_pickupable", value=True)
+
+class Floor(GameEntity):
+    blocks_movement: BlocksMovement = BlocksMovement(value=False)
+
+def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
+    return source
+
+SetStoredIn: Callable[[GameEntity, GameEntity], GameEntity] = set_stored_in
+
+def set_node(source: GameEntity, target: GameEntity) -> Node:
+    target.set_stored_in(None)
+    source.node.add_entity(target)
+    return source.node
+
+SetNode: Callable[[GameEntity, GameEntity], Node] = set_node
+
+def add_to_inventory(source: GameEntity, target: GameEntity) -> List[GameEntity]:
+    source.add_to_inventory(target)
+    return source.inventory
+
+def remove_from_inventory(source: GameEntity, target: GameEntity) -> List[GameEntity]:
+    source.remove_from_inventory(target)
+    return source.inventory
+
+AddToInventory: Callable[[GameEntity, GameEntity], None] = add_to_inventory
+RemoveFromInventory: Callable[[GameEntity, GameEntity], None] = remove_from_inventory
+
+class PickupAction(Action):
+    name: str = "Pickup"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"is_pickupable": True})],
+        source_target_statements=[]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={"inventory": AddToInventory},
+        target_transformations={"stored_in": SetStoredIn, "node": None}
+    )
+
+def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
+    return None
+
+ClearStoredIn: Callable[[GameEntity, GameEntity], None] = clear_stored_in
+
+class DropAction(Action):
+    name: str = "Drop"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[],
+        source_target_statements=[]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"stored_in": ClearStoredIn, "node": SetNode}
+    )
 
 ---
 
@@ -917,39 +989,85 @@ class ActionsResults(BaseModel):
 class GameEntity(Entity):
     blocks_movement: BlocksMovement = Field(default_factory=BlocksMovement, description="Attribute indicating if the entity blocks movement")
     blocks_light: BlocksLight = Field(default_factory=BlocksLight, description="Attribute indicating if the entity blocks light")
-    node: Node = Field(default=None, description="The node the entity is currently in")
+    node: Optional[Node] = Field(default=None, description="The node the entity is currently in")
+    inventory: List[GameEntity] = Field(default_factory=list, description="The entities stored inside this entity's inventory")
+    stored_in: Optional[GameEntity] = Field(default=None, description="The entity this entity is stored inside, if any")
 
     @property
     def position(self) -> Position:
-        if self.node:
+        if self.stored_in:
+           
+            return self.stored_in.position
+        elif self.node:
             return self.node.position
         return Position()
 
     def set_node(self, node: Node):
+        if self.stored_in:
+            raise ValueError("Cannot set node for an entity stored inside another entity's inventory")
         self.node = node
         node.add_entity(self)
 
     def remove_from_node(self):
+        if self.stored_in:
+            raise ValueError("Cannot remove from node an entity stored inside another entity's inventory")
         if self.node:
             self.node.remove_entity(self)
             self.node = None
 
-    def update_attributes(self, attributes: Dict[str, Union[Attribute, Node]]) -> "GameEntity":
+    def update_attributes(self, attributes: Dict[str, Union[Attribute, Node, str, List[str]]]) -> "GameEntity":
         updated_attributes = {"name": self.name}  # Preserve the name attribute
         new_node = None
+        new_stored_in = None
+        new_inventory = None
         for attr_name, value in attributes.items():
-            if attr_name == "node" and isinstance(value, Node):
-                new_node = value
+            if attr_name == "node":
+                if isinstance(value, Node):
+                    new_node = value
+                elif isinstance(value, str):
+                    new_node = Node.get_instance(value)  # Retrieve the Node instance using the ID
+            elif attr_name == "stored_in":
+                if value is not None:
+                    new_stored_in = GameEntity.get_instance(value)  # Retrieve the GameEntity instance using the ID
+                else:
+                    new_stored_in = None  # Set new_stored_in to None if the value is None
+            elif attr_name == "inventory" and isinstance(value, list):
+                new_inventory = [GameEntity.get_instance(item_id) for item_id in value]  # Retrieve GameEntity instances using their IDs
             elif isinstance(value, Attribute):
                 updated_attributes[attr_name] = value
-        if new_node:
+        if new_stored_in is not None:
+            if self.node:
+                self.node.remove_entity(self)  # Remove the entity from its current node
+            self.stored_in = new_stored_in  # Update the stored_in attribute with the retrieved GameEntity instance
+        elif new_node:
+            if self.stored_in:
+                self.stored_in.inventory.remove(self)  # Remove the entity from its current stored_in inventory
             if self.node:
                 self.node.remove_entity(self)  # Remove the entity from its current node
             new_node.add_entity(self)  # Add the entity to the new node
             self.node = new_node  # Update the entity's node reference
+        if new_inventory is not None:
+            self.inventory = new_inventory  # Update the inventory attribute with the retrieved GameEntity instances
         for attr_name, value in updated_attributes.items():
             setattr(self, attr_name, value)  # Update the entity's attributes
         return self
+    
+    def add_to_inventory(self, entity: GameEntity):
+        if entity not in self.inventory:
+            self.inventory.append(entity)
+            entity.stored_in = self
+
+    def remove_from_inventory(self, entity: GameEntity):
+        if entity in self.inventory:
+            self.inventory.remove(entity)
+            entity.stored_in = None
+
+    def set_stored_in(self, entity: Optional[GameEntity]):
+        if entity is None:
+            if self.stored_in:
+                self.stored_in.remove_from_inventory(self)
+        else:
+            entity.add_to_inventory(self)
 
     
     def __repr__(self):
@@ -985,18 +1103,22 @@ class Node(BaseModel, RegistryHolder):
         return f"Node(id={self.id}, position={self.position.value})"
     
     def add_entity(self, entity: GameEntity):
+        if entity.stored_in:
+            raise ValueError("Cannot add an entity stored inside another entity's inventory directly to a node")
         self.entities.append(entity)
         entity.node = self
         self.update_blocking_properties()
-    
+
     def remove_entity(self, entity: GameEntity):
+        if entity.stored_in:
+            raise ValueError("Cannot remove an entity stored inside another entity's inventory directly from a node")
         self.entities.remove(entity)
         entity.node = None
         self.update_blocking_properties()
-    
+
     def update_blocking_properties(self):
-        self.blocks_movement = any(entity.blocks_movement.value for entity in self.entities)
-        self.blocks_light = any(entity.blocks_light.value for entity in self.entities)
+        self.blocks_movement = any(entity.blocks_movement.value for entity in self.entities if not entity.stored_in)
+        self.blocks_light = any(entity.blocks_light.value for entity in self.entities if not entity.stored_in)
     
     def reset(self):
         self.entities.clear()
@@ -1205,16 +1327,30 @@ class GridMap:
     
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
-        if len(payload.actions) >0:
+        if len(payload.actions) > 0:
             print(f"Applying {len(payload.actions)} actions")
         for action_instance in payload.actions:
             source = GameEntity.get_instance(action_instance.source_id)
             target = GameEntity.get_instance(action_instance.target_id)
             action = action_instance.action
-            
+
             if action.is_applicable(source, target):
                 try:
                     updated_source, updated_target = action.apply(source, target)
+
+                    # Handle inventory-related updates
+                    if updated_source.stored_in != source.stored_in:
+                        if source.stored_in and source in source.stored_in.inventory:
+                            source.stored_in.inventory.remove(source)
+                        if updated_source.stored_in:
+                            updated_source.stored_in.inventory.append(updated_source)
+
+                    if updated_target.stored_in != target.stored_in:
+                        if target.stored_in and target in target.stored_in.inventory:
+                            target.stored_in.inventory.remove(target)
+                        if updated_target.stored_in:
+                            updated_target.stored_in.inventory.append(updated_target)
+
                     results.append(ActionResult(action_instance=action_instance, success=True))
                 except ValueError as e:
                     results.append(ActionResult(action_instance=action_instance, success=False, error=str(e)))
@@ -1231,11 +1367,11 @@ class GridMap:
                 for statement in action.prerequisites.source_target_statements:
                     if not statement.validate_comparisons(source, target):
                         failed_prerequisites.append(f"Source-Target prerequisite failed: {statement}")
-                
+
                 error_message = "Prerequisites not met:\n" + "\n".join(failed_prerequisites)
                 results.append(ActionResult(action_instance=action_instance, success=False, error=error_message))
                 break
-    
+
         return ActionsResults(results=results)
     
     def print_grid(self, path: Optional[Path] = None, radius: Optional[Radius] = None, shadow: Optional[Shadow] = None, raycast: Optional[RayCast] = None):
