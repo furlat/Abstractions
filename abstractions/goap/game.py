@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius, ActionsPayload, ActionInstance
 from abstractions.goap.entity import RegistryHolder
-from abstractions.goap.interactions import MoveStep, Character
+from abstractions.goap.interactions import MoveStep, Character, TestItem, PickupAction, DropAction
 
 from abstractions.goap.procedural import generate_dungeon
 
@@ -63,6 +63,15 @@ class InputHandler:
                 self.generate_move_step(player_id, (-1, 0))  # Move left
             elif event.key == pygame.K_d and player_id:
                 self.generate_move_step(player_id, (1, 0))  # Move right
+            elif event.key == pygame.K_x and player_id:
+                self.generate_drop_action(player_id)
+    
+    def generate_drop_action(self, player_id):
+        player = GameEntity.get_instance(player_id)
+        if player.inventory:
+            item_to_drop = player.inventory[-1]  # Drop the last item in the inventory
+            drop_action = ActionInstance(source_id=player_id, target_id=item_to_drop.id, action=DropAction())
+            self.actions_payload.actions.append(drop_action)
 
     def handle_mouse_click(self, event, player_id, grid_map: GridMap, renderer: 'Renderer'):
         if event.button == 3:  # Right mouse button
@@ -75,6 +84,17 @@ class InputHandler:
                 if path:
                     move_actions = self.generate_move_actions(player_id, path)
                     return move_actions
+        elif event.button == 1:  # Left mouse button
+            print("Left mouse button clicked")
+            mouse_pos = pygame.mouse.get_pos()
+            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
+            if target_node:
+                player = GameEntity.get_instance(player_id)
+                if target_node == player.node or target_node in player.node.neighbors():
+                    for entity in target_node.entities:
+                        if isinstance(entity, TestItem):
+                            pickup_action = ActionInstance(source_id=player_id, target_id=entity.id, action=PickupAction())
+                            return [pickup_action]
         return []
 
     def generate_move_actions(self, player_id, path):
@@ -117,7 +137,7 @@ class EntityType(Enum):
     FLOOR = "floor"
     WALL = "wall"
     CHARACTER = "character"
-    GOAL = "goal"
+    ITEM = "item"
 
 class EntityVisual(BaseModel):
     type: EntityType
@@ -302,10 +322,10 @@ class PayloadGenerator:
             position = node.position.value
             entity_visuals = []
             if node.entities:
-                # Sort entities based on salience (character > goal > wall > floor)
+                # Sort entities based on salience (character > item > wall > floor)
                 sorted_entities = sorted(node.entities, key=lambda e: (
                     e.name != "Player",
-                    e.name != "Goal",
+                    e.name != "TestItem",
                     not (e.blocks_movement.value and e.blocks_light.value),
                     e.blocks_movement.value or e.blocks_light.value
                 ))
@@ -331,8 +351,8 @@ class PayloadGenerator:
     def get_entity_type(entity: GameEntity) -> EntityType:
         if entity.name == "Player":
             return EntityType.CHARACTER
-        elif entity.name == "Goal":
-            return EntityType.GOAL
+        elif entity.name == "TestItem":
+            return EntityType.ITEM
         elif entity.blocks_movement.value and entity.blocks_light.value:
             return EntityType.WALL
         else:
@@ -344,7 +364,7 @@ class PayloadGenerator:
             EntityType.WALL: os.path.join(base_folder, "sprites", "wall.png"),
             EntityType.FLOOR: os.path.join(base_folder, "sprites", "floor.png"),
             EntityType.CHARACTER: os.path.join(base_folder, "sprites", "character_agent.png"),
-            EntityType.GOAL: os.path.join(base_folder, "sprites", "full_storage.png")
+            EntityType.ITEM: os.path.join(base_folder, "sprites", "filled_storage.png")
         }
         return sprite_paths.get(entity_type, "")
 
@@ -354,7 +374,7 @@ class PayloadGenerator:
             EntityType.WALL: "#",
             EntityType.FLOOR: ".",
             EntityType.CHARACTER: "@",
-            EntityType.GOAL: "$"
+            EntityType.ITEM: "$"
         }
         return ascii_chars.get(entity_type, " ")
 
@@ -381,16 +401,17 @@ player_pos, goal_pos = random.sample(floor_tiles, 2)
 
 # Place the player and goal entities
 player = Character(name="Player")
-goal = GameEntity(name="Goal")
+test_item = TestItem(name="TestItem")
 grid_map.get_node(player_pos).add_entity(player)
-grid_map.get_node(goal_pos).add_entity(goal)
-# Precompute payloads
+grid_map.get_node(goal_pos).add_entity(test_item)
+
 start_node = grid_map.get_node(player_pos)
 goal_node = grid_map.get_node(goal_pos)
 path = grid_map.a_star(start_node, goal_node)
 shadow = grid_map.get_shadow(start_node, max_radius=10)
 fov_vision = shadow 
-raycast = grid_map.get_raycast(start_node, shadow.nodes[-1])
+# raycast = grid_map.get_raycast(start_node, shadow.nodes[-1])
+raycast = None
 radius = grid_map.get_radius(start_node, max_radius=5)
 # Generate the payload
 payload = PayloadGenerator.generate_payload()
@@ -431,11 +452,19 @@ while running:
                     print(f"raycast failed: {str(e)}")
                     raycast = None
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            move_actions = input_handler.handle_mouse_click(event, player.id, grid_map, renderer)
-            action_index = 0
+            actions = input_handler.handle_mouse_click(event, player.id, grid_map, renderer)
+            if actions:
+                if isinstance(actions[0].action, PickupAction):
+                    actions_payload = ActionsPayload(actions=actions)
+                    actions_results = grid_map.apply_actions_payload(actions_payload)
+                    if actions_results.results and actions_results.results[0].success:
+                        payload = PayloadGenerator.generate_payload()
+                        renderer.update_grid_map_visual(payload)
+                else:
+                    move_actions = actions
+                    action_index = 0
 
-    print(input_handler.actions_payload)
-
+    print(input_handler.actions_payload, Character.get_instance(player.id).inventory)
     if move_actions and action_index < len(move_actions):
         action = move_actions[action_index]
         actions_payload = ActionsPayload(actions=[action])
@@ -457,6 +486,7 @@ while running:
             shadow = grid_map.get_shadow(grid_map.get_node(player_pos), max_radius=10)
             payload = PayloadGenerator.generate_payload()
             renderer.update_grid_map_visual(payload)
+
 
     renderer.render(input_handler.camera_control, path=path, shadow=shadow, raycast=raycast, radius=radius, fov_vision=shadow)
     input_handler.reset_camera_control()

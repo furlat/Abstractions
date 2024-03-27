@@ -71,6 +71,27 @@ class PickupAction(Action):
         target_transformations={"stored_in": SetStoredIn, "node": None}
     )
 
+    def apply(self, source: GameEntity, target: GameEntity) -> Tuple[GameEntity, GameEntity]:
+        if not self.is_applicable(source, target):
+            raise ValueError("Action prerequisites are not met")
+        
+        # Remove the target entity from its current node
+        if target.node:
+            target.node.remove_entity(target)
+        
+        updated_source, updated_target = self.consequences.apply(source, target)
+        if updated_source != source:
+            self.propagate_spatial_consequences(updated_source, updated_target)
+            self.propagate_inventory_consequences(updated_source, updated_target)
+        else:
+            updated_source = source
+        if updated_target != target:
+            self.propagate_spatial_consequences(updated_source, updated_target)
+            self.propagate_inventory_consequences(updated_source, updated_target)
+        else:
+            updated_target = target
+        return updated_source, updated_target
+
 def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
     return None
 
