@@ -79,6 +79,7 @@ class Statement(BaseModel, RegistryHolder):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="The unique identifier of the entity")
     conditions: Dict[str, Any] = Field(default_factory=dict, description="The desired attribute conditions for the statement")
     comparisons: Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]] = Field(default_factory=dict, description="The attribute comparisons for the statement")
+    callables: List[Callable[[Entity, Entity], bool]] = Field(default_factory=list, description="The generic callables for the statement")
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -87,17 +88,17 @@ class Statement(BaseModel, RegistryHolder):
         self.register(self)
 
     @classmethod
-    def from_entity(cls, entity: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None):
+    def from_entity(cls, entity: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None, callables: Optional[List[Callable[[Entity, Entity], bool]]] = None):
         attributes = entity.all_attributes()
-        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, **attributes)
+        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, callables=callables or [], **attributes)
 
     @classmethod
-    def from_entities(cls, source: Entity, target: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None):
+    def from_entities(cls, source: Entity, target: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None, callables: Optional[List[Callable[[Entity, Entity], bool]]] = None):
         source_attributes = source.all_attributes()
         target_attributes = target.all_attributes()
         attributes = {f"source_{k}": v for k, v in source_attributes.items()}
         attributes.update({f"target_{k}": v for k, v in target_attributes.items()})
-        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, **attributes)
+        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, callables=callables or [], **attributes)
 
     def validate_condition(self, entity: Entity) -> bool:
         attributes = entity.all_attributes()
@@ -119,4 +120,9 @@ class Statement(BaseModel, RegistryHolder):
             elif not comparison_func(source_value.value, target_value.value):
                 return False
         return True
-    
+
+    def validate_callables(self, source: Entity, target: Entity) -> bool:
+        for callable_func in self.callables:
+            if not callable_func(source, target):
+                return False
+        return True

@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-03-27T21:48:42.573111`
+- Created: `2024-03-28T02:58:48.700378`
 
 ## init
 
@@ -26,7 +26,8 @@ class Prerequisites(BaseModel):
     def is_satisfied(self, source: Entity, target: Entity) -> bool:
         return all(statement.validate_condition(source) for statement in self.source_statements) and \
                all(statement.validate_condition(target) for statement in self.target_statements) and \
-               all(statement.validate_comparisons(source, target) for statement in self.source_target_statements)
+               all(statement.validate_comparisons(source, target) for statement in self.source_target_statements) and \
+               all(statement.validate_callables(source, target) for statement in self.source_statements + self.target_statements + self.source_target_statements)
 
 class Consequences(BaseModel):
     source_transformations: Dict[str, Any] = Field(default_factory=dict, description="Attribute transformations for the source entity")
@@ -209,6 +210,7 @@ class Statement(BaseModel, RegistryHolder):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="The unique identifier of the entity")
     conditions: Dict[str, Any] = Field(default_factory=dict, description="The desired attribute conditions for the statement")
     comparisons: Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]] = Field(default_factory=dict, description="The attribute comparisons for the statement")
+    callables: List[Callable[[Entity, Entity], bool]] = Field(default_factory=list, description="The generic callables for the statement")
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -217,17 +219,17 @@ class Statement(BaseModel, RegistryHolder):
         self.register(self)
 
     @classmethod
-    def from_entity(cls, entity: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None):
+    def from_entity(cls, entity: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None, callables: Optional[List[Callable[[Entity, Entity], bool]]] = None):
         attributes = entity.all_attributes()
-        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, **attributes)
+        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, callables=callables or [], **attributes)
 
     @classmethod
-    def from_entities(cls, source: Entity, target: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None):
+    def from_entities(cls, source: Entity, target: Entity, name: Optional[str] = None, conditions: Optional[Dict[str, Any]] = None, comparisons: Optional[Dict[str, Tuple[str, str, Callable[[Any, Any], bool]]]] = None, callables: Optional[List[Callable[[Entity, Entity], bool]]] = None):
         source_attributes = source.all_attributes()
         target_attributes = target.all_attributes()
         attributes = {f"source_{k}": v for k, v in source_attributes.items()}
         attributes.update({f"target_{k}": v for k, v in target_attributes.items()})
-        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, **attributes)
+        return cls(name=name, conditions=conditions or {}, comparisons=comparisons or {}, callables=callables or [], **attributes)
 
     def validate_condition(self, entity: Entity) -> bool:
         attributes = entity.all_attributes()
@@ -249,7 +251,12 @@ class Statement(BaseModel, RegistryHolder):
             elif not comparison_func(source_value.value, target_value.value):
                 return False
         return True
-    
+
+    def validate_callables(self, source: Entity, target: Entity) -> bool:
+        for callable_func in self.callables:
+            if not callable_func(source, target):
+                return False
+        return True
 
 
 ---
@@ -764,25 +771,112 @@ pygame.quit()
 ## interactions
 
 from abstractions.goap.actions import Action, Prerequisites, Consequences
-from abstractions.goap.entity import Attribute, Statement
-from abstractions.goap.spatial import GameEntity, Node, BlocksMovement
+from abstractions.goap.entity import Attribute, Statement, Entity
+from abstractions.goap.spatial import GameEntity, Node, BlocksMovement, BlocksLight
 from typing import Callable, Dict, Tuple, Optional, List, Union
+from pydantic import Field
+
+class Health(Attribute):
+    value: int = Field(100, description="The current health points of the entity")
+
+class MaxHealth(Attribute):
+    value: int = Field(100, description="The maximum health points of the entity")
+
+class AttackPower(Attribute):
+    value: int = Field(10, description="The amount of damage the entity inflicts in combat")
+
+class CanAct(Attribute):
+    value: bool = Field(True, description="Indicates whether the entity can perform actions")
+
+class IsPickupable(Attribute):
+    value: bool = Field(True, description="Indicates whether the entity can be picked up")
+
+class Material(Attribute):
+    value: str = Field("", description="The material composition of the entity")
+
+class Open(Attribute):
+    value: bool = Field(False, description="Indicates whether the door is open")
 
 
 
-class Character(GameEntity):
-    can_act: Attribute = Attribute(name="can_act", value=True)
+class LivingEntity(GameEntity):
+    health: Health = Health()
+    max_health: MaxHealth = MaxHealth()
+    attack_power: AttackPower = AttackPower()
+    can_act: CanAct = CanAct()
 
-class TestItem(GameEntity):
-    is_pickupable: Attribute = Attribute(name="is_pickupable", value=True)
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.update_can_act()
 
-class Floor(GameEntity):
+    def update_can_act(self):
+        self.can_act.value = self.is_alive()
+
+    def is_alive(self) -> bool:
+        return self.health.value > 0
+
+    def take_damage(self, amount: int):
+        self.health.value = max(0, self.health.value - amount)
+        self.update_can_act()
+
+    def heal(self, amount: int):
+        self.health.value = min(self.health.value + amount, self.max_health.value)
+        self.update_can_act()
+
+class InanimateEntity(GameEntity):
+    material: Material = Material()
+
+class Character(LivingEntity):
+    pass
+
+class Monster(LivingEntity):
+    pass
+
+class Door(InanimateEntity):
+    open: Open = Open()
+    is_locked: Attribute = Attribute(name="is_locked", value=False)
+    required_key: Attribute = Attribute(name="required_key", value="")
+    blocks_movement: BlocksMovement = BlocksMovement()
+    blocks_light: BlocksLight = BlocksLight()
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.update_block_attributes()
+
+    def update_block_attributes(self):
+        print("Updating block attributes... for door")
+        if self.open.value:
+            self.blocks_movement = BlocksMovement(value=False)
+            self.blocks_light = BlocksLight(value=False)
+        else:
+            self.blocks_movement = BlocksMovement(value=True)
+            self.blocks_light = BlocksLight(value=True)
+  
+
+
+class Key(InanimateEntity):
+    key_name: Attribute = Attribute(name="key_name", value="")
+    is_pickupable: IsPickupable = IsPickupable(value=True)
+
+class Treasure(InanimateEntity):
+    monetary_value: Attribute = Attribute(name="monetary_value", value=1000)
+
+class Trap(InanimateEntity):
+    damage: Attribute = Attribute(name="damage", value=0)
+    is_active: Attribute = Attribute(name="is_active", value=True)
+
+class Floor(InanimateEntity):
     blocks_movement: BlocksMovement = BlocksMovement(value=False)
+
+class TestItem(InanimateEntity):
+    is_pickupable: IsPickupable = IsPickupable(value=True)
+
 
 def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
     return source
+
 def source_node_comparison(source: Node, target: Node) -> bool:
-    return source in target.neighbors()
+    return source in target.neighbors() or source.id == target.id
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
     return not target.blocks_movement.value
@@ -804,6 +898,7 @@ class MoveStep(Action):
     consequences: Consequences = Consequences(
         source_transformations={"node": MoveToTargetNode}
     )
+
 SetStoredIn: Callable[[GameEntity, GameEntity], GameEntity] = set_stored_in
 
 def set_node(source: GameEntity, target: GameEntity) -> Node:
@@ -824,12 +919,15 @@ def remove_from_inventory(source: GameEntity, target: GameEntity) -> List[GameEn
 AddToInventory: Callable[[GameEntity, GameEntity], None] = add_to_inventory
 RemoveFromInventory: Callable[[GameEntity, GameEntity], None] = remove_from_inventory
 
+
 class PickupAction(Action):
     name: str = "Pickup"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
         target_statements=[Statement(conditions={"is_pickupable": True})],
-        source_target_statements=[]
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison)
+        })]
     )
     consequences: Consequences = Consequences(
         source_transformations={"inventory": AddToInventory},
@@ -839,11 +937,9 @@ class PickupAction(Action):
     def apply(self, source: GameEntity, target: GameEntity) -> Tuple[GameEntity, GameEntity]:
         if not self.is_applicable(source, target):
             raise ValueError("Action prerequisites are not met")
-        
         # Remove the target entity from its current node
         if target.node:
             target.node.remove_entity(target)
-        
         updated_source, updated_target = self.consequences.apply(source, target)
         if updated_source != source:
             self.propagate_spatial_consequences(updated_source, updated_target)
@@ -856,7 +952,62 @@ class PickupAction(Action):
         else:
             updated_target = target
         return updated_source, updated_target
+    
+def is_alive(health: int) -> bool:
+    return health > 0
 
+def calculate_damage(source: LivingEntity, target: LivingEntity) -> int:
+    return max(0, target.health.value - source.attack_power.value)
+
+class AttackAction(Action):
+    name: str = "Attack"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"health": is_alive})],
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison)
+        })]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"health": calculate_damage}
+    )
+
+def can_be_healed(source: LivingEntity, target: LivingEntity) -> bool:
+    return target.health.value < target.max_health.value
+
+def calculate_heal_amount(source: LivingEntity, target: LivingEntity) -> int:
+    return min(target.health.value + source.attack_power.value, target.max_health.value)
+
+class HealAction(Action):
+    name: str = "Heal"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[
+            Statement(
+                conditions={"can_act": True},
+                callables=[]
+            )
+        ],
+        target_statements=[
+            Statement(
+                conditions={},
+                callables=[can_be_healed]
+            )
+        ],
+        source_target_statements=[
+            Statement(
+                conditions={},
+                comparisons={
+                    "source_position": ("node", "node", source_node_comparison)
+                },
+                callables=[]
+            )
+        ]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"health": calculate_heal_amount}
+    )
 def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
     return None
 
@@ -872,6 +1023,85 @@ class DropAction(Action):
     consequences: Consequences = Consequences(
         source_transformations={},
         target_transformations={"stored_in": ClearStoredIn, "node": SetNode}
+    )
+
+def has_required_key(inventory: List[GameEntity], required_key: str) -> bool:
+    return any(item.key_name.value == required_key for item in inventory)
+
+class OpenAction(Action):
+    name: str = "Open"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"is_locked": False, "open": False})],
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison)
+        })]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"open": True}
+    )
+
+    def apply(self, source: GameEntity, target: Door) -> Tuple[GameEntity, Door]:
+        if not self.is_applicable(source, target):
+            raise ValueError("Action prerequisites are not met")
+
+        updated_source, updated_target = self.consequences.apply(source, target)
+        updated_target.update_block_attributes()
+        updated_target.node.update_blocking_properties()
+
+        return updated_source, updated_target
+class CloseAction(Action):
+    name: str = "Close"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"open": True})],
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison)
+        })]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"open": False}
+    )
+    def apply(self, source: GameEntity, target: Door) -> Tuple[GameEntity, Door]:
+        if not self.is_applicable(source, target):
+            raise ValueError("Action prerequisites are not met")
+
+        updated_source, updated_target = self.consequences.apply(source, target)
+        updated_target.update_block_attributes()
+        updated_target.node.update_blocking_properties()
+
+        return updated_source, updated_target
+
+class LockAction(Action):
+    name: str = "Lock"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"is_locked": False, "open": False})],
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison),
+            "source_inventory": ("inventory", "required_key", has_required_key)
+        })]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"is_locked": True}
+    )
+
+class UnlockAction(Action):
+    name: str = "Unlock"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"is_locked": True})],
+        source_target_statements=[Statement(comparisons={
+            "source_position": ("node", "node", source_node_comparison),
+            "source_inventory": ("inventory", "required_key", has_required_key)
+        })]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"is_locked": False}
     )
 
 ---

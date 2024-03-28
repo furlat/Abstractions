@@ -11,7 +11,8 @@ class Prerequisites(BaseModel):
     def is_satisfied(self, source: Entity, target: Entity) -> bool:
         return all(statement.validate_condition(source) for statement in self.source_statements) and \
                all(statement.validate_condition(target) for statement in self.target_statements) and \
-               all(statement.validate_comparisons(source, target) for statement in self.source_target_statements)
+               all(statement.validate_comparisons(source, target) for statement in self.source_target_statements) and \
+               all(statement.validate_callables(source, target) for statement in self.source_statements + self.target_statements + self.source_target_statements)
 
 class Consequences(BaseModel):
     source_transformations: Dict[str, Any] = Field(default_factory=dict, description="Attribute transformations for the source entity")
