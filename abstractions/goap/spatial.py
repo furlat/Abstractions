@@ -204,6 +204,9 @@ class GameEntity(Entity):
                 attrs[key] = value
         attrs_str = ', '.join(f'{k}={v}' for k, v in attrs.items())
         return f"{self.__class__.__name__}({attrs_str})"
+    
+    def __hash__(self):
+        return hash(self.id)
 
 class Node(BaseModel, RegistryHolder):
     name: str = Field("", description="The name of the node")
