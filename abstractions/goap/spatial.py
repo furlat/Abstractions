@@ -206,7 +206,14 @@ class GameEntity(Entity):
         return f"{self.__class__.__name__}({attrs_str})"
     
     def __hash__(self):
-        return hash(self.id)
+        #hash together idname and attributeslike in Node
+        attribute_values = []
+        for attribute_name, attribute_value in self.__dict__.items():
+            if isinstance(attribute_value, Attribute):
+                attribute_values.append(f"{attribute_name}={attribute_value.value}")
+        entity_info = f"{self.__class__.__name__}_{self.name}_{self.id}_{'_'.join(attribute_values)}"
+        return hash(entity_info)
+
 
 class Node(BaseModel, RegistryHolder):
     name: str = Field("", description="The name of the node")
