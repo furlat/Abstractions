@@ -53,6 +53,7 @@ class GridMapWidget(Widget):
         self.show_fov = False
         self.sprite_cache: Dict[str, pygame.Surface] = {}
         self.font = pygame.font.Font(None, self.cell_size)
+    
 
     def grid_to_screen(self, grid_x: int, grid_y: int) -> Tuple[int, int]:
         screen_x = (grid_x - self.camera_pos[0]) * self.cell_size
@@ -85,7 +86,7 @@ class GridMapWidget(Widget):
         self.ascii_mode = camera_control.toggle_ascii
 
     def draw(self, surface: pygame.Surface, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-         raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
+             raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
         # Clear the widget surface
         self.image.fill((0, 0, 0))
 
@@ -94,24 +95,9 @@ class GridMapWidget(Widget):
             for node in fog_of_war.nodes:
                 position = node.position.value
                 if position in self.grid_map_visual.node_visuals:
-                    node_visual = self.grid_map_visual.node_visuals[position]
-                    screen_x, screen_y = self.grid_to_screen(*position)
-                    if self.ascii_mode:
-                        # Draw the entity with the highest draw order in ASCII mode
-                        sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order, reverse=True)
-                        ascii_char = sorted_entity_visuals[0].ascii_char
-                        ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
-                        ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
-                        self.image.blit(ascii_surface, ascii_rect)
-                    else:
-                        # Draw all entities in sprite mode (in draw order)
-                        sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order)
-                        for entity_visual in sorted_entity_visuals:
-                            sprite_surface = self.load_sprite(entity_visual.sprite_path)
-                            scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
-                            self.image.blit(scaled_sprite_surface, (screen_x, screen_y))
+                    self.draw_node(position, self.grid_map_visual.node_visuals[position])
         else:
-            # Draw all nodes within the visible range
+            # Draw nodes within the visible range
             start_x = max(0, self.camera_pos[0])
             start_y = max(0, self.camera_pos[1])
             end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size)
@@ -121,22 +107,7 @@ class GridMapWidget(Widget):
                 for y in range(start_y, end_y):
                     position = (x, y)
                     if position in self.grid_map_visual.node_visuals:
-                        node_visual = self.grid_map_visual.node_visuals[position]
-                        screen_x, screen_y = self.grid_to_screen(x, y)
-                        if self.ascii_mode:
-                            # Draw the entity with the highest draw order in ASCII mode
-                            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order, reverse=True)
-                            ascii_char = sorted_entity_visuals[0].ascii_char
-                            ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
-                            ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
-                            self.image.blit(ascii_surface, ascii_rect)
-                        else:
-                            # Draw all entities in sprite mode (in draw order)
-                            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order)
-                            for entity_visual in sorted_entity_visuals:
-                                sprite_surface = self.load_sprite(entity_visual.sprite_path)
-                                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
-                                self.image.blit(scaled_sprite_surface, (screen_x, screen_y))
+                        self.draw_node(position, self.grid_map_visual.node_visuals[position])
 
         # Draw effects (in the following order: shadow, radius, raycast, path)
         if self.show_shadow and shadow:
@@ -150,6 +121,23 @@ class GridMapWidget(Widget):
 
         # Blit the widget surface onto the main surface
         surface.blit(self.image, self.rect)
+
+    def draw_node(self, position: Tuple[int, int], node_visual: NodeVisual):
+        screen_x, screen_y = self.grid_to_screen(*position)
+        if self.ascii_mode:
+            # Draw the entity with the highest draw order in ASCII mode
+            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order, reverse=True)
+            ascii_char = sorted_entity_visuals[0].ascii_char
+            ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
+            ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
+            self.image.blit(ascii_surface, ascii_rect)
+        else:
+            # Draw all entities in sprite mode (in draw order)
+            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order)
+            for entity_visual in sorted_entity_visuals:
+                sprite_surface = self.load_sprite(entity_visual.sprite_path)
+                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
+                self.image.blit(scaled_sprite_surface, (screen_x, screen_y))
 
     def draw_effect(self, surface: pygame.Surface, nodes: List[Node], color: Tuple[int, int, int]):
         for node in nodes:

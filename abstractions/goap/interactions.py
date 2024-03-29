@@ -88,6 +88,8 @@ class Key(InanimateEntity):
 
 class Treasure(InanimateEntity):
     monetary_value: Attribute = Attribute(name="monetary_value", value=1000)
+    is_pickupable: IsPickupable = IsPickupable(value=True)
+
 
 class Trap(InanimateEntity):
     damage: Attribute = Attribute(name="damage", value=0)

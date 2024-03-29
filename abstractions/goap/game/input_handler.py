@@ -1,8 +1,10 @@
 from typing import Optional, Tuple, List
 from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
-from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem
+from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
+from abstractions.goap.actions import Action
 import pygame
 from abstractions.goap.game.renderer import CameraControl
+from abstractions.goap.game.payloadgen import SpriteMapping
 from pydantic import BaseModel, ValidationInfo, field_validator
 
 class ActiveEntities(BaseModel):
@@ -32,12 +34,14 @@ class ActiveEntities(BaseModel):
         return v
 
 class InputHandler:
-    def __init__(self, grid_map: GridMap):
+    def __init__(self, grid_map: GridMap,sprite_mappings: List[SpriteMapping]):
         self.grid_map = grid_map
         self.active_entities = ActiveEntities()
         self.mouse_highlighted_node: Optional[Node] = None
         self.camera_control = CameraControl()
         self.actions_payload = ActionsPayload(actions=[])
+        self.available_actions: List[str] = []
+        self.sprite_mappings = sprite_mappings
         
 
     def handle_input(self, event):
@@ -80,6 +84,8 @@ class InputHandler:
         elif key == pygame.K_f:
             self.camera_control.toggle_fov = not self.camera_control.toggle_fov
             print(f"FOV: {self.camera_control.toggle_fov}")
+        elif key == pygame.K_v:
+            self.generate_lock_unlock_action()
         elif key == pygame.K_x:
             self.generate_drop_action()
         elif key == pygame.K_LEFT:
@@ -99,8 +105,22 @@ class InputHandler:
             item_to_drop = player.inventory[-1]  # Drop the last item in the inventory
             drop_action = ActionInstance(source_id=player_id, target_id=item_to_drop.id, action=DropAction())
             self.actions_payload.actions.append(drop_action)
+            
+    def generate_lock_unlock_action(self):
+        player_id = self.active_entities.controlled_entity_id
+        player = GameEntity.get_instance(player_id)
+        target_entity_id = self.active_entities.targeted_entity_id
+        if target_entity_id:
+            target_entity = GameEntity.get_instance(target_entity_id)
+            if isinstance(target_entity, Door):
+                if target_entity.is_locked.value:
+                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=UnlockAction())
+                    self.actions_payload.actions.append(unlock_action)
+                else:
+                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=LockAction())
+                    self.actions_payload.actions.append(lock_action)
 
-    def handle_mouse_motion(self, pos, camera_pos, cell_size):
+    def handle_mouse_motion(self, pos, camera_pos, cell_size):  
         self.mouse_highlighted_node = self.get_node_at_pos(pos, camera_pos, cell_size)
 
     def handle_mouse_click(self, button, pos, camera_pos, cell_size):
@@ -111,17 +131,47 @@ class InputHandler:
                 self.active_entities.targeted_entity_id = self.get_next_entity_at_node(clicked_node).id if self.get_next_entity_at_node(clicked_node) else None
                 player_id = self.active_entities.controlled_entity_id
                 player = GameEntity.get_instance(player_id)
-                if clicked_node == player.node or clicked_node in player.node.neighbors():
-                    for entity in clicked_node.entities:
-                        if isinstance(entity, TestItem):
-                            pickup_action = ActionInstance(source_id=player_id, target_id=entity.id, action=PickupAction())
+                target_entity_id = self.active_entities.targeted_entity_id
+                if target_entity_id:
+                    target_entity = GameEntity.get_instance(target_entity_id)
+                    self.available_actions = self.get_available_actions(player, target_entity)
+                    if clicked_node == player.node or clicked_node in player.node.neighbors():
+                        if hasattr(target_entity, 'is_pickupable') and target_entity.is_pickupable.value:
+                            pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=PickupAction())
                             self.actions_payload.actions.append(pickup_action)
+                            print(f"PickupAction generated: {pickup_action}")  # Debug print statement
+                        elif isinstance(target_entity, Door):
+                            if target_entity.open.value:
+                                close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=CloseAction())
+                                self.actions_payload.actions.append(close_action)
+                            else:
+                                open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=OpenAction())
+                                self.actions_payload.actions.append(open_action)
+                else:
+                    self.available_actions = []
         elif button == 3:  # Right mouse button
             clicked_node = self.get_node_at_pos(pos, camera_pos, cell_size)
             if clicked_node:
                 self.generate_move_to_target(clicked_node)
-
-
+    
+    def get_available_actions(self, source: GameEntity, target: GameEntity) -> List[str]:
+        available_actions = []
+        for action_class in Action.__subclasses__():
+            action = action_class()
+            if action.is_applicable(source, target):
+                available_actions.append(action.name)
+        return available_actions
+    
+    def update_available_actions(self):
+        player_id = self.active_entities.controlled_entity_id
+        player = GameEntity.get_instance(player_id)
+        target_entity_id = self.active_entities.targeted_entity_id
+        if target_entity_id:
+            target_entity = GameEntity.get_instance(target_entity_id)
+            self.available_actions = self.get_available_actions(player, target_entity)
+        else:
+            self.available_actions = []
+        
     def get_node_at_pos(self, pos, camera_pos, cell_size) -> Optional[Node]:
         # Convert screen coordinates to grid coordinates
         grid_x = camera_pos[0] + pos[0] // cell_size
@@ -133,9 +183,17 @@ class InputHandler:
         return None
 
     def get_next_entity_at_node(self, node: Node) -> Optional[GameEntity]:
-        for entity in node.entities:
-            return entity
+        if node.entities:
+            # Sort entities based on their draw order using the sprite mappings
+            sorted_entities = sorted(node.entities, key=lambda e: self.get_draw_order(e), reverse=True)
+            return sorted_entities[0]
         return None
+
+    def get_draw_order(self, entity: GameEntity) -> int:
+        for mapping in self.sprite_mappings:
+            if isinstance(entity, mapping.entity_type):
+                return mapping.draw_order
+        return 0  # Default draw order if no mapping is found
 
     def generate_move_step(self, direction):
         # Delegate the move step generation to the ActionPayloadGenerator

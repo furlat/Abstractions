@@ -261,6 +261,15 @@ class Node(BaseModel, RegistryHolder):
     def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
         self.remove_entity(old_entity)
         self.add_entity(new_entity)
+    def __hash__(self):
+        entity_info = []
+        for entity in self.entities:
+            attribute_values = []
+            for attribute_name, attribute_value in entity.__dict__.items():
+                if isinstance(attribute_value, Attribute):
+                    attribute_values.append(f"{attribute_name}={attribute_value.value}")
+            entity_info.append(f"{entity.__class__.__name__}_{entity.name}_{entity.id}_{'_'.join(attribute_values)}")
+        return hash(f"{self.id}_{self.position.value}_{'_'.join(entity_info)}")
 
 import heapq
 
@@ -272,7 +281,22 @@ class GridMap:
 
     def get_node(self, position: Tuple[int, int]) -> Node:
         x, y = position
-        return self.grid[x][y]
+        return self.grid[x][y] if 0 <= x < self.width and 0 <= y < self.height else None
+    
+    def get_nodes_in_rect(self, pos: Tuple[int, int], size: Tuple[int, int]) -> List[Node]:
+        start_x, start_y = pos
+        width, height = size
+        end_x = start_x + width
+        end_y = start_y + height
+
+        nodes = []
+        for y in range(max(0, start_y), min(self.height, end_y)):
+            for x in range(max(0, start_x), min(self.width, end_x)):
+                node = self.get_node((x, y))
+                if node:
+                    nodes.append(node)
+
+        return nodes
 
     def set_node(self, position: Tuple[int, int], node: Node):
         x, y = position
