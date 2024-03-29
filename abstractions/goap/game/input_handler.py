@@ -38,6 +38,7 @@ class InputHandler:
         self.mouse_highlighted_node: Optional[Node] = None
         self.camera_control = CameraControl()
         self.actions_payload = ActionsPayload(actions=[])
+        
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:

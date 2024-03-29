@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-03-29T01:43:00.669743`
+- Created: `2024-03-29T15:37:28.773783`
 
 ## init
 
@@ -844,17 +844,20 @@ class InputHandler:
         elif key == pygame.K_q:
             self.camera_control.toggle_ascii = not self.camera_control.toggle_ascii
         elif key == pygame.K_p:
-            print("moving from", self.camera_control.toggle_path, "to", not self.camera_control.toggle_path)
             self.camera_control.toggle_path = not self.camera_control.toggle_path
+            print(f"Path: {self.camera_control.toggle_path}")
         elif key == pygame.K_t:
-            print("moving from", self.camera_control.toggle_shadow, "to", not self.camera_control.toggle_shadow)
             self.camera_control.toggle_shadow = not self.camera_control.toggle_shadow
+            print(f"Shadow: {self.camera_control.toggle_shadow}")
         elif key == pygame.K_c:
             self.camera_control.toggle_raycast = not self.camera_control.toggle_raycast
+            print(f"Raycast: {self.camera_control.toggle_raycast}")
         elif key == pygame.K_r:
             self.camera_control.toggle_radius = not self.camera_control.toggle_radius
+            print(f"Radius: {self.camera_control.toggle_radius}")
         elif key == pygame.K_f:
             self.camera_control.toggle_fov = not self.camera_control.toggle_fov
+            print(f"FOV: {self.camera_control.toggle_fov}")
         elif key == pygame.K_x:
             self.generate_drop_action()
         elif key == pygame.K_LEFT:
@@ -866,9 +869,7 @@ class InputHandler:
         elif key == pygame.K_DOWN:
             self.camera_control.move = (0, 1)
 
-    def handle_mouse_motion(self, pos):
-        self.mouse_highlighted_node = self.get_node_at_pos(pos)
-
+  
     def generate_drop_action(self):
         player_id = self.active_entities.controlled_entity_id
         player = GameEntity.get_instance(player_id)
@@ -877,12 +878,15 @@ class InputHandler:
             drop_action = ActionInstance(source_id=player_id, target_id=item_to_drop.id, action=DropAction())
             self.actions_payload.actions.append(drop_action)
 
-    def handle_mouse_click(self, button, pos):
+    def handle_mouse_motion(self, pos, camera_pos, cell_size):
+        self.mouse_highlighted_node = self.get_node_at_pos(pos, camera_pos, cell_size)
+
+    def handle_mouse_click(self, button, pos, camera_pos, cell_size):
         if button == 1:  # Left mouse button
-            clicked_node = self.get_node_at_pos(pos)
+            clicked_node = self.get_node_at_pos(pos, camera_pos, cell_size)
             if clicked_node:
                 self.active_entities.targeted_node_id = clicked_node.id
-                self.active_entities.targeted_entity_id = self.get_entity_at_node(clicked_node)
+                self.active_entities.targeted_entity_id = self.get_next_entity_at_node(clicked_node).id if self.get_next_entity_at_node(clicked_node) else None
                 player_id = self.active_entities.controlled_entity_id
                 player = GameEntity.get_instance(player_id)
                 if clicked_node == player.node or clicked_node in player.node.neighbors():
@@ -891,17 +895,25 @@ class InputHandler:
                             pickup_action = ActionInstance(source_id=player_id, target_id=entity.id, action=PickupAction())
                             self.actions_payload.actions.append(pickup_action)
         elif button == 3:  # Right mouse button
-            clicked_node = self.get_node_at_pos(pos)
+            clicked_node = self.get_node_at_pos(pos, camera_pos, cell_size)
             if clicked_node:
                 self.generate_move_to_target(clicked_node)
 
-    def get_node_at_pos(self, pos) -> Optional[Node]:
-        # Implement the logic to get the node at the given mouse position
-        pass
 
-    def get_entity_at_node(self, node: Node) -> Optional[str]:
-        # Implement the logic to get the entity ID at the given node
-        pass
+    def get_node_at_pos(self, pos, camera_pos, cell_size) -> Optional[Node]:
+        # Convert screen coordinates to grid coordinates
+        grid_x = camera_pos[0] + pos[0] // cell_size
+        grid_y = camera_pos[1] + pos[1] // cell_size
+
+        # Check if the grid coordinates are within the grid map bounds
+        if 0 <= grid_x < self.grid_map.width and 0 <= grid_y < self.grid_map.height:
+            return self.grid_map.get_node((grid_x, grid_y))
+        return None
+
+    def get_next_entity_at_node(self, node: Node) -> Optional[GameEntity]:
+        for entity in node.entities:
+            return entity
+        return None
 
     def generate_move_step(self, direction):
         # Delegate the move step generation to the ActionPayloadGenerator
@@ -917,6 +929,8 @@ class InputHandler:
 
     def reset_camera_control(self):
         self.camera_control.move = (0, 0)
+        self.camera_control.recenter = False
+        self.camera_control.zoom = 0
 
     def reset_actions_payload(self):
         self.actions_payload = ActionsPayload(actions=[])
@@ -974,7 +988,7 @@ from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
-
+from pydantic import ValidationError
 
 BASE_PATH = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
 def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
@@ -1058,11 +1072,6 @@ def main():
     input_handler = InputHandler(grid_map)
     input_handler.active_entities.controlled_entity_id = character.id
 
-    # Set the initial camera position to the character's position
-    character_node = character.node
-    if character_node:
-        renderer.grid_map_widget.camera_pos = [character_node.position.x, character_node.position.y]
-
     # Game loop
     running = True
     clock = pygame.time.Clock()
@@ -1071,16 +1080,15 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.MOUSEMOTION:
+                input_handler.handle_mouse_motion(event.pos, renderer.grid_map_widget.camera_pos, renderer.grid_map_widget.cell_size)
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                input_handler.handle_mouse_click(event.button, event.pos, renderer.grid_map_widget.camera_pos, renderer.grid_map_widget.cell_size)
             else:
                 input_handler.handle_input(event)
 
         # Update the camera control based on input
         renderer.handle_camera_control(input_handler.camera_control)
-
-        # Update the renderer with the necessary data
-        inventory = Character.get_instance(character.id).inventory
-        target = input_handler.active_entities.targeted_entity_id
-        renderer.update(inventory, target)
 
         # Get the controlled entity and target node
         controlled_entity = GameEntity.get_instance(input_handler.active_entities.controlled_entity_id)
@@ -1089,7 +1097,22 @@ def main():
         # Calculate the radius, shadow, and raycast based on the controlled entity's position
         radius = grid_map.get_radius(controlled_entity.node, max_radius=5)
         shadow = grid_map.get_shadow(controlled_entity.node, max_radius=10)
-        raycast = grid_map.get_raycast(controlled_entity.node, target_node) if target_node else None
+        try:
+            raycast = grid_map.get_raycast(controlled_entity.node, target_node) if target_node else None
+        except ValidationError as e:
+            print(f"Error: {e}")
+            raycast = None
+        path = grid_map.a_star(controlled_entity.node, target_node) if target_node else None
+
+        # Update the renderer with the necessary data
+        inventory = Character.get_instance(character.id).inventory
+        target = input_handler.active_entities.targeted_entity_id
+        controlled_entity_node = controlled_entity.node
+        if controlled_entity_node:
+            player_position = controlled_entity_node.position.value
+            renderer.update(inventory, target, player_position)
+        else:
+            renderer.update(inventory, target)
 
         # Apply the action payload to the grid map
         actions_results = grid_map.apply_actions_payload(input_handler.actions_payload)
@@ -1106,13 +1129,8 @@ def main():
                 else:
                     print(f"Action failed: {result.error}")
 
-        # Update the camera position to follow the controlled entity
-        controlled_entity_node = controlled_entity.node
-        if controlled_entity_node:
-            renderer.grid_map_widget.camera_pos = [controlled_entity_node.position.x, controlled_entity_node.position.y]
-
         # Render the game
-        renderer.render(path=None, shadow=shadow, raycast=raycast, radius=radius, fog_of_war=shadow)
+        renderer.render(path=path, shadow=shadow, raycast=raycast, radius=radius, fog_of_war=shadow)
 
         # Reset the camera control and actions payload
         input_handler.reset_camera_control()
@@ -1244,12 +1262,19 @@ class GridMapWidget(Widget):
         self.show_fog_of_war = False
         self.sprite_cache: Dict[str, pygame.Surface] = {}  # Add the sprite_cache attribute
         self.font = pygame.font.Font(None, self.cell_size)  # Add the font attribute
+    
+    def grid_to_screen(self, grid_x: int, grid_y: int) -> Tuple[int, int]:
+        screen_x = (grid_x - self.camera_pos[0]) * self.cell_size
+        screen_y = (grid_y - self.camera_pos[1]) * self.cell_size
+        return screen_x, screen_y
 
 
-    def update(self, camera_control: CameraControl):
+    def update(self, camera_control: CameraControl, player_position: Tuple[int, int]):
         # Update camera position based on camera control
-        self.camera_pos[0] = max(0, min(self.grid_map_visual.width - self.rect.width // self.cell_size, self.camera_pos[0] + camera_control.move[0]))
-        self.camera_pos[1] = max(0, min(self.grid_map_visual.height - self.rect.height // self.cell_size, self.camera_pos[1] + camera_control.move[1]))
+        self.camera_pos[0] += camera_control.move[0]
+        self.camera_pos[1] += camera_control.move[1]
+        self.camera_pos[0] = max(0, min(self.grid_map_visual.width - self.rect.width // self.cell_size, self.camera_pos[0]))
+        self.camera_pos[1] = max(0, min(self.grid_map_visual.height - self.rect.height // self.cell_size, self.camera_pos[1]))
 
         # Update cell size based on camera control
         if camera_control.zoom != 0:
@@ -1258,7 +1283,8 @@ class GridMapWidget(Widget):
 
         # Recenter camera on player if requested
         if camera_control.recenter:
-            self.center_camera_on_player()
+            self.center_camera_on_player(player_position)
+            camera_control.recenter = False  # Reset the recenter flag
 
         # Update effect visibility based on camera control
         self.show_path = camera_control.toggle_path
@@ -1267,24 +1293,23 @@ class GridMapWidget(Widget):
         self.show_radius = camera_control.toggle_radius
         self.show_fog_of_war = camera_control.toggle_fog_of_war
         self.ascii_mode = camera_control.toggle_ascii
-        self.show_fov = camera_control.toggle_fov  # Add this line
+        self.show_fov = camera_control.toggle_fov
 
     def draw(self, surface: pygame.Surface, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-            raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
+         raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
         # Calculate the visible range based on the camera position and widget size
-        start_x = max(0, self.camera_pos[0] - self.rect.width // (2 * self.cell_size))
-        start_y = max(0, self.camera_pos[1] - self.rect.height // (2 * self.cell_size))
-        end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size + 1)
-        end_y = min(self.grid_map_visual.height, start_y + self.rect.height // self.cell_size + 1)
+        start_x = max(0, self.camera_pos[0])
+        start_y = max(0, self.camera_pos[1])
+        end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size)
+        end_y = min(self.grid_map_visual.height, start_y + self.rect.height // self.cell_size)
 
         for x in range(start_x, end_x):
             for y in range(start_y, end_y):
                 position = (x, y)
                 if position in self.grid_map_visual.node_visuals:
                     node_visual = self.grid_map_visual.node_visuals[position]
-                    if not self.show_fog_of_war or (fog_of_war and position in [node.position.value for node in fog_of_war.nodes]):
-                        screen_x = (x - start_x) * self.cell_size
-                        screen_y = (y - start_y) * self.cell_size
+                    if not self.show_fog_of_war or (not fog_of_war or position in [node.position.value for node in fog_of_war.nodes]):
+                        screen_x, screen_y = self.grid_to_screen(x, y)
                         if self.ascii_mode:
                             if node_visual.entity_visuals:
                                 # Draw the entity with the highest draw order in ASCII mode
@@ -1303,26 +1328,30 @@ class GridMapWidget(Widget):
 
         # Draw effects (in the following order: shadow, radius, raycast, path)
         if self.show_shadow and shadow:
-            print("Drawing shadow")
-            self.draw_effect(surface, "shadow", shadow.nodes, (255, 255, 0))
+            self.draw_effect(surface, shadow.nodes, (255, 255, 0))
+            print(f"Drawing shadow with {len(shadow.nodes)} nodes")
         if self.show_radius and radius:
-            self.draw_effect(surface, "radius", radius.nodes, (0, 0, 255))
-        if self.show_path and path:
-            self.draw_effect(surface, "path", path.nodes, (0, 255, 0))
+            self.draw_effect(surface, radius.nodes, (0, 0, 255))
+            print(f"Drawing radius with {len(radius.nodes)} nodes")
         if self.show_raycast and raycast:
-            self.draw_effect(surface, "raycast", raycast.nodes, (255, 0, 0))
+            self.draw_effect(surface, raycast.nodes, (255, 0, 0))
+            print(f"Drawing raycast with {len(raycast.nodes)} nodes")
+        if self.show_path and path:
+            self.draw_effect(surface, path.nodes, (0, 255, 0))
+            print(f"Drawing path with {len(path.nodes)} nodes")
 
-    def draw_effect(self, surface: pygame.Surface, effect_type: str, nodes: List[Node], color: Tuple[int, int, int]):
+        # surface.blit(self.image, self.rect)  # Blit the self.image surface onto the surface parameter
+
+    def draw_effect(self, surface: pygame.Surface, nodes: List[Node], color: Tuple[int, int, int]):
         for node in nodes:
             x, y = node.position.value
             if self.is_position_visible(x, y):
-                screen_x = (x - self.camera_pos[0]) * self.cell_size
-                screen_y = (y - self.camera_pos[1]) * self.cell_size
+                screen_x, screen_y = self.grid_to_screen(x, y)
                 pygame.draw.rect(surface, color, (screen_x, screen_y, self.cell_size, self.cell_size), 2)
 
     def is_position_visible(self, x: int, y: int) -> bool:
-        return (0 <= x - self.camera_pos[0] < self.rect.width // self.cell_size and
-                0 <= y - self.camera_pos[1] < self.rect.height // self.cell_size)
+        return (self.camera_pos[0] <= x < self.camera_pos[0] + self.rect.width // self.cell_size and
+                self.camera_pos[1] <= y < self.camera_pos[1] + self.rect.height // self.cell_size)
 
     def load_sprite(self, sprite_path: str) -> pygame.Surface:
         if sprite_path not in self.sprite_cache:
@@ -1330,9 +1359,11 @@ class GridMapWidget(Widget):
             self.sprite_cache[sprite_path] = sprite_surface
         return self.sprite_cache[sprite_path]
 
-    def center_camera_on_player(self):
-        # Implement logic to center the camera on the player's position
-        pass
+    def center_camera_on_player(self, player_position: Tuple[int, int]):
+        self.camera_pos[0] = player_position[0] - self.rect.width // (2 * self.cell_size)
+        self.camera_pos[1] = player_position[1] - self.rect.height // (2 * self.cell_size)
+        self.camera_pos[0] = max(0, min(self.grid_map_visual.width - self.rect.width // self.cell_size, self.camera_pos[0]))
+        self.camera_pos[1] = max(0, min(self.grid_map_visual.height - self.rect.height // self.cell_size, self.camera_pos[1]))
 
 class InventoryWidget(Widget):
     def __init__(self, pos: Tuple[int, int], size: Tuple[int, int]):
@@ -1365,21 +1396,28 @@ class Renderer:
         }
         self.camera_control = CameraControl()
 
-    def update(self, inventory: List[str] = None, target: str = None):
-        for widget in self.widgets.values():
-            widget.update(self.camera_control)
+    def update(self, inventory: List[str] = None, target: str = None, player_position: Tuple[int, int] = (0, 0)):
+        self.grid_map_widget.update(self.camera_control, player_position)
         if inventory is not None:
             self.inventory_widget.update(self.camera_control, inventory)
         if target is not None:
             self.target_widget.update(self.camera_control, target)
 
     def render(self, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-               raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,
-               fog_of_war: Optional[Shadow] = None):
-        self.screen.fill((0, 0, 0))  # Clear the screen
-        self.grid_map_widget.draw(self.screen, path, shadow, raycast, radius, fog_of_war)
+            raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,
+            fog_of_war: Optional[Shadow] = None):
+        # Clear the area occupied by each widget
         for widget in self.widgets.values():
-            widget.draw(self.screen)
+            self.screen.fill((0, 0, 0), widget.rect)
+
+        # Draw the grid map widget
+        self.grid_map_widget.draw(self.screen, path, shadow, raycast, radius, fog_of_war)
+
+        # Draw other widgets
+        for widget in self.widgets.values():
+            if widget != self.grid_map_widget:
+                widget.draw(self.screen)
+
         pygame.display.flip()
 
     def handle_camera_control(self, camera_control: CameraControl):
@@ -1865,7 +1903,7 @@ class RayCast(BaseModel):
         has_path = values['has_path']
         if not has_path and nodes:
             raise ValueError("The raycast path should be empty if there is no clear path")
-        if has_path:
+        if has_path and len(nodes) >0:
             if nodes[0] == source or nodes[-1] == target:
                 raise ValueError("The raycast path should not include the source or target nodes")
             for i in range(len(nodes) - 1):

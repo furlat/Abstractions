@@ -53,7 +53,7 @@ def main():
     pygame.display.set_caption("Dungeon Experiment")
 
     # Create the grid map and generate the dungeon
-    grid_map = GridMap(width=20, height=20)
+    grid_map = GridMap(width=30, height=30)
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
 
