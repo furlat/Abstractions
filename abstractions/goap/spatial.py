@@ -82,7 +82,7 @@ class RayCast(BaseModel):
         has_path = values['has_path']
         if not has_path and nodes:
             raise ValueError("The raycast path should be empty if there is no clear path")
-        if has_path:
+        if has_path and len(nodes) >0:
             if nodes[0] == source or nodes[-1] == target:
                 raise ValueError("The raycast path should not include the source or target nodes")
             for i in range(len(nodes) - 1):

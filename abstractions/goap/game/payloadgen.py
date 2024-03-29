@@ -32,12 +32,15 @@ class PayloadGenerator:
             position = node.position.value
             entity_visuals = []
             if node.entities:
+
                 sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
                 for entity in sorted_entities:
                     sprite_mapping = self.get_sprite_mapping(entity)
+                    # print(f"Sprite mapping for entity {entity}: {sprite_mapping}")
                     entity_visual = {
                         "sprite_path": sprite_mapping.sprite_path,
-                        "ascii_char": sprite_mapping.ascii_char
+                        "ascii_char": sprite_mapping.ascii_char,
+                        "draw_order": sprite_mapping.draw_order
                     }
                     entity_visuals.append(entity_visual)
             payload[position] = entity_visuals

@@ -106,6 +106,11 @@ def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
 def source_node_comparison(source: Node, target: Node) -> bool:
     return source in target.neighbors() or source.id == target.id
 
+def source_node_comparison_and_walkable(source: Node, target: Node) -> bool:
+    if target.blocks_movement:
+        return False
+    return source in target.neighbors() or source.id == target.id
+
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
     return not target.blocks_movement.value
 
@@ -120,7 +125,7 @@ class MoveStep(Action):
         source_statements=[Statement(conditions={"can_act": True})],
         target_statements=[Statement(conditions={"blocks_movement": False})],
         source_target_statements=[Statement(comparisons={
-            "source_position": ("node", "node", source_node_comparison)
+            "source_position": ("node", "node", source_node_comparison_and_walkable)
         })]
     )
     consequences: Consequences = Consequences(
