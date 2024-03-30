@@ -79,7 +79,7 @@ class PayloadGenerator:
                     payload[position] = entity_visuals
                     self.payload_cache[position] = entity_visuals
         return payload
-
+    @lru_cache(maxsize=None)
     def is_node_unchanged(self, node: Node) -> bool:
         position = node.position.value
         if position not in self.payload_cache:
