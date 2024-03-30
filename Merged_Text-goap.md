@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-03-29T15:37:28.773783`
+- Created: `2024-03-30T00:14:46.806208`
 
 ## init
 
@@ -24,10 +24,13 @@ class Prerequisites(BaseModel):
     source_target_statements: List[Statement] = Field(default_factory=list, description="Statements involving both source and target entities")
 
     def is_satisfied(self, source: Entity, target: Entity) -> bool:
-        return all(statement.validate_condition(source) for statement in self.source_statements) and \
-               all(statement.validate_condition(target) for statement in self.target_statements) and \
-               all(statement.validate_comparisons(source, target) for statement in self.source_target_statements) and \
-               all(statement.validate_callables(source, target) for statement in self.source_statements + self.target_statements + self.source_target_statements)
+        try:
+            return all(statement.validate_condition(source) for statement in self.source_statements) and \
+                all(statement.validate_condition(target) for statement in self.target_statements) and \
+                all(statement.validate_comparisons(source, target) for statement in self.source_target_statements) and \
+                all(statement.validate_callables(source, target) for statement in self.source_statements + self.target_statements + self.source_target_statements)
+        except Exception as e:
+            return False
 
 class Consequences(BaseModel):
     source_transformations: Dict[str, Any] = Field(default_factory=dict, description="Attribute transformations for the source entity")
@@ -261,513 +264,6 @@ class Statement(BaseModel, RegistryHolder):
 
 ---
 
-## game
-
-import os
-import pygame
-import random
-from pydantic import BaseModel, Field
-from typing import Dict, Tuple, Optional, List, Union
-from enum import Enum
-from pathlib import Path
-from abstractions.goap.spatial import GridMap, GameEntity, BlocksMovement, BlocksLight, Node, Path, Shadow, RayCast, Radius, ActionsPayload, ActionInstance
-from abstractions.goap.entity import RegistryHolder
-from abstractions.goap.interactions import MoveStep, Character, TestItem, PickupAction, DropAction
-
-from abstractions.goap.procedural import generate_dungeon
-
-class CameraControl(BaseModel):
-    move: Tuple[int, int] = (0, 0)
-    zoom: int = 0
-    recenter: bool = False
-    toggle_path: bool = False
-    toggle_shadow: bool = False
-    toggle_raycast: bool = False
-    toggle_radius: bool = False
-    toggle_ascii: bool = False
-    toggle_fov: bool = False
-
-class InputHandler:
-    def __init__(self):
-        self.camera_control = CameraControl()
-        self.actions_payload = ActionsPayload(actions=[])
-
-    def handle_input(self, event, player_id: Optional[str] = None):
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_1:
-                self.camera_control.zoom = 1  # Zoom in
-            elif event.key == pygame.K_2:
-                self.camera_control.zoom = -1  # Zoom out
-            elif event.key == pygame.K_LEFT:
-                self.camera_control.move = (-1, 0)  # Move camera left
-            elif event.key == pygame.K_RIGHT:
-                self.camera_control.move = (1, 0)  # Move camera right
-            elif event.key == pygame.K_UP:
-                self.camera_control.move = (0, -1)  # Move camera up
-            elif event.key == pygame.K_DOWN:
-                self.camera_control.move = (0, 1)  # Move camera down
-            elif event.key == pygame.K_SPACE:
-                self.camera_control.recenter = True  # Recenter the camera on the player
-            elif event.key == pygame.K_p:
-                self.camera_control.toggle_path = True
-            elif event.key == pygame.K_t:
-                self.camera_control.toggle_shadow = True
-            elif event.key == pygame.K_c:
-                self.camera_control.toggle_raycast = True
-            elif event.key == pygame.K_r:
-                self.camera_control.toggle_radius = True
-            elif event.key == pygame.K_q:
-                self.camera_control.toggle_ascii = True
-            elif event.key == pygame.K_f:
-                self.camera_control.toggle_fov = True
-            elif event.key == pygame.K_w and player_id: 
-                self.generate_move_step(player_id, (0, -1))  # Move up
-            elif event.key == pygame.K_s and player_id:
-                self.generate_move_step(player_id, (0, 1))  # Move down
-            elif event.key == pygame.K_a and player_id:
-                self.generate_move_step(player_id, (-1, 0))  # Move left
-            elif event.key == pygame.K_d and player_id:
-                self.generate_move_step(player_id, (1, 0))  # Move right
-            elif event.key == pygame.K_x and player_id:
-                self.generate_drop_action(player_id)
-    
-    def generate_drop_action(self, player_id):
-        player = GameEntity.get_instance(player_id)
-        if player.inventory:
-            item_to_drop = player.inventory[-1]  # Drop the last item in the inventory
-            drop_action = ActionInstance(source_id=player_id, target_id=item_to_drop.id, action=DropAction())
-            self.actions_payload.actions.append(drop_action)
-
-    def handle_mouse_click(self, event, player_id, grid_map: GridMap, renderer: 'Renderer'):
-        if event.button == 3:  # Right mouse button
-            mouse_pos = pygame.mouse.get_pos()
-            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
-            if target_node:
-                player = GameEntity.get_instance(player_id)
-                start_node = player.node
-                path = grid_map.a_star(start_node, target_node)
-                if path:
-                    move_actions = self.generate_move_actions(player_id, path)
-                    return move_actions
-        elif event.button == 1:  # Left mouse button
-            print("Left mouse button clicked")
-            mouse_pos = pygame.mouse.get_pos()
-            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
-            if target_node:
-                player = GameEntity.get_instance(player_id)
-                if target_node == player.node or target_node in player.node.neighbors():
-                    for entity in target_node.entities:
-                        if isinstance(entity, TestItem):
-                            pickup_action = ActionInstance(source_id=player_id, target_id=entity.id, action=PickupAction())
-                            return [pickup_action]
-        return []
-
-    def generate_move_actions(self, player_id, path):
-        move_actions = []
-        for i in range(len(path.nodes) - 1):
-            source_node = path.nodes[i]
-            target_node = path.nodes[i + 1]
-            floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
-            if floor_entities:
-                target_id = floor_entities[0].id
-                move_action = ActionInstance(source_id=player_id, target_id=target_id, action=MoveStep())
-                move_actions.append(move_action)
-        return move_actions
-    
-    def generate_move_step(self, player_id, direction):
-        player = GameEntity.get_instance(player_id)
-        current_node = player.node
-        target_position = (current_node.position.x + direction[0], current_node.position.y + direction[1])
-        target_node = current_node.grid_map.get_node(target_position)
-        if target_node:
-            floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
-            if floor_entities:
-                target_id = floor_entities[0].id
-                move_action = ActionInstance(source_id=player_id, target_id=target_id, action=MoveStep())
-                self.actions_payload.actions.append(move_action)
-
-    def reset_actions_payload(self):
-        self.actions_payload = ActionsPayload(actions=[])
-    
-    def reset_camera_control(self):
-        self.camera_control = CameraControl()
-
-    def reset(self):
-        self.reset_actions_payload()
-        # self.camera_control.recenter = False
-        
-    
-
-class EntityType(Enum):
-    FLOOR = "floor"
-    WALL = "wall"
-    CHARACTER = "character"
-    ITEM = "item"
-
-class EntityVisual(BaseModel):
-    type: EntityType
-    sprite_path: Optional[str] = Field(None, description="Path to the sprite image file")
-    ascii_char: Optional[str] = Field(None, description="ASCII character representation")
-
-class NodeVisual(BaseModel):
-    entity_visuals: List[EntityVisual] = Field(default_factory=list, description="List of entity visuals in the node")
-
-class GridMapVisual(BaseModel):
-    width: int = Field(..., description="Width of the grid map")
-    height: int = Field(..., description="Height of the grid map")
-    node_visuals: Dict[Tuple[int, int], NodeVisual] = Field({}, description="Dictionary mapping node positions to their visuals")
-
-    def update_node_visual(self, position: Tuple[int, int], entity_visuals: List[EntityVisual]):
-        self.node_visuals[position] = NodeVisual(entity_visuals=entity_visuals)
-
-class Renderer:
-    def __init__(self, grid_map_visual: GridMapVisual, cell_size: int, player_position: Tuple[int, int]):
-        self.grid_map_visual = grid_map_visual
-        self.cell_size = cell_size
-        self.sprite_cache = {}
-        self.ascii_mode = False
-        self.camera_pos = list(player_position)  # Camera position in grid coordinates
-
-        pygame.init()
-        self.screen = pygame.display.set_mode((800, 600))  # Set the screen size
-        self.grid_surface = pygame.Surface((grid_map_visual.width * cell_size, grid_map_visual.height * cell_size))
-        self.grid_surface.convert()
-        self.font = pygame.font.Font(None, cell_size)
-        self.fov_mode = False
-        self.show_path = False
-        self.show_shadow = False
-        self.show_raycast = False
-        self.show_radius = False
-
-    def update_grid_map_visual(self, grid_map_visual: GridMapVisual):
-        self.grid_map_visual = grid_map_visual
-
-    def update_player_position(self, player_position: Tuple[int, int]):
-        self.camera_pos = list(player_position)
-
-
-    def render(self, camera_control: CameraControl, path: Optional[Path] = None, shadow: Optional[Shadow] = None, raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,fov_vision: Optional[Union[Shadow, Radius]] = None):
-        # Update camera position based on camera control
-        self.camera_pos[0] = max(0, min(self.grid_map_visual.width - 1, self.camera_pos[0] + camera_control.move[0]))
-        self.camera_pos[1] = max(0, min(self.grid_map_visual.height - 1, self.camera_pos[1] + camera_control.move[1]))
-
-        # Update cell size based on camera control
-        if camera_control.zoom != 0:
-            self.cell_size = max(16, min(64, self.cell_size + camera_control.zoom * 8))
-            self.font = pygame.font.Font(None, self.cell_size)
-            self.sprite_cache.clear()  # Clear the sprite cache when zooming
-
-        # Recenter camera on player if requested
-        if camera_control.recenter:
-            self.center_camera_on_player()
-
-        if camera_control.toggle_ascii:
-            self.ascii_mode = not self.ascii_mode
-
-        self.grid_surface.fill((0, 0, 0))  # Clear the grid surface
-
-        # Calculate the visible range based on the camera position and screen size
-        start_x = max(0, self.camera_pos[0] - self.screen.get_width() // (2 * self.cell_size))
-        start_y = max(0, self.camera_pos[1] - self.screen.get_height() // (2 * self.cell_size))
-        end_x = min(self.grid_map_visual.width, start_x + self.screen.get_width() // self.cell_size + 1)
-        end_y = min(self.grid_map_visual.height, start_y + self.screen.get_height() // self.cell_size + 1)
-
-        if camera_control.toggle_fov:
-            self.fov_mode = not self.fov_mode
-
-        for x in range(start_x, end_x):
-            for y in range(start_y, end_y):
-                position = (x, y)
-                if position in self.grid_map_visual.node_visuals:
-                    node_visual = self.grid_map_visual.node_visuals[position]
-                    if not self.fov_mode or (fov_vision and position in [node.position.value for node in fov_vision.nodes]):
-                        screen_x = (x - start_x) * self.cell_size
-                        screen_y = (y - start_y) * self.cell_size
-
-                        if self.ascii_mode:
-                            if node_visual.entity_visuals:
-                                # Draw the most salient entity in ASCII mode
-                                ascii_char = node_visual.entity_visuals[0].ascii_char
-                                ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
-                                ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
-                                self.grid_surface.blit(ascii_surface, ascii_rect)
-                        else:
-                            # Draw all entities in sprite mode (in opposite salience order)
-                            for entity_visual in reversed(node_visual.entity_visuals):
-                                sprite_path = entity_visual.sprite_path
-                                sprite_surface = self.load_sprite(sprite_path)
-                                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
-                                self.grid_surface.blit(scaled_sprite_surface, (screen_x, screen_y))
-        if camera_control.toggle_path:
-            self.show_path = not self.show_path
-        if camera_control.toggle_shadow:
-            self.show_shadow = not self.show_shadow
-        if camera_control.toggle_raycast:
-            self.show_raycast = not self.show_raycast
-        if camera_control.toggle_radius:
-            self.show_radius = not self.show_radius
-        # Draw path
-        if self.show_path and path:
-            for node in path.nodes:
-                x, y = node.position.value
-                if start_x <= x < end_x and start_y <= y < end_y:
-                    screen_x = (x - start_x) * self.cell_size
-                    screen_y = (y - start_y) * self.cell_size
-                    pygame.draw.rect(self.grid_surface, (0, 255, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
-
-        # Draw shadow
-        if self.show_shadow and shadow:
-            for node in shadow.nodes:
-                x, y = node.position.value
-                if start_x <= x < end_x and start_y <= y < end_y:
-                    screen_x = (x - start_x) * self.cell_size
-                    screen_y = (y - start_y) * self.cell_size
-                    pygame.draw.rect(self.grid_surface, (255, 255, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
-
-        # Draw raycast
-        if self.show_raycast and raycast:
-            for node in raycast.nodes:
-                x, y = node.position.value
-                if start_x <= x < end_x and start_y <= y < end_y:
-                    screen_x = (x - start_x) * self.cell_size
-                    screen_y = (y - start_y) * self.cell_size
-                    pygame.draw.rect(self.grid_surface, (255, 0, 0), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
-
-        # Draw radius
-        if self.show_radius and radius:
-            for node in radius.nodes:
-                x, y = node.position.value
-                if start_x <= x < end_x and start_y <= y < end_y:
-                    screen_x = (x - start_x) * self.cell_size
-                    screen_y = (y - start_y) * self.cell_size
-                    pygame.draw.rect(self.grid_surface, (0, 0, 255), (screen_x, screen_y, self.cell_size, self.cell_size), 2)
-
-        self.screen.blit(self.grid_surface, (0, 0))
-        pygame.display.flip()
-
-    def get_node_at_mouse_position(self, mouse_position: Tuple[int, int], grid_map: GridMap) -> Optional[Node]:
-        x, y = mouse_position
-        start_x = max(0, self.camera_pos[0] - self.screen.get_width() // (2 * self.cell_size))
-        start_y = max(0, self.camera_pos[1] - self.screen.get_height() // (2 * self.cell_size))
-        grid_x = start_x + x // self.cell_size
-        grid_y = start_y + y // self.cell_size
-        if 0 <= grid_x < grid_map.width and 0 <= grid_y < grid_map.height:
-            return grid_map.get_node((grid_x, grid_y))
-        return None
-
-    def update_camera_position(self, player_position: Tuple[int, int]):
-        self.camera_pos = list(player_position)
-
-    def center_camera_on_player(self):
-        player_position = self.find_player_position()
-        if player_position:
-            self.update_camera_position(player_position)
-    def find_player_position(self) -> Optional[Tuple[int, int]]:
-        for position, node_visual in self.grid_map_visual.node_visuals.items():
-            for entity_visual in node_visual.entity_visuals:
-                if entity_visual.type == EntityType.CHARACTER:
-                    return position
-        return None
-
-    def load_sprite(self, sprite_path: str) -> pygame.Surface:
-        if sprite_path not in self.sprite_cache:
-            sprite_surface = pygame.image.load(sprite_path).convert_alpha()
-            self.sprite_cache[sprite_path] = sprite_surface
-        return self.sprite_cache[sprite_path]
-    
-
-base_folder = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
-
-class PayloadGenerator:
-    @staticmethod
-    def generate_payload() -> GridMapVisual:
-        nodes = RegistryHolder.all_instances_by_type(Node)
-        node_visuals = {}
-        for node in nodes:
-            position = node.position.value
-            entity_visuals = []
-            if node.entities:
-                # Sort entities based on salience (character > item > wall > floor)
-                sorted_entities = sorted(node.entities, key=lambda e: (
-                    e.name != "Player",
-                    e.name != "TestItem",
-                    not (e.blocks_movement.value and e.blocks_light.value),
-                    e.blocks_movement.value or e.blocks_light.value
-                ))
-                for entity in sorted_entities:
-                    entity_type = PayloadGenerator.get_entity_type(entity)
-                    entity_visual = EntityVisual(
-                        type=entity_type,
-                        sprite_path=PayloadGenerator.get_sprite_path(entity_type),
-                        ascii_char=PayloadGenerator.get_ascii_char(entity_type)
-                    )
-                    entity_visuals.append(entity_visual)
-            node_visuals[position] = NodeVisual(entity_visuals=entity_visuals)
-        width = max(node.position.x for node in nodes) + 1
-        height = max(node.position.y for node in nodes) + 1
-        payload = GridMapVisual(
-            width=width,
-            height=height,
-            node_visuals=node_visuals
-        )
-        return payload
-
-    @staticmethod
-    def get_entity_type(entity: GameEntity) -> EntityType:
-        if entity.name == "Player":
-            return EntityType.CHARACTER
-        elif entity.name == "TestItem":
-            return EntityType.ITEM
-        elif entity.blocks_movement.value and entity.blocks_light.value:
-            return EntityType.WALL
-        else:
-            return EntityType.FLOOR
-
-    @staticmethod
-    def get_sprite_path(entity_type: EntityType) -> str:
-        sprite_paths = {
-            EntityType.WALL: os.path.join(base_folder, "sprites", "wall.png"),
-            EntityType.FLOOR: os.path.join(base_folder, "sprites", "floor.png"),
-            EntityType.CHARACTER: os.path.join(base_folder, "sprites", "character_agent.png"),
-            EntityType.ITEM: os.path.join(base_folder, "sprites", "filled_storage.png")
-        }
-        return sprite_paths.get(entity_type, "")
-
-    @staticmethod
-    def get_ascii_char(entity_type: EntityType) -> str:
-        ascii_chars = {
-            EntityType.WALL: "#",
-            EntityType.FLOOR: ".",
-            EntityType.CHARACTER: "@",
-            EntityType.ITEM: "$"
-        }
-        return ascii_chars.get(entity_type, " ")
-
-
-
-# Create a larger grid map
-grid_map = GridMap(width=50, height=50)
-
-# Fill the grid map with walls
-for x in range(grid_map.width):
-    for y in range(grid_map.height):
-        wall = GameEntity(name=f"Wall_{x}_{y}", blocks_movement=BlocksMovement(value=True), blocks_light=BlocksLight(value=True))
-        grid_map.get_node((x, y)).add_entity(wall)
-
-# Generate the dungeon
-num_rooms = 10
-min_room_size = 5
-max_room_size = 10
-generate_dungeon(grid_map, num_rooms, min_room_size, max_room_size)
-
-# Find valid floor tiles for player and goal
-floor_tiles = [(x, y) for x in range(grid_map.width) for y in range(grid_map.height) if any(isinstance(entity, GameEntity) and entity.name.startswith("Floor") for entity in grid_map.get_node((x, y)).entities)]
-player_pos, goal_pos = random.sample(floor_tiles, 2)
-
-# Place the player and goal entities
-player = Character(name="Player")
-test_item = TestItem(name="TestItem")
-grid_map.get_node(player_pos).add_entity(player)
-grid_map.get_node(goal_pos).add_entity(test_item)
-
-start_node = grid_map.get_node(player_pos)
-goal_node = grid_map.get_node(goal_pos)
-path = grid_map.a_star(start_node, goal_node)
-shadow = grid_map.get_shadow(start_node, max_radius=10)
-fov_vision = shadow 
-# raycast = grid_map.get_raycast(start_node, shadow.nodes[-1])
-raycast = None
-radius = grid_map.get_radius(start_node, max_radius=5)
-# Generate the payload
-payload = PayloadGenerator.generate_payload()
-
-# Create the renderer
-renderer = Renderer(payload, cell_size=32, player_position=player_pos)
-
-
-input_handler = InputHandler()
-
-clock = pygame.time.Clock()
-running = True
-move_actions = []
-action_index = 0
-
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.KEYDOWN:
-            input_handler.handle_input(event, player.id)
-        elif event.type == pygame.MOUSEMOTION:
-            mouse_pos = pygame.mouse.get_pos()
-            target_node = renderer.get_node_at_mouse_position(mouse_pos, grid_map)
-            if target_node:
-                try:
-                    print(f'trying to pathfind to {target_node.position}')
-                    start_node = grid_map.get_node(player_pos)
-                    path = grid_map.a_star(start_node, target_node)
-                except Exception as e:
-                    print(f"pathfind failed: {str(e)}")
-                    path = None
-                try:
-                    print('trying to raycast')
-                    start_node = grid_map.get_node(player_pos)
-                    raycast = grid_map.get_raycast(start_node, target_node)
-                except Exception as e:
-                    print(f"raycast failed: {str(e)}")
-                    raycast = None
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            actions = input_handler.handle_mouse_click(event, player.id, grid_map, renderer)
-            if actions:
-                if isinstance(actions[0].action, PickupAction):
-                    actions_payload = ActionsPayload(actions=actions)
-                    actions_results = grid_map.apply_actions_payload(actions_payload)
-                    if actions_results.results and actions_results.results[0].success:
-                        payload = PayloadGenerator.generate_payload()
-                        renderer.update_grid_map_visual(payload)
-                else:
-                    move_actions = actions
-                    action_index = 0
-
-    print(input_handler.actions_payload, Character.get_instance(player.id).inventory)
-    if move_actions and action_index < len(move_actions):
-        action = move_actions[action_index]
-        actions_payload = ActionsPayload(actions=[action])
-        actions_results = grid_map.apply_actions_payload(actions_payload)
-        if actions_results.results and actions_results.results[0].success:
-            updated_player = GameEntity.get_instance(player.id)
-            player_pos = updated_player.node.position.value
-            radius = grid_map.get_radius(grid_map.get_node(player_pos), max_radius=10)
-            shadow = grid_map.get_shadow(grid_map.get_node(player_pos), max_radius=10)
-            payload = PayloadGenerator.generate_payload()
-            renderer.update_grid_map_visual(payload)
-            action_index += 1
-    else:
-        actions_results = grid_map.apply_actions_payload(input_handler.actions_payload)
-        if actions_results.results and actions_results.results[0].success:
-            updated_player = GameEntity.get_instance(player.id)
-            player_pos = updated_player.node.position.value
-            radius = grid_map.get_radius(grid_map.get_node(player_pos), max_radius=10)
-            shadow = grid_map.get_shadow(grid_map.get_node(player_pos), max_radius=10)
-            payload = PayloadGenerator.generate_payload()
-            renderer.update_grid_map_visual(payload)
-
-
-    renderer.render(input_handler.camera_control, path=path, shadow=shadow, raycast=raycast, radius=radius, fov_vision=shadow)
-    input_handler.reset_camera_control()
-    input_handler.reset()
-    clock.tick(60)  # Limit the frame rate to 60 FPS
-
-    # Display FPS
-    fps = clock.get_fps()
-    fps_text = renderer.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))
-    renderer.screen.blit(fps_text, (10, 10))
-    pygame.display.flip()
-
-pygame.quit()
-
----
-
 ## init
 
 # This is the __init__.py file for the package.
@@ -779,9 +275,11 @@ pygame.quit()
 
 from typing import Optional, Tuple, List
 from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
-from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem
+from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
+from abstractions.goap.actions import Action
 import pygame
 from abstractions.goap.game.renderer import CameraControl
+from abstractions.goap.game.payloadgen import SpriteMapping
 from pydantic import BaseModel, ValidationInfo, field_validator
 
 class ActiveEntities(BaseModel):
@@ -811,12 +309,15 @@ class ActiveEntities(BaseModel):
         return v
 
 class InputHandler:
-    def __init__(self, grid_map: GridMap):
+    def __init__(self, grid_map: GridMap,sprite_mappings: List[SpriteMapping]):
         self.grid_map = grid_map
         self.active_entities = ActiveEntities()
         self.mouse_highlighted_node: Optional[Node] = None
         self.camera_control = CameraControl()
         self.actions_payload = ActionsPayload(actions=[])
+        self.available_actions: List[str] = []
+        self.sprite_mappings = sprite_mappings
+        
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -858,6 +359,8 @@ class InputHandler:
         elif key == pygame.K_f:
             self.camera_control.toggle_fov = not self.camera_control.toggle_fov
             print(f"FOV: {self.camera_control.toggle_fov}")
+        elif key == pygame.K_v:
+            self.generate_lock_unlock_action()
         elif key == pygame.K_x:
             self.generate_drop_action()
         elif key == pygame.K_LEFT:
@@ -877,8 +380,22 @@ class InputHandler:
             item_to_drop = player.inventory[-1]  # Drop the last item in the inventory
             drop_action = ActionInstance(source_id=player_id, target_id=item_to_drop.id, action=DropAction())
             self.actions_payload.actions.append(drop_action)
+            
+    def generate_lock_unlock_action(self):
+        player_id = self.active_entities.controlled_entity_id
+        player = GameEntity.get_instance(player_id)
+        target_entity_id = self.active_entities.targeted_entity_id
+        if target_entity_id:
+            target_entity = GameEntity.get_instance(target_entity_id)
+            if isinstance(target_entity, Door):
+                if target_entity.is_locked.value:
+                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=UnlockAction())
+                    self.actions_payload.actions.append(unlock_action)
+                else:
+                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=LockAction())
+                    self.actions_payload.actions.append(lock_action)
 
-    def handle_mouse_motion(self, pos, camera_pos, cell_size):
+    def handle_mouse_motion(self, pos, camera_pos, cell_size):  
         self.mouse_highlighted_node = self.get_node_at_pos(pos, camera_pos, cell_size)
 
     def handle_mouse_click(self, button, pos, camera_pos, cell_size):
@@ -889,17 +406,47 @@ class InputHandler:
                 self.active_entities.targeted_entity_id = self.get_next_entity_at_node(clicked_node).id if self.get_next_entity_at_node(clicked_node) else None
                 player_id = self.active_entities.controlled_entity_id
                 player = GameEntity.get_instance(player_id)
-                if clicked_node == player.node or clicked_node in player.node.neighbors():
-                    for entity in clicked_node.entities:
-                        if isinstance(entity, TestItem):
-                            pickup_action = ActionInstance(source_id=player_id, target_id=entity.id, action=PickupAction())
+                target_entity_id = self.active_entities.targeted_entity_id
+                if target_entity_id:
+                    target_entity = GameEntity.get_instance(target_entity_id)
+                    self.available_actions = self.get_available_actions(player, target_entity)
+                    if clicked_node == player.node or clicked_node in player.node.neighbors():
+                        if hasattr(target_entity, 'is_pickupable') and target_entity.is_pickupable.value:
+                            pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=PickupAction())
                             self.actions_payload.actions.append(pickup_action)
+                            print(f"PickupAction generated: {pickup_action}")  # Debug print statement
+                        elif isinstance(target_entity, Door):
+                            if target_entity.open.value:
+                                close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=CloseAction())
+                                self.actions_payload.actions.append(close_action)
+                            else:
+                                open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=OpenAction())
+                                self.actions_payload.actions.append(open_action)
+                else:
+                    self.available_actions = []
         elif button == 3:  # Right mouse button
             clicked_node = self.get_node_at_pos(pos, camera_pos, cell_size)
             if clicked_node:
                 self.generate_move_to_target(clicked_node)
-
-
+    
+    def get_available_actions(self, source: GameEntity, target: GameEntity) -> List[str]:
+        available_actions = []
+        for action_class in Action.__subclasses__():
+            action = action_class()
+            if action.is_applicable(source, target):
+                available_actions.append(action.name)
+        return available_actions
+    
+    def update_available_actions(self):
+        player_id = self.active_entities.controlled_entity_id
+        player = GameEntity.get_instance(player_id)
+        target_entity_id = self.active_entities.targeted_entity_id
+        if target_entity_id:
+            target_entity = GameEntity.get_instance(target_entity_id)
+            self.available_actions = self.get_available_actions(player, target_entity)
+        else:
+            self.available_actions = []
+        
     def get_node_at_pos(self, pos, camera_pos, cell_size) -> Optional[Node]:
         # Convert screen coordinates to grid coordinates
         grid_x = camera_pos[0] + pos[0] // cell_size
@@ -911,9 +458,17 @@ class InputHandler:
         return None
 
     def get_next_entity_at_node(self, node: Node) -> Optional[GameEntity]:
-        for entity in node.entities:
-            return entity
+        if node.entities:
+            # Sort entities based on their draw order using the sprite mappings
+            sorted_entities = sorted(node.entities, key=lambda e: self.get_draw_order(e), reverse=True)
+            return sorted_entities[0]
         return None
+
+    def get_draw_order(self, entity: GameEntity) -> int:
+        for mapping in self.sprite_mappings:
+            if isinstance(entity, mapping.entity_type):
+                return mapping.draw_order
+        return 0  # Default draw order if no mapping is found
 
     def generate_move_step(self, direction):
         # Delegate the move step generation to the ActionPayloadGenerator
@@ -1013,7 +568,7 @@ def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
     door = Door(name="Door", is_locked=Attribute(name="is_locked", value=True), required_key=Attribute(name="required_key", value="Golden Key"))
     character = Character(name="Player")
     key = Key(name="Golden Key", key_name=Attribute(name="key_name", value="Golden Key"), is_pickupable=IsPickupable(value=True))
-    treasure = Treasure(name="Treasure", monetary_value=Attribute(name="monetary_value", value=1000))
+    treasure = Treasure(name="Treasure", monetary_value=Attribute(name="monetary_value", value=1000), is_pickupable=IsPickupable(value=True))
 
     grid_map.get_node((door_x, door_y)).add_entity(door)
     grid_map.get_node((character_x, character_y)).add_entity(character)
@@ -1028,53 +583,65 @@ def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
 
     return character, door, key, treasure
 
+
 def main():
     # Initialize Pygame
     pygame.init()
     screen_width, screen_height = 1200, 900
     screen = pygame.display.set_mode((screen_width, screen_height))
     pygame.display.set_caption("Dungeon Experiment")
-
+   
     # Create the grid map and generate the dungeon
-    grid_map = GridMap(width=20, height=20)
+    grid_map = GridMap(width=100, height=100)
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
-
+   
     # Define the sprite mappings
     sprite_mappings = [
-        SpriteMapping(entity_type=Character, sprite_path=os.path.join(BASE_PATH, "sprites", "character_agent.png"), ascii_char="@", draw_order=3),
-        SpriteMapping(entity_type=Door, sprite_path=os.path.join(BASE_PATH, "sprites", "closed_door.png"), ascii_char="D", draw_order=2),
-        SpriteMapping(entity_type=Key, sprite_path=os.path.join(BASE_PATH, "sprites", "lock.png"), ascii_char="K", draw_order=1),
-        SpriteMapping(entity_type=Treasure, sprite_path=os.path.join(BASE_PATH, "sprites", "filled_storage.png"), ascii_char="T", draw_order=1),
-        SpriteMapping(entity_type=Floor, sprite_path=os.path.join(BASE_PATH, "sprites", "floor.png"), ascii_char=".", draw_order=0),
-        SpriteMapping(entity_type=TestItem, sprite_path=os.path.join(BASE_PATH, "sprites", "filled_storage.png"), ascii_char="$", draw_order=1),
-        SpriteMapping(entity_type=GameEntity, name_pattern=r"^Wall", sprite_path=os.path.join(BASE_PATH, "sprites", "wall.png"), ascii_char="#", draw_order=1),
-    ]
-
+    SpriteMapping(entity_type=Character, sprite_path=os.path.join(BASE_PATH, "sprites", "character_agent.png"), ascii_char="@", draw_order=3),
+    SpriteMapping(entity_type=Door, sprite_path=os.path.join(BASE_PATH, "sprites", "closed_locked_door.png"), ascii_char="D", draw_order=2, attribute_conditions={"open": False, "is_locked": True}),
+    SpriteMapping(entity_type=Door, sprite_path=os.path.join(BASE_PATH, "sprites", "closed_unlocked_door.png"), ascii_char="D", draw_order=2, attribute_conditions={"open": False, "is_locked": False}),
+    SpriteMapping(entity_type=Door, sprite_path=os.path.join(BASE_PATH, "sprites", "open_locked_door.png"), ascii_char="D", draw_order=2, attribute_conditions={"open": True, "is_locked": True}),
+    SpriteMapping(entity_type=Door, sprite_path=os.path.join(BASE_PATH, "sprites", "open_unlocked_door.png"), ascii_char="D", draw_order=2, attribute_conditions={"open": True, "is_locked": False}),
+    SpriteMapping(entity_type=Key, sprite_path=os.path.join(BASE_PATH, "sprites", "lock.png"), ascii_char="K", draw_order=1),
+    SpriteMapping(entity_type=Treasure, sprite_path=os.path.join(BASE_PATH, "sprites", "filled_storage.png"), ascii_char="T", draw_order=1),
+    SpriteMapping(entity_type=Floor, sprite_path=os.path.join(BASE_PATH, "sprites", "floor.png"), ascii_char=".", draw_order=0),
+    SpriteMapping(entity_type=TestItem, sprite_path=os.path.join(BASE_PATH, "sprites", "filled_storage.png"), ascii_char="$", draw_order=1),
+    SpriteMapping(entity_type=GameEntity, name_pattern=r"^Wall", sprite_path=os.path.join(BASE_PATH, "sprites", "wall.png"), ascii_char="#", draw_order=1),
+]
+   
     # Create the payload generator
     payload_generator = PayloadGenerator(sprite_mappings, grid_size=(grid_map.width, grid_map.height))
-
-    # Generate the payload
-    nodes = [node for row in grid_map.grid for node in row]
-    payload = payload_generator.generate_payload(nodes)
-
+   
+    # Define the widget size
+    widget_width, widget_height = 800, 600
+   
+    # Calculate the initial visible nodes
+    camera_pos = (0, 0)
+    visible_nodes = grid_map.get_nodes_in_rect(camera_pos, (widget_width // 32, widget_height // 32))
+   
+    # Generate the initial payload
+    initial_payload = payload_generator.generate_payload(visible_nodes, camera_pos)
+   
     # Create the grid map visual
     grid_map_visual = GridMapVisual(
         width=grid_map.width,
         height=grid_map.height,
-        node_visuals={pos: NodeVisual(entity_visuals=[EntityVisual(**entity_data) for entity_data in entity_data_list]) for pos, entity_data_list in payload.items()}
+        node_visuals={pos: NodeVisual(entity_visuals=[EntityVisual(**entity_data) for entity_data in entity_data_list]) for pos, entity_data_list in initial_payload.items()}
     )
-
+   
     # Create the renderer
-    renderer = Renderer(screen, grid_map_visual, widget_size=(800, 600))
-
+    renderer = Renderer(screen, grid_map_visual, widget_size=(widget_width, widget_height))
+   
     # Create the input handler
-    input_handler = InputHandler(grid_map)
+    input_handler = InputHandler(grid_map, sprite_mappings)
     input_handler.active_entities.controlled_entity_id = character.id
-
+   
     # Game loop
     running = True
     clock = pygame.time.Clock()
+    prev_visible_positions = set()
+   
     while running:
         # Handle events
         for event in pygame.event.get():
@@ -1086,14 +653,14 @@ def main():
                 input_handler.handle_mouse_click(event.button, event.pos, renderer.grid_map_widget.camera_pos, renderer.grid_map_widget.cell_size)
             else:
                 input_handler.handle_input(event)
-
+       
         # Update the camera control based on input
         renderer.handle_camera_control(input_handler.camera_control)
-
+       
         # Get the controlled entity and target node
         controlled_entity = GameEntity.get_instance(input_handler.active_entities.controlled_entity_id)
         target_node = Node.get_instance(input_handler.active_entities.targeted_node_id) if input_handler.active_entities.targeted_node_id else None
-
+       
         # Calculate the radius, shadow, and raycast based on the controlled entity's position
         radius = grid_map.get_radius(controlled_entity.node, max_radius=5)
         shadow = grid_map.get_shadow(controlled_entity.node, max_radius=10)
@@ -1103,7 +670,72 @@ def main():
             print(f"Error: {e}")
             raycast = None
         path = grid_map.a_star(controlled_entity.node, target_node) if target_node else None
+       
+                # Get the nodes affected by the action payload
+        affected_nodes = set()
+        for action_instance in input_handler.actions_payload.actions:
+            source_entity = GameEntity.get_instance(action_instance.source_id)
+            target_entity = GameEntity.get_instance(action_instance.target_id)
+            affected_nodes.add(source_entity.node)
+            affected_nodes.add(target_entity.node)
 
+        # Apply the action payload to the grid map
+        actions_results = grid_map.apply_actions_payload(input_handler.actions_payload)
+
+        # Recalculate the available actions after applying the action payload
+        player_id = input_handler.active_entities.controlled_entity_id
+        player = GameEntity.get_instance(player_id)
+        target_entity_id = input_handler.active_entities.targeted_entity_id
+        if target_entity_id:
+            target_entity = GameEntity.get_instance(target_entity_id)
+            input_handler.available_actions = input_handler.get_available_actions(player, target_entity)
+        else:
+            input_handler.available_actions = []
+
+        # Get the nodes affected by the action results
+        if actions_results.results:
+            for result in actions_results.results:
+                if result.success:
+                    source_entity = GameEntity.get_instance(result.action_instance.source_id)
+                    target_entity = GameEntity.get_instance(result.action_instance.target_id)
+                    affected_nodes.add(source_entity.node)
+                    affected_nodes.add(target_entity.node)
+       
+        # Generate the payload based on the camera position and FOV
+        camera_pos = renderer.grid_map_widget.camera_pos
+        fov = shadow if renderer.grid_map_widget.show_fov else None
+        visible_nodes = [node for node in fov.nodes] if fov else grid_map.get_nodes_in_rect(camera_pos, renderer.grid_map_widget.rect.size)
+        visible_positions = {node.position.value for node in visible_nodes}
+       
+        # Update the grid map visual with the new payload
+        for pos in visible_positions - prev_visible_positions:
+            if pos in renderer.grid_map_widget.grid_map_visual.node_visuals:
+                node_visual = renderer.grid_map_widget.grid_map_visual.node_visuals[pos]
+                node = grid_map.get_node(pos)
+                entity_data_list = payload_generator.generate_payload_for_node(node)
+                node_visual.entity_visuals = [EntityVisual(**entity_data) for entity_data in entity_data_list]
+            else:
+                node = grid_map.get_node(pos)
+                entity_data_list = payload_generator.generate_payload_for_node(node)
+                renderer.grid_map_widget.grid_map_visual.node_visuals[pos] = NodeVisual(entity_visuals=[EntityVisual(**entity_data) for entity_data in entity_data_list])
+       
+        # Update the grid map visual for the affected nodes
+        for node in affected_nodes:
+            if node is None:
+                continue
+            pos = node.position.value
+            if pos in renderer.grid_map_widget.grid_map_visual.node_visuals:
+                node_visual = renderer.grid_map_widget.grid_map_visual.node_visuals[pos]
+                entity_data_list = payload_generator.generate_payload_for_node(node)
+                node_visual.entity_visuals = [EntityVisual(**entity_data) for entity_data in entity_data_list]
+       
+        # Remove node visuals that are no longer visible
+        for pos in prev_visible_positions - visible_positions:
+            if pos in renderer.grid_map_widget.grid_map_visual.node_visuals:
+                del renderer.grid_map_widget.grid_map_visual.node_visuals[pos]
+       
+        prev_visible_positions = visible_positions
+       
         # Update the renderer with the necessary data
         inventory = Character.get_instance(character.id).inventory
         target = input_handler.active_entities.targeted_entity_id
@@ -1113,40 +745,48 @@ def main():
             renderer.update(inventory, target, player_position)
         else:
             renderer.update(inventory, target)
-
-        # Apply the action payload to the grid map
-        actions_results = grid_map.apply_actions_payload(input_handler.actions_payload)
-        if actions_results.results:
-            for result in actions_results.results:
-                if result.success:
-                    # Update the payload and renderer if the action was successful
-                    payload = payload_generator.generate_payload(nodes)
-                    renderer.update_grid_map_visual(GridMapVisual(
-                        width=grid_map.width,
-                        height=grid_map.height,
-                        node_visuals={pos: NodeVisual(entity_visuals=[EntityVisual(**entity_data) for entity_data in entity_data_list]) for pos, entity_data_list in payload.items()}
-                    ))
-                else:
-                    print(f"Action failed: {result.error}")
-
-        # Render the game
-        renderer.render(path=path, shadow=shadow, raycast=raycast, radius=radius, fog_of_war=shadow)
-
+       
+        # Render the game using dirty rect rendering
+        dirty_rects = renderer.render(path=path, shadow=shadow, raycast=raycast, radius=radius, fog_of_war=shadow)
+        pygame.display.update(dirty_rects)
+       
         # Reset the camera control and actions payload
         input_handler.reset_camera_control()
         input_handler.reset_actions_payload()
-
+       
         # Limit the frame rate to 60 FPS
-        clock.tick(60)
-
+        clock.tick(144)
+       
         # Display FPS
         fps = clock.get_fps()
         fps_text = renderer.grid_map_widget.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))
         renderer.screen.blit(fps_text, (10, 10))
-        pygame.display.flip()
+        if input_handler.active_entities.targeted_node_id:
+            active_nod_pos = Node.get_instance(input_handler.active_entities.targeted_node_id).position.value
+        else:
+            active_nod_pos = None
+        if input_handler.active_entities.targeted_entity_id:
+            target_entity_name = GameEntity.get_instance(input_handler.active_entities.targeted_entity_id).name
+        else:
+            target_entity_name = None
+        #get the name of all entities in the inventory of the character
+        inventory = Character.get_instance(character.id).inventory
+        inventory_names = [item.name for item in inventory]
+        # Display active node and entity and inventory
+        active_node_text = renderer.grid_map_widget.font.render(f"Active Node: {active_nod_pos}", True, (255, 255, 255))
+        active_entity_text = renderer.grid_map_widget.font.render(f"Active Entity: {target_entity_name}", True, (255, 255, 255))
+        inventory_text = renderer.grid_map_widget.font.render(f"Inventory: {inventory_names}", True, (255, 255, 255))
+        # Display available actions
+        available_actions_text = renderer.grid_map_widget.font.render(f"Available Actions: {', '.join(input_handler.available_actions)}", True, (255, 255, 255))
+        renderer.screen.blit(active_node_text, (10, 30))
+        renderer.screen.blit(active_entity_text, (10, 50))
+        renderer.screen.blit(inventory_text, (10, 70))
+        renderer.screen.blit(available_actions_text, (10, 90))
 
-    # Quit Pygame
-    pygame.quit()
+
+
+    
+        pygame.display.flip()
 if __name__ == "__main__":
     main()
 
@@ -1158,13 +798,15 @@ from functools import lru_cache
 from typing import Dict, Type, Callable, Any, List, Tuple, Optional
 from pydantic import BaseModel
 import re
-from abstractions.goap.spatial import GameEntity, Node
+from abstractions.goap.spatial import GameEntity, Node, Shadow
+
 class SpriteMapping(BaseModel):
     entity_type: Type[GameEntity]
     name_pattern: Optional[str] = None
     sprite_path: str
     ascii_char: str
     draw_order: int
+    attribute_conditions: Optional[Dict[str, Any]] = None
 
 
 
@@ -1173,34 +815,85 @@ class PayloadGenerator:
         self.sprite_mappings = sprite_mappings
         self.grid_size = grid_size
         self.cache_size = grid_size[0] * grid_size[1]
+        self.payload_cache: Dict[int, Dict[str, Any]] = {}
 
     @lru_cache(maxsize=None)
     def get_sprite_mapping(self, entity: GameEntity) -> SpriteMapping:
         for mapping in self.sprite_mappings:
             if isinstance(entity, mapping.entity_type):
                 if mapping.name_pattern is None or re.match(mapping.name_pattern, entity.name):
+                    if mapping.attribute_conditions is None:
+                        return mapping
+                    else:
+                        if all(hasattr(entity, attr_name) and getattr(entity, attr_name).value == value for attr_name, value in mapping.attribute_conditions.items()):
+                            return mapping
+        # If no specific mapping is found, return the first matching mapping without attribute conditions
+        for mapping in self.sprite_mappings:
+            if isinstance(entity, mapping.entity_type):
+                if mapping.name_pattern is None or re.match(mapping.name_pattern, entity.name):
                     return mapping
         raise ValueError(f"No sprite mapping found for entity: {entity}")
+    
+    def generate_payload_for_node(self, node: Node) -> List[Dict[str, Any]]:
+        entity_visuals = []
+        if node.entities:
+            sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
+            for entity in sorted_entities:
+                sprite_mapping = self.get_sprite_mapping(entity)
+                entity_visual = {
+                    "sprite_path": sprite_mapping.sprite_path,
+                    "ascii_char": sprite_mapping.ascii_char,
+                    "draw_order": sprite_mapping.draw_order
+                }
+                entity_visuals.append(entity_visual)
+        return entity_visuals
 
-    def generate_payload(self, nodes: List[Node]) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
+    def generate_payload(self, nodes: List[Node], camera_pos: Tuple[int, int], fov: Optional[Shadow] = None) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
         payload = {}
+        start_x, start_y = camera_pos
+        end_x, end_y = start_x + self.grid_size[0], start_y + self.grid_size[1]
+
         for node in nodes:
             position = node.position.value
-            entity_visuals = []
-            if node.entities:
-
-                sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
-                for entity in sorted_entities:
-                    sprite_mapping = self.get_sprite_mapping(entity)
-                    # print(f"Sprite mapping for entity {entity}: {sprite_mapping}")
-                    entity_visual = {
-                        "sprite_path": sprite_mapping.sprite_path,
-                        "ascii_char": sprite_mapping.ascii_char,
-                        "draw_order": sprite_mapping.draw_order
-                    }
-                    entity_visuals.append(entity_visual)
-            payload[position] = entity_visuals
+            if fov and position not in [node.position.value for node in fov.nodes]:
+                continue  # Skip nodes outside the FOV
+            if start_x <= position[0] < end_x and start_y <= position[1] < end_y:
+                if position in self.payload_cache and self.is_node_unchanged(node):
+                    payload[position] = self.payload_cache[position]
+                else:
+                    entity_visuals = []
+                    if node.entities:
+                        sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
+                        for entity in sorted_entities:
+                            sprite_mapping = self.get_sprite_mapping(entity)
+                            entity_visual = {
+                                "sprite_path": sprite_mapping.sprite_path,
+                                "ascii_char": sprite_mapping.ascii_char,
+                                "draw_order": sprite_mapping.draw_order
+                            }
+                            entity_visuals.append(entity_visual)
+                    payload[position] = entity_visuals
+                    self.payload_cache[position] = entity_visuals
         return payload
+
+    def is_node_unchanged(self, node: Node) -> bool:
+        position = node.position.value
+        if position not in self.payload_cache:
+            return False
+        cached_entity_visuals = self.payload_cache[position]
+        current_entity_visuals = []
+        if node.entities:
+            sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
+            for entity in sorted_entities:
+                sprite_mapping = self.get_sprite_mapping(entity)
+                entity_visual = {
+                    "sprite_path": sprite_mapping.sprite_path,
+                    "ascii_char": sprite_mapping.ascii_char,
+                    "draw_order": sprite_mapping.draw_order,
+                    "attribute_conditions": sprite_mapping.attribute_conditions
+                }
+                current_entity_visuals.append(entity_visual)
+        return cached_entity_visuals == current_entity_visuals
 
 ---
 
@@ -1220,9 +913,8 @@ class CameraControl(BaseModel):
     toggle_shadow: bool = False
     toggle_raycast: bool = False
     toggle_radius: bool = False
-    toggle_fog_of_war: bool = False
+    toggle_fov: bool = False
     toggle_ascii: bool = False
-    toggle_fov: bool = False  # Add this line
 
 class EntityVisual(BaseModel):
     sprite_path: str
@@ -1259,15 +951,15 @@ class GridMapWidget(Widget):
         self.show_shadow = False
         self.show_raycast = False
         self.show_radius = False
-        self.show_fog_of_war = False
-        self.sprite_cache: Dict[str, pygame.Surface] = {}  # Add the sprite_cache attribute
-        self.font = pygame.font.Font(None, self.cell_size)  # Add the font attribute
+        self.show_fov = False
+        self.sprite_cache: Dict[str, pygame.Surface] = {}
+        self.font = pygame.font.Font(None, self.cell_size)
     
+
     def grid_to_screen(self, grid_x: int, grid_y: int) -> Tuple[int, int]:
         screen_x = (grid_x - self.camera_pos[0]) * self.cell_size
         screen_y = (grid_y - self.camera_pos[1]) * self.cell_size
         return screen_x, screen_y
-
 
     def update(self, camera_control: CameraControl, player_position: Tuple[int, int]):
         # Update camera position based on camera control
@@ -1291,56 +983,62 @@ class GridMapWidget(Widget):
         self.show_shadow = camera_control.toggle_shadow
         self.show_raycast = camera_control.toggle_raycast
         self.show_radius = camera_control.toggle_radius
-        self.show_fog_of_war = camera_control.toggle_fog_of_war
-        self.ascii_mode = camera_control.toggle_ascii
         self.show_fov = camera_control.toggle_fov
+        self.ascii_mode = camera_control.toggle_ascii
 
     def draw(self, surface: pygame.Surface, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-         raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
-        # Calculate the visible range based on the camera position and widget size
-        start_x = max(0, self.camera_pos[0])
-        start_y = max(0, self.camera_pos[1])
-        end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size)
-        end_y = min(self.grid_map_visual.height, start_y + self.rect.height // self.cell_size)
+             raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
+        # Clear the widget surface
+        self.image.fill((0, 0, 0))
 
-        for x in range(start_x, end_x):
-            for y in range(start_y, end_y):
-                position = (x, y)
+        if self.show_fov and fog_of_war:
+            # Draw only the nodes within the FOV
+            for node in fog_of_war.nodes:
+                position = node.position.value
                 if position in self.grid_map_visual.node_visuals:
-                    node_visual = self.grid_map_visual.node_visuals[position]
-                    if not self.show_fog_of_war or (not fog_of_war or position in [node.position.value for node in fog_of_war.nodes]):
-                        screen_x, screen_y = self.grid_to_screen(x, y)
-                        if self.ascii_mode:
-                            if node_visual.entity_visuals:
-                                # Draw the entity with the highest draw order in ASCII mode
-                                sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order, reverse=True)
-                                ascii_char = sorted_entity_visuals[0].ascii_char
-                                ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
-                                ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
-                                surface.blit(ascii_surface, ascii_rect)
-                        else:
-                            # Draw all entities in sprite mode (in draw order)
-                            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order)
-                            for entity_visual in sorted_entity_visuals:
-                                sprite_surface = self.load_sprite(entity_visual.sprite_path)
-                                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
-                                surface.blit(scaled_sprite_surface, (screen_x, screen_y))
+                    self.draw_node(position, self.grid_map_visual.node_visuals[position])
+        else:
+            # Draw nodes within the visible range
+            start_x = max(0, self.camera_pos[0])
+            start_y = max(0, self.camera_pos[1])
+            end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size)
+            end_y = min(self.grid_map_visual.height, start_y + self.rect.height // self.cell_size)
+
+            for x in range(start_x, end_x):
+                for y in range(start_y, end_y):
+                    position = (x, y)
+                    if position in self.grid_map_visual.node_visuals:
+                        self.draw_node(position, self.grid_map_visual.node_visuals[position])
 
         # Draw effects (in the following order: shadow, radius, raycast, path)
         if self.show_shadow and shadow:
-            self.draw_effect(surface, shadow.nodes, (255, 255, 0))
-            print(f"Drawing shadow with {len(shadow.nodes)} nodes")
+            self.draw_effect(self.image, shadow.nodes, (255, 255, 0))
         if self.show_radius and radius:
-            self.draw_effect(surface, radius.nodes, (0, 0, 255))
-            print(f"Drawing radius with {len(radius.nodes)} nodes")
+            self.draw_effect(self.image, radius.nodes, (0, 0, 255))
         if self.show_raycast and raycast:
-            self.draw_effect(surface, raycast.nodes, (255, 0, 0))
-            print(f"Drawing raycast with {len(raycast.nodes)} nodes")
+            self.draw_effect(self.image, raycast.nodes, (255, 0, 0))
         if self.show_path and path:
-            self.draw_effect(surface, path.nodes, (0, 255, 0))
-            print(f"Drawing path with {len(path.nodes)} nodes")
+            self.draw_effect(self.image, path.nodes, (0, 255, 0))
 
-        # surface.blit(self.image, self.rect)  # Blit the self.image surface onto the surface parameter
+        # Blit the widget surface onto the main surface
+        surface.blit(self.image, self.rect)
+
+    def draw_node(self, position: Tuple[int, int], node_visual: NodeVisual):
+        screen_x, screen_y = self.grid_to_screen(*position)
+        if self.ascii_mode:
+            # Draw the entity with the highest draw order in ASCII mode
+            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order, reverse=True)
+            ascii_char = sorted_entity_visuals[0].ascii_char
+            ascii_surface = self.font.render(ascii_char, True, (255, 255, 255))
+            ascii_rect = ascii_surface.get_rect(center=(screen_x + self.cell_size // 2, screen_y + self.cell_size // 2))
+            self.image.blit(ascii_surface, ascii_rect)
+        else:
+            # Draw all entities in sprite mode (in draw order)
+            sorted_entity_visuals = sorted(node_visual.entity_visuals, key=lambda ev: ev.draw_order)
+            for entity_visual in sorted_entity_visuals:
+                sprite_surface = self.load_sprite(entity_visual.sprite_path)
+                scaled_sprite_surface = pygame.transform.scale(sprite_surface, (self.cell_size, self.cell_size))
+                self.image.blit(scaled_sprite_surface, (screen_x, screen_y))
 
     def draw_effect(self, surface: pygame.Surface, nodes: List[Node], color: Tuple[int, int, int]):
         for node in nodes:
@@ -1520,6 +1218,8 @@ class Key(InanimateEntity):
 
 class Treasure(InanimateEntity):
     monetary_value: Attribute = Attribute(name="monetary_value", value=1000)
+    is_pickupable: IsPickupable = IsPickupable(value=True)
+
 
 class Trap(InanimateEntity):
     damage: Attribute = Attribute(name="damage", value=0)
@@ -2027,7 +1727,14 @@ class GameEntity(Entity):
         return f"{self.__class__.__name__}({attrs_str})"
     
     def __hash__(self):
-        return hash(self.id)
+        #hash together idname and attributeslike in Node
+        attribute_values = []
+        for attribute_name, attribute_value in self.__dict__.items():
+            if isinstance(attribute_value, Attribute):
+                attribute_values.append(f"{attribute_name}={attribute_value.value}")
+        entity_info = f"{self.__class__.__name__}_{self.name}_{self.id}_{'_'.join(attribute_values)}"
+        return hash(entity_info)
+
 
 class Node(BaseModel, RegistryHolder):
     name: str = Field("", description="The name of the node")
@@ -2082,6 +1789,15 @@ class Node(BaseModel, RegistryHolder):
     def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
         self.remove_entity(old_entity)
         self.add_entity(new_entity)
+    def __hash__(self):
+        entity_info = []
+        for entity in self.entities:
+            attribute_values = []
+            for attribute_name, attribute_value in entity.__dict__.items():
+                if isinstance(attribute_value, Attribute):
+                    attribute_values.append(f"{attribute_name}={attribute_value.value}")
+            entity_info.append(f"{entity.__class__.__name__}_{entity.name}_{entity.id}_{'_'.join(attribute_values)}")
+        return hash(f"{self.id}_{self.position.value}_{'_'.join(entity_info)}")
 
 import heapq
 
@@ -2093,7 +1809,22 @@ class GridMap:
 
     def get_node(self, position: Tuple[int, int]) -> Node:
         x, y = position
-        return self.grid[x][y]
+        return self.grid[x][y] if 0 <= x < self.width and 0 <= y < self.height else None
+    
+    def get_nodes_in_rect(self, pos: Tuple[int, int], size: Tuple[int, int]) -> List[Node]:
+        start_x, start_y = pos
+        width, height = size
+        end_x = start_x + width
+        end_y = start_y + height
+
+        nodes = []
+        for y in range(max(0, start_y), min(self.height, end_y)):
+            for x in range(max(0, start_x), min(self.width, end_x)):
+                node = self.get_node((x, y))
+                if node:
+                    nodes.append(node)
+
+        return nodes
 
     def set_node(self, position: Tuple[int, int], node: Node):
         x, y = position

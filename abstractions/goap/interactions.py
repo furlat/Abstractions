@@ -88,8 +88,6 @@ class Key(InanimateEntity):
 
 class Treasure(InanimateEntity):
     monetary_value: Attribute = Attribute(name="monetary_value", value=1000)
-    is_pickupable: IsPickupable = IsPickupable(value=True)
-
 
 class Trap(InanimateEntity):
     damage: Attribute = Attribute(name="damage", value=0)
@@ -260,8 +258,7 @@ class DropAction(Action):
         target_transformations={"stored_in": ClearStoredIn, "node": SetNode}
     )
 
-def has_required_key(inventory: List[GameEntity], required_key: str) -> bool:
-    return any(item.key_name.value == required_key for item in inventory)
+
 
 class OpenAction(Action):
     name: str = "Open"
@@ -309,32 +306,41 @@ class CloseAction(Action):
 
         return updated_source, updated_target
 
-class LockAction(Action):
-    name: str = "Lock"
-    prerequisites: Prerequisites = Prerequisites(
-        source_statements=[Statement(conditions={"can_act": True})],
-        target_statements=[Statement(conditions={"is_locked": False, "open": False})],
-        source_target_statements=[Statement(comparisons={
-            "source_position": ("node", "node", source_node_comparison),
-            "source_inventory": ("inventory", "required_key", has_required_key)
-        })]
-    )
-    consequences: Consequences = Consequences(
-        source_transformations={},
-        target_transformations={"is_locked": True}
-    )
+
+
+def has_required_key(source: GameEntity, target: Door) -> bool:
+    return any(item.key_name.value == target.required_key.value for item in source.inventory)
 
 class UnlockAction(Action):
     name: str = "Unlock"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
         target_statements=[Statement(conditions={"is_locked": True})],
-        source_target_statements=[Statement(comparisons={
-            "source_position": ("node", "node", source_node_comparison),
-            "source_inventory": ("inventory", "required_key", has_required_key)
-        })]
+        source_target_statements=[
+            Statement(
+                comparisons={"source_position": ("node", "node", source_node_comparison)},
+                callables=[has_required_key]
+            )
+        ]
     )
     consequences: Consequences = Consequences(
         source_transformations={},
         target_transformations={"is_locked": False}
+    )
+
+class LockAction(Action):
+    name: str = "Lock"
+    prerequisites: Prerequisites = Prerequisites(
+        source_statements=[Statement(conditions={"can_act": True})],
+        target_statements=[Statement(conditions={"is_locked": False, "open": False})],
+        source_target_statements=[
+            Statement(
+                comparisons={"source_position": ("node", "node", source_node_comparison)},
+                callables=[has_required_key]
+            )
+        ]
+    )
+    consequences: Consequences = Consequences(
+        source_transformations={},
+        target_transformations={"is_locked": True}
     )

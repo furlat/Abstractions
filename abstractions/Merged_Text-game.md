@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap\game`
 
-- Created: `2024-03-29T21:03:31.669867`
+- Created: `2024-03-30T00:49:50.672359`
 
 ## init
 
@@ -432,21 +432,15 @@ def main():
         else:
             input_handler.available_actions = []
 
-        # Update the grid map visual for the affected nodes
-        for result in actions_results.results:
-            if result.success:
-                source_entity = GameEntity.get_instance(result.action_instance.source_id)
-                target_entity = GameEntity.get_instance(result.action_instance.target_id)
-                affected_nodes = [source_entity.node, target_entity.node]
-                for node in affected_nodes:
-                    if node is None:
-                        continue
-                    pos = node.position.value
-                    if pos in renderer.grid_map_widget.grid_map_visual.node_visuals:
-                        node_visual = renderer.grid_map_widget.grid_map_visual.node_visuals[pos]
-                        entity_data_list = payload_generator.generate_payload_for_node(node)
-                        node_visual.entity_visuals = [EntityVisual(**entity_data) for entity_data in entity_data_list]
-            
+        # Get the nodes affected by the action results
+        if actions_results.results:
+            for result in actions_results.results:
+                if result.success:
+                    source_entity = GameEntity.get_instance(result.action_instance.source_id)
+                    target_entity = GameEntity.get_instance(result.action_instance.target_id)
+                    affected_nodes.add(source_entity.node)
+                    affected_nodes.add(target_entity.node)
+       
         # Generate the payload based on the camera position and FOV
         camera_pos = renderer.grid_map_widget.camera_pos
         fov = shadow if renderer.grid_map_widget.show_fov else None
@@ -573,6 +567,11 @@ class PayloadGenerator:
                     else:
                         if all(hasattr(entity, attr_name) and getattr(entity, attr_name).value == value for attr_name, value in mapping.attribute_conditions.items()):
                             return mapping
+        # If no specific mapping is found, return the first matching mapping without attribute conditions
+        for mapping in self.sprite_mappings:
+            if isinstance(entity, mapping.entity_type):
+                if mapping.name_pattern is None or re.match(mapping.name_pattern, entity.name):
+                    return mapping
         raise ValueError(f"No sprite mapping found for entity: {entity}")
     
     def generate_payload_for_node(self, node: Node) -> List[Dict[str, Any]]:
