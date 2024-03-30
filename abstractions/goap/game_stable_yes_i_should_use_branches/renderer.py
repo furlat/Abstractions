@@ -162,23 +162,47 @@ class GridMapWidget(Widget):
         self.camera_pos[0] = max(0, min(self.grid_map_visual.width - self.rect.width // self.cell_size, self.camera_pos[0]))
         self.camera_pos[1] = max(0, min(self.grid_map_visual.height - self.rect.height // self.cell_size, self.camera_pos[1]))
 
+class InventoryWidget(Widget):
+    def __init__(self, pos: Tuple[int, int], size: Tuple[int, int]):
+        super().__init__(pos, size)
+        self.image.fill((128, 128, 128))  # Placeholder color
+
+    def update(self, camera_control: CameraControl, inventory: List[str] = None):
+        # Update the inventory widget based on the current inventory state
+        pass
+
+class TargetWidget(Widget):
+    def __init__(self, pos: Tuple[int, int], size: Tuple[int, int]):
+        super().__init__(pos, size)
+        self.image.fill((192, 192, 192))  # Placeholder color
+
+    def update(self, camera_control: CameraControl, target: str = None):
+        # Update the target widget based on the current target
+        pass
 
 class Renderer:
     def __init__(self, screen: pygame.Surface, grid_map_visual: GridMapVisual, widget_size: Tuple[int, int]):
         self.screen = screen
-        self.widget_size = widget_size
         self.grid_map_widget = GridMapWidget((0, 0), widget_size, grid_map_visual)
+        self.inventory_widget = InventoryWidget((10, screen.get_height() - 110), (200, 100))
+        self.target_widget = TargetWidget((screen.get_width() - 210, screen.get_height() - 110), (200, 100))
         self.widgets: Dict[str, Widget] = {
-            "grid_map": self.grid_map_widget
+            "grid_map": self.grid_map_widget,
+            "inventory": self.inventory_widget,
+            "target": self.target_widget
         }
         self.camera_control = CameraControl()
 
-    def update(self, player_position: Tuple[int, int] = (0, 0)):
+    def update(self, inventory: List[str] = None, target: str = None, player_position: Tuple[int, int] = (0, 0)):
         self.grid_map_widget.update(self.camera_control, player_position)
+        if inventory is not None:
+            self.inventory_widget.update(self.camera_control, inventory)
+        if target is not None:
+            self.target_widget.update(self.camera_control, target)
 
     def render(self, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-               raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,
-               fog_of_war: Optional[Shadow] = None):
+            raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,
+            fog_of_war: Optional[Shadow] = None):
         # Clear the area occupied by each widget
         for widget in self.widgets.values():
             self.screen.fill((0, 0, 0), widget.rect)
@@ -192,6 +216,7 @@ class Renderer:
                 widget.draw(self.screen)
 
         pygame.display.flip()
+
     def handle_camera_control(self, camera_control: CameraControl):
         self.camera_control = camera_control
 

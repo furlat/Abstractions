@@ -1,6 +1,4 @@
 import pygame
-import pygame_gui
-
 from typing import List, Tuple, Set
 from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
@@ -17,12 +15,11 @@ class GameManager:
         self.sprite_mappings = sprite_mappings
         self.widget_size = widget_size
         self.controlled_entity_id = controlled_entity_id
-
+       
         self.renderer = Renderer(self.screen, GridMapVisual(width=grid_map.width, height=grid_map.height, node_visuals={}), self.widget_size)
-        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()))
-        self.input_handler = InputHandler(self.grid_map, self.sprite_mappings, self.ui_manager, (self.renderer.widget_size[0], self.renderer.widget_size[1]))
+        self.input_handler = InputHandler(self.grid_map, self.sprite_mappings)
         self.payload_generator = PayloadGenerator(self.sprite_mappings, (self.grid_map.width, self.grid_map.height))
-
+       
         self.bind_controlled_entity(self.controlled_entity_id)
         self.prev_visible_positions: Set[Tuple[int, int]] = set()
         
@@ -34,17 +31,13 @@ class GameManager:
     def run(self):
         running = True
         clock = pygame.time.Clock()
+        # Update the camera control based on input
+           
+        # Get the controlled entity and target node
         controlled_entity = GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
-
-        self.renderer.grid_map_widget.center_camera_on_player(controlled_entity.position.value)
         target_node = Node.get_instance(self.input_handler.active_entities.targeted_node_id) if self.input_handler.active_entities.targeted_node_id else None
-        inventory = Character.get_instance(self.controlled_entity_id).inventory
-        self.input_handler.inventory_widget.update_inventory(inventory)
-        time_delta = clock.tick(60) / 1000.0
-        self.ui_manager.update(time_delta)
-        self.ui_manager.draw_ui(self.screen)
-
-
+           
+       
         while running:
             # Handle events
             for event in pygame.event.get():
@@ -52,12 +45,13 @@ class GameManager:
                     running = False
                 elif event.type == pygame.MOUSEMOTION:
                     self.input_handler.handle_mouse_motion(event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
+                
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self.input_handler.handle_mouse_click(event.button, event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
                 else:
                     self.input_handler.handle_input(event)
-
                 if not event.type == pygame.MOUSEMOTION:
+                    # Calculate the radius, shadow, and raycast based on the controlled entity's position
                     radius = self.grid_map.get_radius(controlled_entity.node, max_radius=10)
                     shadow = self.grid_map.get_shadow(controlled_entity.node, max_radius=20)
                     try:
@@ -66,74 +60,61 @@ class GameManager:
                         print(f"Error: {e}")
                         raycast = None
                     path = self.grid_map.a_star(controlled_entity.node, target_node) if target_node else None
-            if self.input_handler.inventory_widget.inventory_changed:
-                self.input_handler.update_available_actions()
-                self.input_handler.inventory_widget.inventory_changed = False
+           
             # Update the camera control based on input
             self.renderer.handle_camera_control(self.input_handler.camera_control)
-
+           
             # Get the controlled entity and target node
             controlled_entity = GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
             target_node = Node.get_instance(self.input_handler.active_entities.targeted_node_id) if self.input_handler.active_entities.targeted_node_id else None
-
-            time_delta = clock.tick(60) / 1000.0
+           
             
-            
-
+           
             # Get the nodes affected by the action payload
             affected_nodes = self.get_affected_nodes()
-
+           
             # Apply the action payload to the grid map
             actions_results = self.grid_map.apply_actions_payload(self.input_handler.actions_payload)
-
-            # Check if there are any successful actions
-            successful_actions = any(result.success for result in actions_results.results)
-
             
-
+            
             # Recalculate the available actions after applying the action payload
             self.update_available_actions()
-
+           
             # Get the nodes affected by the action results
             affected_nodes.update(self.get_affected_nodes_from_results(actions_results))
-
+           
             # Generate the payload based on the camera position and FOV
             camera_pos = self.renderer.grid_map_widget.camera_pos
             fov = shadow if self.renderer.grid_map_widget.show_fov else None
             visible_nodes = [node for node in fov.nodes] if fov else self.grid_map.get_nodes_in_rect(camera_pos, self.renderer.grid_map_widget.rect.size)
             visible_positions = {node.position.value for node in visible_nodes}
-
+           
             # Update the grid map visual with the new payload
             self.update_grid_map_visual(visible_positions, affected_nodes)
-
+           
             # Remove node visuals that are no longer visible
             self.remove_invisible_node_visuals(visible_positions)
-
+           
             # Update the renderer with the necessary data
+            inventory = Character.get_instance(self.controlled_entity_id).inventory
+            target = self.input_handler.active_entities.targeted_entity_id
             player_position = controlled_entity.node.position.value
-            self.renderer.update(player_position)
-
+            self.renderer.update(inventory, target, player_position)
+           
             # Render the game using dirty rect rendering
             dirty_rects = self.renderer.render(path=path, shadow=shadow, raycast=raycast, radius=radius, fog_of_war=shadow)
             pygame.display.update(dirty_rects)
-
-            # Draw the UI elements
-            if successful_actions:
-                inventory = Character.get_instance(self.controlled_entity_id).inventory
-                self.input_handler.inventory_widget.update_inventory(inventory)
-                self.ui_manager.update(time_delta)
-                self.ui_manager.draw_ui(self.screen)
-
+           
             # Reset the camera control and actions payload
             self.input_handler.reset_camera_control()
             self.input_handler.reset_actions_payload()
-
+           
             # Limit the frame rate to 144 FPS
             clock.tick(144)
-
+           
             # Display FPS and other text
             self.display_text(clock)
-
+           
             pygame.display.flip()
            
     def get_affected_nodes(self) -> Set[Node]:
@@ -219,12 +200,3 @@ class GameManager:
         # Display available actions
         available_actions_text = self.renderer.grid_map_widget.font.render(f"Available Actions: {', '.join(self.input_handler.available_actions)}", True, (255, 255, 255))
         self.renderer.screen.blit(available_actions_text, (10, 90))
-
-        #display targeted_inventory entity
-        targeted_inventory_entity_id = self.input_handler.active_entities.targeted_inventory_entity_id
-        if targeted_inventory_entity_id:
-            targeted_inventory_entity_name = GameEntity.get_instance(targeted_inventory_entity_id).name
-            targeted_inventory_entity_text = self.renderer.grid_map_widget.font.render(f"Targeted Inventory Entity: {targeted_inventory_entity_name}", True, (255, 255, 255))
-        else:
-            targeted_inventory_entity_text = self.renderer.grid_map_widget.font.render(f"Targeted Inventory Entity: None", True, (255, 255, 255))
-        self.renderer.screen.blit(targeted_inventory_entity_text, (10, 110))
