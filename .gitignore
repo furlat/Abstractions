@@ -9,5 +9,4 @@ abstractions/__pycache__/*
 
 *.pyc
 abstractions/text/chat/conversation_graph
-*.png
 *.json
