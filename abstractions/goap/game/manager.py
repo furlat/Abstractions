@@ -36,7 +36,7 @@ class GameManager:
         
     def setup_gui_widgets(self, screen: pygame.Surface, sprite_mappings: List[SpriteMapping]):
         # Initialize the UI manager
-        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()), r'C:\Users\Tommaso\Documents\Dev\pygame_gui_examples\data\themes\notepad_theme.json')
+        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()))
         # Initialize the inventory widget
         # Initialize the notepad window
         self.notepad_window = UIWindow(pygame.Rect(805, 160, 300, 400), window_display_title="Adventure Notepad")
@@ -53,8 +53,8 @@ class GameManager:
         container=self.textstate_window)
         self.action_logs = []
         # Initalize the background
-        self.vertical_background = pygame.Surface((400, 900))
-        self.horizontal_background = pygame.Surface((1200, 400))
+        self.vertical_background = pygame.Surface((1000, 800))
+        self.horizontal_background = pygame.Surface((1200, 800))
        
     def bind_controlled_entity(self, controlled_entity_id: str):
         self.controlled_entity_id = controlled_entity_id
@@ -103,8 +103,8 @@ class GameManager:
                     self.textstate_box.set_text("\n".join(inverted_list_action))
 
     def run(self):
-        self.screen.blit(self.vertical_background, (800, 0))
-        self.screen.blit(self.horizontal_background, (0, 600))
+        self.screen.blit(self.vertical_background, (400, 0))
+        self.screen.blit(self.horizontal_background, (0, 300))
         running = True
         clock = pygame.time.Clock()
         target_node = self.get_target_node()
@@ -206,10 +206,11 @@ class GameManager:
             clock.tick(144)
 
             # Display FPS and other text
-            self.display_text(clock)
+            
             self.ui_manager.update(time_delta)
-            self.screen.blit(self.vertical_background, (800, 0))
-            self.screen.blit(self.horizontal_background, (0, 600))
+            self.screen.blit(self.vertical_background, (400, 0))
+            self.screen.blit(self.horizontal_background, (0, 300))
+            self.display_text(clock)
             self.ui_manager.draw_ui(self.screen)
             pygame.display.update()
 
@@ -273,31 +274,31 @@ class GameManager:
         # Display FPS
         fps = clock.get_fps()
         fps_text = self.renderer.grid_map_widget.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))
-        self.renderer.screen.blit(fps_text, (10, 10))
+        self.renderer.screen.blit(fps_text, (1000, 10))
        
         # Display active node and entity
         active_node_pos = self.input_handler.active_entities.targeted_node_id
         if active_node_pos:
             active_node_pos = Node.get_instance(active_node_pos).position.value
         active_node_text = self.renderer.grid_map_widget.font.render(f"Active Node: {active_node_pos}", True, (255, 255, 255))
-        self.renderer.screen.blit(active_node_text, (10, 30))
+        self.renderer.screen.blit(active_node_text, (1000, 30))
        
         active_entity_id = self.input_handler.active_entities.targeted_entity_id
         if active_entity_id:
             active_entity_name = GameEntity.get_instance(active_entity_id).name
             active_entity_text = self.renderer.grid_map_widget.font.render(f"Active Entity: {active_entity_name}", True, (255, 255, 255))
-            self.renderer.screen.blit(active_entity_text, (10, 50))
+            self.renderer.screen.blit(active_entity_text, (1000, 50))
        
         # Display inventory
         controlled_entity = GameEntity.get_instance(self.controlled_entity_id)
         if isinstance(controlled_entity, Character):
             inventory_names = [item.name for item in controlled_entity.inventory]
             inventory_text = self.renderer.grid_map_widget.font.render(f"Inventory: {inventory_names}", True, (255, 255, 255))
-            self.renderer.screen.blit(inventory_text, (10, 70))
+            self.renderer.screen.blit(inventory_text, (1000, 70))
        
         # Display available actions
         available_actions_text = self.renderer.grid_map_widget.font.render(f"Available Actions: {', '.join(self.input_handler.available_actions)}", True, (255, 255, 255))
-        self.renderer.screen.blit(available_actions_text, (10, 90))
+        self.renderer.screen.blit(available_actions_text, (1000, 90))
 
         #display targeted_inventory entity
         targeted_inventory_entity_id = self.input_handler.active_entities.targeted_inventory_entity_id
@@ -306,4 +307,4 @@ class GameManager:
             targeted_inventory_entity_text = self.renderer.grid_map_widget.font.render(f"Targeted Inventory Entity: {targeted_inventory_entity_name}", True, (255, 255, 255))
         else:
             targeted_inventory_entity_text = self.renderer.grid_map_widget.font.render(f"Targeted Inventory Entity: None", True, (255, 255, 255))
-        self.renderer.screen.blit(targeted_inventory_entity_text, (10, 110))
+        self.renderer.screen.blit(targeted_inventory_entity_text, (1000, 110))

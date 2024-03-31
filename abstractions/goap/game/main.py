@@ -10,7 +10,8 @@ from abstractions.goap.game.input_handler import InputHandler
 from pydantic import ValidationError
 from abstractions.goap.game.manager import GameManager
 
-BASE_PATH = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
+# BASE_PATH = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
+BASE_PATH = "/Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/goap"
 def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
     room_x = (grid_map.width - room_width) // 2
     room_y = (grid_map.height - room_height) // 2
@@ -52,7 +53,7 @@ def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
 def main():
     # Initialize Pygame
     pygame.init()
-    screen_width, screen_height = 1200, 900
+    screen_width, screen_height = 1400, 800
     screen = pygame.display.set_mode((screen_width, screen_height))
     
     pygame.display.set_caption("Dungeon Experiment")
@@ -78,7 +79,7 @@ def main():
 ]
    
     # Create the game manager
-    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(800, 600), controlled_entity_id=character.id)
+    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(400, 300), controlled_entity_id=character.id)
     
     # Run the game
     game_manager.run()
