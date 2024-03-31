@@ -1,9 +1,13 @@
 import pygame
 import pygame_gui
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from abstractions.goap.interactions import GameEntity
 from abstractions.goap.game.payloadgen import SpriteMapping
+import typing
+
+if typing.TYPE_CHECKING:
+    from abstractions.goap.game.input_handler import InputHandler
 
 class InventoryItemVisual(BaseModel):
     sprite_path: str
@@ -14,7 +18,7 @@ class InventoryVisualState(BaseModel):
     items: List[InventoryItemVisual]
     
 class InventoryWidget(pygame_gui.elements.UIWindow):
-    def __init__(self, pos, manager, sprite_mappings: List[SpriteMapping], input_handler):
+    def __init__(self, pos, manager, sprite_mappings: List[SpriteMapping], input_handler:Optional["InputHandler"] = None):
         super().__init__(pygame.Rect(pos, (200, 150)), manager, window_display_title="Inventory", object_id="#inventory_window")
        
         self.inventory_container = pygame_gui.core.UIContainer(pygame.Rect(0, 0, 200, 150), manager=manager, container=self, object_id="#inventory_container")
@@ -24,7 +28,9 @@ class InventoryWidget(pygame_gui.elements.UIWindow):
         self.input_handler = input_handler
         self.inventory_changed = False
 
-
+    def setup_input_handler(self, input_handler: "InputHandler"):
+        self.input_handler = input_handler
+        
     def update(self, time_delta):
         super().update(time_delta)
    

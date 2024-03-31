@@ -59,7 +59,7 @@ def main():
     
    
     # Create the grid map and generate the dungeon
-    grid_map = GridMap(width=100, height=100)
+    grid_map = GridMap(width=50, height=50)
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
    

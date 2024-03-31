@@ -1,13 +1,15 @@
 import pygame
 import pygame_gui
 
-from typing import List, Tuple, Set
-from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity
+from typing import List, Tuple, Set, Optional
+from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
 from abstractions.goap.game.input_handler import InputHandler
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.interactions import Character
 from pydantic import ValidationError
+from abstractions.goap.game.gui_widgets import InventoryWidget
+from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
 
 class GameManager:
     def __init__(self, screen: pygame.Surface, grid_map: GridMap, sprite_mappings: List[SpriteMapping],
@@ -17,46 +19,97 @@ class GameManager:
         self.sprite_mappings = sprite_mappings
         self.widget_size = widget_size
         self.controlled_entity_id = controlled_entity_id
+        
 
         self.renderer = Renderer(self.screen, GridMapVisual(width=grid_map.width, height=grid_map.height, node_visuals={}), self.widget_size)
-        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()), r'C:\Users\Tommaso\Documents\Dev\pygame_gui_examples\data\themes\notepad_theme.json')
-        self.input_handler = InputHandler(self.grid_map, self.sprite_mappings, self.ui_manager, (self.renderer.widget_size[0], self.renderer.widget_size[1]))
+        self.setup_gui_widgets(screen, sprite_mappings)
+        
+        self.inventory_widget = InventoryWidget((self.renderer.widget_size[0] + 5, 10), self.ui_manager, sprite_mappings, None)
+        self.input_handler = InputHandler(self.grid_map, self.sprite_mappings, self.ui_manager, (self.renderer.widget_size[0], self.renderer.widget_size[1]),self.inventory_widget,self.text_entry_box)
         self.payload_generator = PayloadGenerator(self.sprite_mappings, (self.grid_map.width, self.grid_map.height))
+        
 
         self.bind_controlled_entity(self.controlled_entity_id)
         self.prev_visible_positions: Set[Tuple[int, int]] = set()
-        self.vertical_background = pygame.Surface((400, 900))
-        self.horizontal_background = pygame.Surface((1200, 400))
-
         
 
+        
+    def setup_gui_widgets(self, screen: pygame.Surface, sprite_mappings: List[SpriteMapping]):
+        # Initialize the UI manager
+        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()), r'C:\Users\Tommaso\Documents\Dev\pygame_gui_examples\data\themes\notepad_theme.json')
+        # Initialize the inventory widget
+        # Initialize the notepad window
+        self.notepad_window = UIWindow(pygame.Rect(805, 160, 300, 400), window_display_title="Adventure Notepad")
+        self.text_entry_box = UITextEntryBox(
+        relative_rect=pygame.Rect((0, 0),  self.notepad_window.get_container().get_size()),
+        initial_text="",
+        container= self.notepad_window)
+        #Initialize the texstate Window
+        # the textstate window can be uptad by calling textstate_box.set_text("text")
+        self.textstate_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Action Logger")
+        self.textstate_box = UITextBox(
+        relative_rect=pygame.Rect((0, 0), self.textstate_window.get_container().get_size()),
+        html_text="",
+        container=self.textstate_window)
+        self.action_logs = []
+        # Initalize the background
+        self.vertical_background = pygame.Surface((400, 900))
+        self.horizontal_background = pygame.Surface((1200, 400))
        
     def bind_controlled_entity(self, controlled_entity_id: str):
         self.controlled_entity_id = controlled_entity_id
         self.input_handler.active_entities.controlled_entity_id = controlled_entity_id
-       
+    
+    def get_controlled_entity(self,inventory:bool = False):
+        if inventory:
+            return Character.get_instance(self.input_handler.active_entities.controlled_entity_id).inventory
+        return GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
+    
+    def get_target_node(self):
+        return  Node.get_instance(self.input_handler.active_entities.targeted_node_id) if self.input_handler.active_entities.targeted_node_id else None
+
+    def controlled_entity_preprocess(self, clock: pygame.time.Clock, target_node:  Optional[Node] = None):
+        controlled_entity = self.get_controlled_entity()
+        self.renderer.grid_map_widget.center_camera_on_player(controlled_entity.position.value)
+        inventory = self.get_controlled_entity(inventory=True)
+        self.input_handler.inventory_widget.update_inventory(inventory)
+        time_delta = clock.tick(60) / 1000.0
+        self.ui_manager.update(time_delta)
+        self.ui_manager.draw_ui(self.screen)
+        radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
+        return controlled_entity, inventory, radius, shadow, raycast, path
+    
+    def compute_shapes(self,source_node:Node, target_node: Optional[Node] = None):
+        radius = self.grid_map.get_radius(source_node, max_radius=10)
+        shadow = self.grid_map.get_shadow(source_node, max_radius=20)
+        try:
+            raycast = self.grid_map.get_raycast(source_node, target_node) if target_node else None
+        except ValidationError as e:
+            print(f"Error: {e}")
+            raycast = None
+        path = self.grid_map.a_star(source_node, target_node) if target_node else None
+        return radius, shadow, raycast, path
+
+    def update_action_logs(self,action_results:ActionsResults):
+                    for result in action_results.results:
+                        if result.success:
+                            action_name = result.action_instance.action.name
+                            source_name = GameEntity.get_instance(result.action_instance.source_id).name
+                            target_name = GameEntity.get_instance(result.action_instance.target_id).name
+                            
+                            new_action_text = f"{source_name} just {action_name} to {target_name}"
+                            self.action_logs.append(new_action_text)
+                    inverted_list_action = self.action_logs[::-1]
+                    self.textstate_box.set_text("\n".join(inverted_list_action))
+
     def run(self):
         self.screen.blit(self.vertical_background, (800, 0))
         self.screen.blit(self.horizontal_background, (0, 600))
         running = True
         clock = pygame.time.Clock()
-        controlled_entity = GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
-
-        self.renderer.grid_map_widget.center_camera_on_player(controlled_entity.position.value)
-        target_node = Node.get_instance(self.input_handler.active_entities.targeted_node_id) if self.input_handler.active_entities.targeted_node_id else None
-        inventory = Character.get_instance(self.controlled_entity_id).inventory
-        self.input_handler.inventory_widget.update_inventory(inventory)
-        time_delta = clock.tick(60) / 1000.0
-        self.ui_manager.update(time_delta)
-        self.ui_manager.draw_ui(self.screen)
-        radius = self.grid_map.get_radius(controlled_entity.node, max_radius=10)
-        shadow = self.grid_map.get_shadow(controlled_entity.node, max_radius=20)
-        try:
-            raycast = self.grid_map.get_raycast(controlled_entity.node, target_node) if target_node else None
-        except ValidationError as e:
-            print(f"Error: {e}")
-            raycast = None
-        path = self.grid_map.a_star(controlled_entity.node, target_node) if target_node else None
+        target_node = self.get_target_node()
+        controlled_entity, inventory, radius, shadow, raycast, path = self.controlled_entity_preprocess(clock, target_node)
+        
 
         while running:
             # Handle events
@@ -72,14 +125,8 @@ class GameManager:
                     self.input_handler.handle_input(event)
 
                 if not event.type == pygame.MOUSEMOTION:
-                    radius = self.grid_map.get_radius(controlled_entity.node, max_radius=10)
-                    shadow = self.grid_map.get_shadow(controlled_entity.node, max_radius=20)
-                    try:
-                        raycast = self.grid_map.get_raycast(controlled_entity.node, target_node) if target_node else None
-                    except ValidationError as e:
-                        print(f"Error: {e}")
-                        raycast = None
-                    path = self.grid_map.a_star(controlled_entity.node, target_node) if target_node else None
+                    controlled_entity = self.get_controlled_entity()
+                    radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
                 self.ui_manager.process_events(event)
             
 
@@ -87,12 +134,10 @@ class GameManager:
             self.renderer.handle_camera_control(self.input_handler.camera_control)
 
             # Get the controlled entity and target node
-            controlled_entity = GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
-            target_node = Node.get_instance(self.input_handler.active_entities.targeted_node_id) if self.input_handler.active_entities.targeted_node_id else None
+            controlled_entity = self.get_controlled_entity()
+            target_node = self.get_target_node()
 
             time_delta = clock.tick(60) / 1000.0
-            
-            
 
             # Get the nodes affected by the action payload
             affected_nodes = self.get_affected_nodes()
@@ -102,9 +147,23 @@ class GameManager:
 
             # Check if there are any successful actions
             successful_actions = any(result.success for result in actions_results.results)
+            #get the action name, source and entiy as a formatted string that we will add to the textstate_box
+            # we will use the action name to get the action description from the action class, then combine it with the source name and target name
+            # we will also add the position of the source and target node. 
+            if successful_actions:
+                
+                action_name_from_results = actions_results.results[0].action_instance.action.name
+                source_name = GameEntity.get_instance(actions_results.results[0].action_instance.source_id).name
+                target_name = GameEntity.get_instance(actions_results.results[0].action_instance.target_id).name
+                
+                new_action_text = f"{source_name} just {action_name_from_results}  to {target_name} "
+                self.action_logs.append(new_action_text)
+                #format the action logs with a new line for element of the list
+                inverted_list_action = self.action_logs[::-1]
+                action_text = "\n".join(inverted_list_action)
+                self.textstate_box.set_text(action_text)
 
             
-
             # Recalculate the available actions after applying the action payload
             self.update_available_actions()
 
@@ -135,6 +194,7 @@ class GameManager:
             if successful_actions:
                 inventory = Character.get_instance(self.controlled_entity_id).inventory
                 self.input_handler.inventory_widget.update_inventory(inventory)
+                
                 
                 # # self.ui_manager.draw_ui(self.screen)
 

@@ -43,6 +43,7 @@ class Widget(pygame.sprite.Sprite):
 class GridMapWidget(Widget):
     def __init__(self, pos: Tuple[int, int], size: Tuple[int, int], grid_map_visual: GridMapVisual):
         super().__init__(pos, size)
+        
         self.grid_map_visual = grid_map_visual
         self.cell_size = 32
         self.camera_pos = [0, 0]  # Camera position in grid coordinates
@@ -85,11 +86,7 @@ class GridMapWidget(Widget):
         self.show_fov = camera_control.toggle_fov
         self.ascii_mode = camera_control.toggle_ascii
 
-    def draw(self, surface: pygame.Surface, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
-             raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
-        # Clear the widget surface
-        self.image.fill((0, 0, 0))
-
+    def draw_visible_nodes(self, fog_of_war: Optional[Shadow] = None):
         if self.show_fov and fog_of_war:
             # Draw only the nodes within the FOV
             for node in fog_of_war.nodes:
@@ -109,6 +106,8 @@ class GridMapWidget(Widget):
                     if position in self.grid_map_visual.node_visuals:
                         self.draw_node(position, self.grid_map_visual.node_visuals[position])
 
+    def draw_shape_effect(self,path: Optional[Path] = None, shadow: Optional[Shadow] = None,
+             raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
         # Draw effects (in the following order: shadow, radius, raycast, path)
         if self.show_shadow and shadow:
             self.draw_effect(self.image, shadow.nodes, (255, 255, 0))
@@ -118,6 +117,16 @@ class GridMapWidget(Widget):
             self.draw_effect(self.image, raycast.nodes, (255, 0, 0))
         if self.show_path and path:
             self.draw_effect(self.image, path.nodes, (0, 255, 0))
+
+
+    def draw(self, surface: pygame.Surface, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
+             raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
+        # Clear the widget surface
+        self.image.fill((0, 0, 0))
+
+        self.draw_visible_nodes(fog_of_war)
+
+        self.draw_shape_effect(path, shadow, raycast, radius, fog_of_war)
 
         # Blit the widget surface onto the main surface
         surface.blit(self.image, self.rect)

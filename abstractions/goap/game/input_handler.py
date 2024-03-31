@@ -40,7 +40,7 @@ class ActiveEntities(BaseModel):
         return v
 
 class InputHandler:
-    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager, grid_map_widget_size: Tuple[int, int]):
+    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager, grid_map_widget_size: Tuple[int, int],inventory_widget: InventoryWidget, text_entry_box: UITextEntryBox):
         self.grid_map = grid_map
         self.active_entities = ActiveEntities()
         self.mouse_highlighted_node: Optional[Node] = None
@@ -49,13 +49,16 @@ class InputHandler:
         self.available_actions: List[str] = []
         self.sprite_mappings = sprite_mappings
         self.active_widget: Optional[str] = None
-        self.grid_map_widget_size = grid_map_widget_size  
-        self.inventory_widget = InventoryWidget((self.grid_map_widget_size[0] + 5, 10), ui_manager, sprite_mappings, self)
-        self.notepad_window = UIWindow(pygame.Rect(805, 160, 300, 400), window_display_title="Adventure Notepad")
-        self.text_entry_box = UITextEntryBox(
-        relative_rect=pygame.Rect((0, 0),  self.notepad_window.get_container().get_size()),
-        initial_text="",
-        container= self.notepad_window)
+        self.grid_map_widget_size = grid_map_widget_size 
+        self.ui_manager = ui_manager
+        self.inventory_widget = inventory_widget
+        self.inventory_widget.setup_input_handler(self)
+        self.text_entry_box = text_entry_box
+
+        
+
+
+
         self.latest_mouse_click = (0, 0)
 
     def handle_input(self, event):
@@ -67,7 +70,7 @@ class InputHandler:
             self.handle_mouse_click(event.button, event.pos)
            
     def handle_keypress_on_gridmap(self, key):
-        if self.notepad_window.rect.collidepoint(self.latest_mouse_click):
+        if self.text_entry_box.rect.collidepoint(self.latest_mouse_click):
             print("trying keywriting but latest was a notepad window clicked")
             
         else:
