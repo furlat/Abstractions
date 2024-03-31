@@ -140,6 +140,7 @@ class InputHandler:
                 if clicked_node and self.is_position_visible(clicked_node.position.x, clicked_node.position.y, camera_pos, cell_size):
                     self.active_entities.targeted_node_id = clicked_node.id
                     self.active_entities.targeted_entity_id = self.get_next_entity_at_node(clicked_node).id if self.get_next_entity_at_node(clicked_node) else None
+                    self.active_entities.targeted_inventory_entity_id = None
                     player_id = self.active_entities.controlled_entity_id
                     player = GameEntity.get_instance(player_id)
                     target_entity_id = self.active_entities.targeted_entity_id
