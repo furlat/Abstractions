@@ -12,7 +12,7 @@ class CameraControl(BaseModel):
     toggle_shadow: bool = False
     toggle_raycast: bool = False
     toggle_radius: bool = False
-    toggle_fov: bool = False
+    toggle_fov: bool = True
     toggle_ascii: bool = False
 
 class EntityVisual(BaseModel):

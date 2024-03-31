@@ -12,6 +12,7 @@ class InventoryItemVisual(BaseModel):
 
 class InventoryVisualState(BaseModel):
     items: List[InventoryItemVisual]
+    
 class InventoryWidget(pygame_gui.elements.UIWindow):
     def __init__(self, pos, manager, sprite_mappings: List[SpriteMapping], input_handler):
         super().__init__(pygame.Rect(pos, (200, 150)), manager, window_display_title="Inventory", object_id="#inventory_window")

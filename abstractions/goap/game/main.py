@@ -1,4 +1,6 @@
 import pygame
+
+
 from abstractions.goap.spatial import GridMap, GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
 from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem
@@ -52,7 +54,9 @@ def main():
     pygame.init()
     screen_width, screen_height = 1200, 900
     screen = pygame.display.set_mode((screen_width, screen_height))
+    
     pygame.display.set_caption("Dungeon Experiment")
+    
    
     # Create the grid map and generate the dungeon
     grid_map = GridMap(width=100, height=100)

@@ -8,6 +8,8 @@ from pydantic import BaseModel, ValidationInfo, field_validator
 from abstractions.goap.game.gui_widgets import InventoryWidget
 import pygame
 import pygame_gui
+from pygame_gui import UIManager, UI_TEXT_ENTRY_CHANGED
+from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
 
 
 class ActiveEntities(BaseModel):
@@ -49,63 +51,76 @@ class InputHandler:
         self.active_widget: Optional[str] = None
         self.grid_map_widget_size = grid_map_widget_size  
         self.inventory_widget = InventoryWidget((self.grid_map_widget_size[0] + 5, 10), ui_manager, sprite_mappings, self)
+        self.notepad_window = UIWindow(pygame.Rect(805, 160, 300, 400), window_display_title="Adventure Notepad")
+        self.text_entry_box = UITextEntryBox(
+        relative_rect=pygame.Rect((0, 0),  self.notepad_window.get_container().get_size()),
+        initial_text="",
+        container= self.notepad_window)
+        self.latest_mouse_click = (0, 0)
 
     def handle_input(self, event):
-
-        if event.type == pygame.KEYDOWN:
-            self.handle_keypress(event.key)
+        if event.type == pygame.KEYDOWN: 
+            self.handle_keypress_on_gridmap(event.key)
         elif event.type == pygame.MOUSEMOTION:
             self.handle_mouse_motion(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             self.handle_mouse_click(event.button, event.pos)
-
-    def handle_keypress(self, key):
-        if key == pygame.K_w:
-            self.generate_move_step((0, -1))
-        elif key == pygame.K_s:
-            self.generate_move_step((0, 1))
-        elif key == pygame.K_a:
-            self.generate_move_step((-1, 0))
-        elif key == pygame.K_d:
-            self.generate_move_step((1, 0))
-        elif key == pygame.K_1:
-            self.camera_control.zoom = 1
-        elif key == pygame.K_2:
-            self.camera_control.zoom = -1
-        elif key == pygame.K_SPACE:
-            self.camera_control.recenter = True
-        elif key == pygame.K_q:
-            self.camera_control.toggle_ascii = not self.camera_control.toggle_ascii
-        elif key == pygame.K_p:
-            self.camera_control.toggle_path = not self.camera_control.toggle_path
-            print(f"Path: {self.camera_control.toggle_path}")
-        elif key == pygame.K_t:
-            self.camera_control.toggle_shadow = not self.camera_control.toggle_shadow
-            print(f"Shadow: {self.camera_control.toggle_shadow}")
-        elif key == pygame.K_c:
-            self.camera_control.toggle_raycast = not self.camera_control.toggle_raycast
-            print(f"Raycast: {self.camera_control.toggle_raycast}")
-        elif key == pygame.K_r:
-            self.camera_control.toggle_radius = not self.camera_control.toggle_radius
-            print(f"Radius: {self.camera_control.toggle_radius}")
-        elif key == pygame.K_f:
-            self.camera_control.toggle_fov = not self.camera_control.toggle_fov
-            print(f"FOV: {self.camera_control.toggle_fov}")
-        elif key == pygame.K_v:
-            self.generate_lock_unlock_action()
-        elif key == pygame.K_x:
-            self.generate_drop_action()
-        elif key == pygame.K_LEFT:
-            self.camera_control.move = (-1, 0)
-        elif key == pygame.K_RIGHT:
-            self.camera_control.move = (1, 0)
-        elif key == pygame.K_UP:
-            self.camera_control.move = (0, -1)
-        elif key == pygame.K_DOWN:
-            self.camera_control.move = (0, 1)
+           
+    def handle_keypress_on_gridmap(self, key):
+        if self.notepad_window.rect.collidepoint(self.latest_mouse_click):
+            print("trying keywriting but latest was a notepad window clicked")
+            
+        else:
+            
+            if key == pygame.K_w:
+                self.generate_move_step((0, -1))
+            elif key == pygame.K_s:
+                self.generate_move_step((0, 1))
+            elif key == pygame.K_a:
+                self.generate_move_step((-1, 0))
+            elif key == pygame.K_d:
+                self.generate_move_step((1, 0))
+            elif key == pygame.K_1:
+                self.camera_control.zoom = 1
+            elif key == pygame.K_2:
+                self.camera_control.zoom = -1
+            elif key == pygame.K_SPACE:
+                self.camera_control.recenter = True
+            elif key == pygame.K_q:
+                self.camera_control.toggle_ascii = not self.camera_control.toggle_ascii
+            elif key == pygame.K_p:
+                self.camera_control.toggle_path = not self.camera_control.toggle_path
+                print(f"Path: {self.camera_control.toggle_path}")
+            elif key == pygame.K_t:
+                self.camera_control.toggle_shadow = not self.camera_control.toggle_shadow
+                print(f"Shadow: {self.camera_control.toggle_shadow}")
+            elif key == pygame.K_c:
+                self.camera_control.toggle_raycast = not self.camera_control.toggle_raycast
+                print(f"Raycast: {self.camera_control.toggle_raycast}")
+            elif key == pygame.K_r:
+                self.camera_control.toggle_radius = not self.camera_control.toggle_radius
+                print(f"Radius: {self.camera_control.toggle_radius}")
+            elif key == pygame.K_f:
+                self.camera_control.toggle_fov = not self.camera_control.toggle_fov
+                print(f"FOV: {self.camera_control.toggle_fov}")
+            elif key == pygame.K_v:
+                self.generate_lock_unlock_action()
+            elif key == pygame.K_x:
+                self.generate_drop_action()
+            elif key == pygame.K_LEFT:
+                self.camera_control.move = (-1, 0)
+            elif key == pygame.K_RIGHT:
+                self.camera_control.move = (1, 0)
+            elif key == pygame.K_UP:
+                self.camera_control.move = (0, -1)
+            elif key == pygame.K_DOWN:
+                self.camera_control.move = (0, 1)
 
 
     def handle_mouse_click(self, button, pos, camera_pos, cell_size):
+        self.latest_mouse_click = pos
+        print("latest mouse click", self.latest_mouse_click)
+
         if button == 1:  # Left mouse button
             if self.inventory_widget.rect.collidepoint(pos):
                 # Handle clicks on the inventory widget

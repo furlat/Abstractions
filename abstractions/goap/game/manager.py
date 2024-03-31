@@ -19,19 +19,25 @@ class GameManager:
         self.controlled_entity_id = controlled_entity_id
 
         self.renderer = Renderer(self.screen, GridMapVisual(width=grid_map.width, height=grid_map.height, node_visuals={}), self.widget_size)
-        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()))
+        self.ui_manager = pygame_gui.UIManager((screen.get_width(), screen.get_height()), r'C:\Users\Tommaso\Documents\Dev\pygame_gui_examples\data\themes\notepad_theme.json')
         self.input_handler = InputHandler(self.grid_map, self.sprite_mappings, self.ui_manager, (self.renderer.widget_size[0], self.renderer.widget_size[1]))
         self.payload_generator = PayloadGenerator(self.sprite_mappings, (self.grid_map.width, self.grid_map.height))
 
         self.bind_controlled_entity(self.controlled_entity_id)
         self.prev_visible_positions: Set[Tuple[int, int]] = set()
+        self.vertical_background = pygame.Surface((400, 900))
+        self.horizontal_background = pygame.Surface((1200, 400))
+
         
+
        
     def bind_controlled_entity(self, controlled_entity_id: str):
         self.controlled_entity_id = controlled_entity_id
         self.input_handler.active_entities.controlled_entity_id = controlled_entity_id
        
     def run(self):
+        self.screen.blit(self.vertical_background, (800, 0))
+        self.screen.blit(self.horizontal_background, (0, 600))
         running = True
         clock = pygame.time.Clock()
         controlled_entity = GameEntity.get_instance(self.input_handler.active_entities.controlled_entity_id)
@@ -43,10 +49,18 @@ class GameManager:
         time_delta = clock.tick(60) / 1000.0
         self.ui_manager.update(time_delta)
         self.ui_manager.draw_ui(self.screen)
-
+        radius = self.grid_map.get_radius(controlled_entity.node, max_radius=10)
+        shadow = self.grid_map.get_shadow(controlled_entity.node, max_radius=20)
+        try:
+            raycast = self.grid_map.get_raycast(controlled_entity.node, target_node) if target_node else None
+        except ValidationError as e:
+            print(f"Error: {e}")
+            raycast = None
+        path = self.grid_map.a_star(controlled_entity.node, target_node) if target_node else None
 
         while running:
             # Handle events
+            
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -66,9 +80,9 @@ class GameManager:
                         print(f"Error: {e}")
                         raycast = None
                     path = self.grid_map.a_star(controlled_entity.node, target_node) if target_node else None
-            if self.input_handler.inventory_widget.inventory_changed:
-                self.input_handler.update_available_actions()
-                self.input_handler.inventory_widget.inventory_changed = False
+                self.ui_manager.process_events(event)
+            
+
             # Update the camera control based on input
             self.renderer.handle_camera_control(self.input_handler.camera_control)
 
@@ -121,8 +135,8 @@ class GameManager:
             if successful_actions:
                 inventory = Character.get_instance(self.controlled_entity_id).inventory
                 self.input_handler.inventory_widget.update_inventory(inventory)
-                self.ui_manager.update(time_delta)
-                self.ui_manager.draw_ui(self.screen)
+                
+                # # self.ui_manager.draw_ui(self.screen)
 
             # Reset the camera control and actions payload
             self.input_handler.reset_camera_control()
@@ -133,6 +147,11 @@ class GameManager:
 
             # Display FPS and other text
             self.display_text(clock)
+            self.ui_manager.update(time_delta)
+            self.screen.blit(self.vertical_background, (800, 0))
+            self.screen.blit(self.horizontal_background, (0, 600))
+            self.ui_manager.draw_ui(self.screen)
+            pygame.display.update()
 
             pygame.display.flip()
            
