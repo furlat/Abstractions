@@ -46,12 +46,19 @@ class GameManager:
         container= self.notepad_window)
         #Initialize the texstate Window
         # the textstate window can be uptad by calling textstate_box.set_text("text")
-        self.textstate_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Action Logger")
-        self.textstate_box = UITextBox(
-        relative_rect=pygame.Rect((0, 0), self.textstate_window.get_container().get_size()),
+        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Action Logger")
+        self.actionlog_box = UITextBox(
+        relative_rect=pygame.Rect((0, 0), self.actionlog_window.get_container().get_size()),
         html_text="",
-        container=self.textstate_window)
+        container=self.actionlog_window)
         self.action_logs = []
+        #Initialize the ObsLogger Window
+        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Observation Logger")
+        self.observationlog_box = UITextBox(
+        relative_rect=pygame.Rect((0, 0), self.observationlog_window.get_container().get_size()),
+        html_text="",
+        container=self.observationlog_window)
+        self.observation_logs = []
         # Initalize the background
         self.vertical_background = pygame.Surface((1000, 800))
         self.horizontal_background = pygame.Surface((1200, 800))
@@ -81,7 +88,8 @@ class GameManager:
     
     def compute_shapes(self,source_node:Node, target_node: Optional[Node] = None):
         radius = self.grid_map.get_radius(source_node, max_radius=10)
-        shadow = self.grid_map.get_shadow(source_node, max_radius=20)
+        shadow = self.grid_map.get_shadow(source_node, max_radius=10)
+       
         try:
             raycast = self.grid_map.get_raycast(source_node, target_node) if target_node else None
         except ValidationError as e:
@@ -100,8 +108,21 @@ class GameManager:
                             new_action_text = f"{source_name} just {action_name} to {target_name}"
                             self.action_logs.append(new_action_text)
                     inverted_list_action = self.action_logs[::-1]
-                    self.textstate_box.set_text("\n".join(inverted_list_action))
+                    self.actionlog_box.set_text("\n".join(inverted_list_action))
+    
+    def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
+        sprite_mappings=self.sprite_mappings
+        if mode == "groups":
+            self.observation_logs.append(observation.to_entity_groups(use_egocentric=use_egoncentric))
+        
+        elif mode == "list":
+            obs = observation.to_list( use_egocentric=use_egoncentric,include_attributes=include_attributes)
+            self.observation_logs.append(obs)
 
+        
+        print("diocane",self.observation_logs[-1])
+        self.observationlog_box.set_text(self.observation_logs[-1])
+        
     def run(self):
         self.screen.blit(self.vertical_background, (400, 0))
         self.screen.blit(self.horizontal_background, (0, 300))
@@ -119,6 +140,7 @@ class GameManager:
                     running = False
                 elif event.type == pygame.MOUSEMOTION:
                     self.input_handler.handle_mouse_motion(event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
+
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self.input_handler.handle_mouse_click(event.button, event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
                 else:
@@ -151,17 +173,8 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                
-                action_name_from_results = actions_results.results[0].action_instance.action.name
-                source_name = GameEntity.get_instance(actions_results.results[0].action_instance.source_id).name
-                target_name = GameEntity.get_instance(actions_results.results[0].action_instance.target_id).name
-                
-                new_action_text = f"{source_name} just {action_name_from_results}  to {target_name} "
-                self.action_logs.append(new_action_text)
-                #format the action logs with a new line for element of the list
-                inverted_list_action = self.action_logs[::-1]
-                action_text = "\n".join(inverted_list_action)
-                self.textstate_box.set_text(action_text)
+                self.update_observation_logs(shadow,mode="groups",use_egoncentric=True)
+                self.update_action_logs(actions_results)
 
             
             # Recalculate the available actions after applying the action payload

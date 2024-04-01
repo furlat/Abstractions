@@ -44,7 +44,7 @@ def process2words(input_string):
 
 
 def merge_text_files(
-    input_dir: str = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap\game",
+    input_dir: str = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap",
     output_dir: str = None,
     file_extension: str = ".py",
     fancy: bool = False,

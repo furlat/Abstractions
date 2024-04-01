@@ -1,13 +1,16 @@
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
-from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union
+from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union, Set
 from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
 import uuid
+import re
 import math
 
 if TYPE_CHECKING:
     # from abstractions.goap.spatial import Node
     from abstractions.goap.actions import Action
+    from abstractions.goap.game.payloadgen import SpriteMapping
+    
 
 class Position(Attribute):
     value: Tuple[int, int] = Field(default=(0, 0), description="The (x, y) coordinates of the entity")
@@ -68,6 +71,163 @@ class Shadow(BaseModel):
             if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
                 raise ValueError(f"Node {node} is outside the specified shadow radius")
         return nodes
+    
+   
+    def to_entity_groups(self, use_egocentric: bool = False) -> str:
+        groups = {}
+
+        for node in self.nodes:
+            entity_types, entity_attributes = self._get_entity_info(node)
+            group_key = (tuple(entity_types), tuple(sorted(entity_attributes)))
+
+            if group_key not in groups:
+                groups[group_key] = []
+
+            position = self._to_egocentric_coordinates(node.position.x, node.position.y) if use_egocentric else (node.position.x, node.position.y)
+            groups[group_key].append(position)
+
+        group_strings_vanilla = []
+        group_strings_summarized = []
+        for (entity_types, entity_attributes), positions in groups.items():
+            vanilla_positions = ", ".join(f"({x}, {y})" for x, y in positions)
+            summarized_positions = self._summarize_positions(positions)
+
+            group_strings_vanilla.append(f"Entity Types: {list(entity_types)}, Attributes: {list(entity_attributes)}, Positions: {vanilla_positions}")
+            group_strings_summarized.append(f"Entity Types: {list(entity_types)}, Attributes: {list(entity_attributes)}, Positions: {summarized_positions}")
+
+        vanilla_output = '\n'.join(group_strings_vanilla)
+        summarized_output = '\n'.join(group_strings_summarized)
+
+        print(f"Vanilla Length: {len(vanilla_output)}")
+        print(f"Summarized Length: {len(summarized_output)}")
+        print(f"Efficiency Gain: {len(vanilla_output) - len(summarized_output)}")
+        print(f"Vanilla Output:\n{vanilla_output}")
+        print(f"Summarized Output:\n{summarized_output}")
+
+        return summarized_output
+
+    def _summarize_positions(self, positions: List[Tuple[int, int]]) -> str:
+        if not positions:
+            return ""
+
+        min_x = min(x for x, _ in positions)
+        min_y = min(y for _, y in positions)
+        max_x = max(x for x, _ in positions)
+        max_y = max(y for _, y in positions)
+
+        grid = [[0] * (max_x - min_x + 1) for _ in range(max_y - min_y + 1)]
+        for x, y in positions:
+            grid[y - min_y][x - min_x] = 1
+
+        def find_largest_rectangle(grid):
+            if not grid or not grid[0]:
+                return 0, 0, 0, 0
+
+            rows = len(grid)
+            cols = len(grid[0])
+            max_area = 0
+            max_rect = (0, 0, 0, 0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    if grid[i][j] == 1:
+                        width = 1
+                        height = 1
+                        while j + width < cols and all(grid[i][j + width] == 1 for i in range(i, rows)):
+                            width += 1
+                        while i + height < rows and all(grid[i + height][j] == 1 for j in range(j, j + width)):
+                            height += 1
+                        area = width * height
+                        if area > max_area:
+                            max_area = area
+                            max_rect = (j, i, width, height)
+
+            return max_rect
+
+        rectangles = []
+        while any(1 in row for row in grid):
+            x, y, width, height = find_largest_rectangle(grid)
+            rectangles.append((x + min_x, y + min_y, width, height))
+            for i in range(y, y + height):
+                for j in range(x, x + width):
+                    grid[i][j] = 0
+
+        summarized = []
+        for x, y, width, height in rectangles:
+            if width == 1 and height == 1:
+                summarized.append(f"({x}, {y})")
+            elif width == 1:
+                summarized.append(f"({x}, {y}:{y + height})")
+            elif height == 1:
+                summarized.append(f"({x}:{x + width}, {y})")
+            else:
+                summarized.append(f"({x}:{x + width}, {y}:{y + height})")
+
+        remaining_positions = [(x, y) for x, y in positions if not any(x >= rx and x < rx + rw and y >= ry and y < ry + rh for rx, ry, rw, rh in rectangles)]
+        if remaining_positions:
+            summarized.extend(f"({x}, {y})" for x, y in remaining_positions)
+
+        return ", ".join(summarized)
+    def _get_entity_info(self, node: Node) -> Tuple[Tuple[str, ...], Tuple[Tuple[str, Any], ...]]:
+        entity_types = []
+        entity_attributes = []
+        for entity in node.entities:
+            entity_types.append(type(entity).__name__)
+            attributes = tuple((attr.name, attr.value) for attr in entity.all_attributes().values())
+            entity_attributes.extend(attributes)
+        return tuple(entity_types), tuple(sorted(entity_attributes))
+
+    def _are_nodes_equivalent(self, node1: Node, node2: Node) -> bool:
+        return self._hash_node(node1) == self._hash_node(node2)
+
+    def _hash_node(self, node: Node) -> int:
+        entity_info = []
+        for entity in node.entities:
+            attributes = sorted([(attr.name, attr.value) for attr in entity.all_attributes().values()])
+            entity_info.append((type(entity).__name__, tuple(attributes)))
+        return hash(tuple(sorted(entity_info)))
+
+    def _get_entity_info(self, node: Node) -> Tuple[List[str], List[Tuple[str, Any]]]:
+        entity_types = []
+        entity_attributes = []
+        for entity in node.entities:
+            entity_types.append(type(entity).__name__)
+            attributes = [(attr.name, attr.value) for attr in entity.all_attributes().values()]
+            entity_attributes.extend(attributes)
+        return entity_types, entity_attributes
+    
+
+    def to_list(self, use_egocentric: bool = False,  include_attributes: bool = False) -> str:
+        node_info = []
+        for node in self.nodes:
+            x, y = node.position.value
+            if use_egocentric:
+                x, y = self._to_egocentric_coordinates(x, y)
+            entities = node.entities
+            entity_info = [self._entity_to_string(entity, include_attributes) for entity in entities]
+            node_info.append(f"({x}, {y}): [{', '.join(entity_info)}]")
+
+        return '\n'.join(node_info)
+
+
+    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
+        source_x, source_y = self.source.position.value
+        return x - source_x, y - source_y
+
+   
+
+    def _entity_to_string(self, entity: GameEntity, include_attributes: bool) -> str:
+        entity_info = f"{entity.name} ({entity.id})"
+        if include_attributes:
+            attributes_info = ', '.join([f"{attr.name}: {attr.value}" for attr in entity.all_attributes().values()])
+            entity_info += f" [{attributes_info}]"
+        return entity_info
+
+    
+
+    @staticmethod
+    def _get_distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+        return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 class RayCast(BaseModel):
     source: Node = Field(description="The source node of the raycast")
