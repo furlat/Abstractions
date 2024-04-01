@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-04-01T01:45:06.249686`
+- Created: `2024-04-01T21:26:26.593813`
 
 ## init
 
@@ -816,12 +816,19 @@ class GameManager:
         container= self.notepad_window)
         #Initialize the texstate Window
         # the textstate window can be uptad by calling textstate_box.set_text("text")
-        self.textstate_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Action Logger")
-        self.textstate_box = UITextBox(
-        relative_rect=pygame.Rect((0, 0), self.textstate_window.get_container().get_size()),
+        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 790), window_display_title="Action Logger")
+        self.actionlog_box = UITextBox(
+        relative_rect=pygame.Rect((0, 0), self.actionlog_window.get_container().get_size()),
         html_text="",
-        container=self.textstate_window)
+        container=self.actionlog_window)
         self.action_logs = []
+        #Initialize the ObsLogger Window
+        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title="Observation Logger")
+        self.observationlog_box = UITextBox(
+        relative_rect=pygame.Rect((0, 0), self.observationlog_window.get_container().get_size()),
+        html_text="",
+        container=self.observationlog_window)
+        self.observation_logs = []
         # Initalize the background
         self.vertical_background = pygame.Surface((1000, 800))
         self.horizontal_background = pygame.Surface((1200, 800))
@@ -851,7 +858,8 @@ class GameManager:
     
     def compute_shapes(self,source_node:Node, target_node: Optional[Node] = None):
         radius = self.grid_map.get_radius(source_node, max_radius=10)
-        shadow = self.grid_map.get_shadow(source_node, max_radius=20)
+        shadow = self.grid_map.get_shadow(source_node, max_radius=10)
+       
         try:
             raycast = self.grid_map.get_raycast(source_node, target_node) if target_node else None
         except ValidationError as e:
@@ -860,18 +868,58 @@ class GameManager:
         path = self.grid_map.a_star(source_node, target_node) if target_node else None
         return radius, shadow, raycast, path
 
-    def update_action_logs(self,action_results:ActionsResults):
-                    for result in action_results.results:
-                        if result.success:
-                            action_name = result.action_instance.action.name
-                            source_name = GameEntity.get_instance(result.action_instance.source_id).name
-                            target_name = GameEntity.get_instance(result.action_instance.target_id).name
-                            
-                            new_action_text = f"{source_name} just {action_name} to {target_name}"
-                            self.action_logs.append(new_action_text)
-                    inverted_list_action = self.action_logs[::-1]
-                    self.textstate_box.set_text("\n".join(inverted_list_action))
+    def update_action_logs(self, action_results: ActionsResults, only_changes: bool = True):
+        for result in action_results.results:
+            action_name = result.action_instance.action.name
+            source_name = GameEntity.get_instance(result.action_instance.source_id).name
+            target_name = GameEntity.get_instance(result.action_instance.target_id).name
 
+            log_entry = f"Action: {action_name}\n"
+            log_entry += f"Source: {source_name}\n"
+            log_entry += f"Target: {target_name}\n"
+            log_entry += f"Result: {'Success' if result.success else 'Failure'}\n"
+
+            if not result.success:
+                log_entry += f"Reason: {result.error}\n"
+
+            if only_changes:
+                state_before = {k: v for k, v in result.state_before.items() if k in result.state_after and v != result.state_after[k]}
+                state_after = {k: v for k, v in result.state_after.items() if k in result.state_before and v != result.state_before[k]}
+            else:
+                state_before = result.state_before
+                state_after = result.state_after
+
+            log_entry += "State Before:\n"
+            for entity, state in state_before.items():
+                log_entry += f"  {entity.capitalize()}:\n"
+                for attr, value in state.items():
+                    log_entry += f"    {attr}: {value}\n"
+
+            if result.success:
+                log_entry += "State After:\n"
+                for entity, state in state_after.items():
+                    log_entry += f"  {entity.capitalize()}:\n"
+                    for attr, value in state.items():
+                        log_entry += f"    {attr}: {value}\n"
+
+            self.action_logs.append(log_entry)
+
+        inverted_list_action = self.action_logs[::-1]
+        self.actionlog_box.set_text(log_entry)
+    
+    def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
+        sprite_mappings=self.sprite_mappings
+        if mode == "groups":
+            self.observation_logs.append(observation.to_entity_groups(use_egocentric=use_egoncentric))
+        
+        elif mode == "list":
+            obs = observation.to_list( use_egocentric=use_egoncentric,include_attributes=include_attributes)
+            self.observation_logs.append(obs)
+
+        
+        print("diocane",self.observation_logs[-1])
+        self.observationlog_box.set_text(self.observation_logs[-1])
+        
     def run(self):
         self.screen.blit(self.vertical_background, (400, 0))
         self.screen.blit(self.horizontal_background, (0, 300))
@@ -889,6 +937,7 @@ class GameManager:
                     running = False
                 elif event.type == pygame.MOUSEMOTION:
                     self.input_handler.handle_mouse_motion(event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
+
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self.input_handler.handle_mouse_click(event.button, event.pos, self.renderer.grid_map_widget.camera_pos, self.renderer.grid_map_widget.cell_size)
                 else:
@@ -914,6 +963,8 @@ class GameManager:
 
             # Apply the action payload to the grid map
             actions_results = self.grid_map.apply_actions_payload(self.input_handler.actions_payload)
+            if len(actions_results.results) > 0:
+                self.update_action_logs(actions_results, only_changes=True)
 
             # Check if there are any successful actions
             successful_actions = any(result.success for result in actions_results.results)
@@ -921,17 +972,8 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
+                self.update_observation_logs(shadow,mode="groups",use_egoncentric=True)
                 
-                action_name_from_results = actions_results.results[0].action_instance.action.name
-                source_name = GameEntity.get_instance(actions_results.results[0].action_instance.source_id).name
-                target_name = GameEntity.get_instance(actions_results.results[0].action_instance.target_id).name
-                
-                new_action_text = f"{source_name} just {action_name_from_results}  to {target_name} "
-                self.action_logs.append(new_action_text)
-                #format the action logs with a new line for element of the list
-                inverted_list_action = self.action_logs[::-1]
-                action_text = "\n".join(inverted_list_action)
-                self.textstate_box.set_text(action_text)
 
             
             # Recalculate the available actions after applying the action payload
@@ -1801,14 +1843,17 @@ def generate_dungeon(grid_map, num_rooms, min_room_size, max_room_size):
 
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
-from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union
+from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union, Set, Type
 from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
 import uuid
+import re
 import math
 
 if TYPE_CHECKING:
     # from abstractions.goap.spatial import Node
     from abstractions.goap.actions import Action
+    from abstractions.goap.game.payloadgen import SpriteMapping
+    
 
 class Position(Attribute):
     value: Tuple[int, int] = Field(default=(0, 0), description="The (x, y) coordinates of the entity")
@@ -1839,8 +1884,117 @@ class Path(BaseModel):
             if nodes[i].blocks_movement:
                 raise ValueError(f"Node {nodes[i]} is not walkable")
         return nodes
+
+class BaseShapeFromSource(BaseModel):
+    source: Node = Field(description="The source node of the shape")
+    max_radius: int = Field(description="The maximum radius of the shape")
+    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the shape")
+
+    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
+        source_x, source_y = self.source.position.value
+        return x - source_x, y - source_y
     
-class Radius(BaseModel):
+
+    def to_entity_groups(self, use_egocentric: bool = False) -> str:
+        groups = {}
+
+        for node in self.nodes:
+            entity_types, entity_attributes = node._get_entity_info(node)
+            group_key = (tuple(entity_types), tuple(sorted(entity_attributes)))
+
+            if group_key not in groups:
+                groups[group_key] = []
+
+            position = self._to_egocentric_coordinates(node.position.x, node.position.y) if use_egocentric else (node.position.x, node.position.y)
+            groups[group_key].append(position)
+
+        group_strings_vanilla = []
+        group_strings_summarized = []
+        for (entity_types, entity_attributes), positions in groups.items():
+            vanilla_positions = ", ".join(f"({x}, {y})" for x, y in positions)
+            summarized_positions = self._summarize_positions(positions)
+
+            group_strings_vanilla.append(f"Entity Types: {list(entity_types)}, Attributes: {list(entity_attributes)}, Positions: {vanilla_positions}")
+            group_strings_summarized.append(f"Entity Types: {list(entity_types)}, Attributes: {list(entity_attributes)}, Positions: {summarized_positions}")
+
+        vanilla_output = '\n'.join(group_strings_vanilla)
+        summarized_output = '\n'.join(group_strings_summarized)
+
+        print(f"Vanilla Length: {len(vanilla_output)}")
+        print(f"Summarized Length: {len(summarized_output)}")
+        print(f"Efficiency Gain: {len(vanilla_output) - len(summarized_output)}")
+        print(f"Vanilla Output:\n{vanilla_output}")
+        print(f"Summarized Output:\n{summarized_output}")
+
+        return summarized_output
+
+    def _summarize_positions(self, positions: List[Tuple[int, int]]) -> str:
+        if not positions:
+            return ""
+
+        min_x = min(x for x, _ in positions)
+        min_y = min(y for _, y in positions)
+        max_x = max(x for x, _ in positions)
+        max_y = max(y for _, y in positions)
+
+        grid = [[0] * (max_x - min_x + 1) for _ in range(max_y - min_y + 1)]
+        for x, y in positions:
+            grid[y - min_y][x - min_x] = 1
+
+        def find_largest_rectangle(grid):
+            if not grid or not grid[0]:
+                return 0, 0, 0, 0
+
+            rows = len(grid)
+            cols = len(grid[0])
+            max_area = 0
+            max_rect = (0, 0, 0, 0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    if grid[i][j] == 1:
+                        width = 1
+                        height = 1
+                        while j + width < cols and all(grid[i][j + width] == 1 for i in range(i, rows)):
+                            width += 1
+                        while i + height < rows and all(grid[i + height][j] == 1 for j in range(j, j + width)):
+                            height += 1
+                        area = width * height
+                        if area > max_area:
+                            max_area = area
+                            max_rect = (j, i, width, height)
+
+            return max_rect
+
+        rectangles = []
+        while any(1 in row for row in grid):
+            x, y, width, height = find_largest_rectangle(grid)
+            rectangles.append((x + min_x, y + min_y, width, height))
+            for i in range(y, y + height):
+                for j in range(x, x + width):
+                    grid[i][j] = 0
+
+        summarized = []
+        for x, y, width, height in rectangles:
+            if width == 1 and height == 1:
+                summarized.append(f"({x}, {y})")
+            elif width == 1:
+                summarized.append(f"({x}, {y}:{y + height})")
+            elif height == 1:
+                summarized.append(f"({x}:{x + width}, {y})")
+            else:
+                summarized.append(f"({x}:{x + width}, {y}:{y + height})")
+
+        remaining_positions = [(x, y) for x, y in positions if not any(x >= rx and x < rx + rw and y >= ry and y < ry + rh for rx, ry, rw, rh in rectangles)]
+        if remaining_positions:
+            summarized.extend(f"({x}, {y})" for x, y in remaining_positions)
+
+        return ", ".join(summarized)
+
+
+
+
+class Radius(BaseShapeFromSource):
     source: Node = Field(description="The source node of the radius")
     max_radius: int = Field(description="The maximum radius of the area")
     nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the radius")
@@ -1855,7 +2009,7 @@ class Radius(BaseModel):
                 raise ValueError(f"Node {node} is outside the specified radius")
         return nodes
 
-class Shadow(BaseModel):
+class Shadow(BaseShapeFromSource):
     source: Node = Field(description="The source node of the shadow")
     max_radius: int = Field(description="The maximum radius of the shadow")
     nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the shadow")
@@ -1869,6 +2023,10 @@ class Shadow(BaseModel):
             if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
                 raise ValueError(f"Node {node} is outside the specified shadow radius")
         return nodes
+    
+   
+
+    
 
 class RayCast(BaseModel):
     source: Node = Field(description="The source node of the raycast")
@@ -1903,14 +2061,52 @@ class ActionInstance(BaseModel):
 class ActionsPayload(BaseModel):
     actions: List[ActionInstance]
 
+class SummarizedActionPayload(BaseModel):
+    action_name: str
+    source_entity_type: str
+    source_entity_position: Tuple[int, int]
+    source_entity_id: Optional[str] = None
+    source_entity_name: Optional[str] = None
+    source_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    target_entity_type: str
+    target_entity_position: Tuple[int, int]
+    target_entity_id: Optional[str] = None
+    target_entity_name: Optional[str] = None
+    target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
 class ActionResult(BaseModel):
     action_instance: ActionInstance
     success: bool
     error: str = None
+    state_before: Dict[str, Any] = Field(default_factory=dict)
+    state_after: Dict[str, Any] = Field(default_factory=dict)
 
 class ActionsResults(BaseModel):
     results: List[ActionResult]
 
+class AmbiguousEntityError(BaseModel):
+    entity_type: Type[GameEntity]
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
+    matching_entities: List[GameEntity]
+    missing_attributes: List[str]
+
+    def __str__(self):
+        return f"Ambiguous entity: {self.entity_type.__name__}, Matching entities: {len(self.matching_entities)}, Missing attributes: {', '.join(self.missing_attributes)}" 
+
+class ActionConversionError(BaseModel):
+    message: str
+    source_entity_error: Optional[AmbiguousEntityError] = None
+    target_entity_error: Optional[AmbiguousEntityError] = None
+
+    def __str__(self):
+        error_message = self.message
+        if self.source_entity_error:
+            error_message += f"\nSource Entity Error: {self.source_entity_error}"
+        if self.target_entity_error:
+            error_message += f"\nTarget Entity Error: {self.target_entity_error}"
+        return error_message
 
 class GameEntity(Entity):
     blocks_movement: BlocksMovement = Field(default_factory=BlocksMovement, description="Attribute indicating if the entity blocks movement")
@@ -1995,6 +2191,14 @@ class GameEntity(Entity):
         else:
             entity.add_to_inventory(self)
 
+    def get_state(self) -> Dict[str, Any]:
+        state = {}
+        for attr_name, attr_value in self.__dict__.items():
+            if isinstance(attr_value, Attribute) and attr_name not in ["position", "inventory"]:
+                state[attr_name] = attr_value.value
+        state["position"] = self.position.value
+        state["inventory"] = [item.id for item in self.inventory]
+        return state
     
     def __repr__(self):
         attrs = {}
@@ -2051,6 +2255,10 @@ class Node(BaseModel, RegistryHolder):
         self.entities.remove(entity)
         entity.node = None
         self.update_blocking_properties()
+    
+    def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
+        self.remove_entity(old_entity)
+        self.add_entity(new_entity)
 
     def update_blocking_properties(self):
         self.blocks_movement = any(entity.blocks_movement.value for entity in self.entities if not entity.stored_in)
@@ -2060,15 +2268,59 @@ class Node(BaseModel, RegistryHolder):
         self.entities.clear()
         self.blocks_movement = False
         self.blocks_light = False
+
+    def find_entity(self, entity_type: Type[GameEntity], entity_id: Optional[str] = None,
+                entity_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> Optional[Union[GameEntity, AmbiguousEntityError]]:
+        matching_entities = []
+        for entity in self.entities:
+            if isinstance(entity, entity_type):
+                if entity_id is not None and entity.id != entity_id:
+                    continue
+                if entity_name is not None and entity.name != entity_name:
+                    continue
+                if attributes is not None:
+                    entity_attributes = {attr_name: getattr(entity, attr_name).value for attr_name in attributes}
+                    if any(attr_name not in entity_attributes or entity_attributes[attr_name] != attr_value
+                        for attr_name, attr_value in attributes.items()):
+                        continue
+                matching_entities.append(entity)
+
+        if len(matching_entities) == 1:
+            return matching_entities[0]
+        elif len(matching_entities) > 1:
+            missing_attributes = []
+            if entity_id is None:
+                missing_attributes.append("entity_id")
+            if entity_name is None:
+                missing_attributes.append("entity_name")
+            if attributes is None:
+                missing_attributes.extend(attr.name for attr in matching_entities[0].all_attributes())
+            return AmbiguousEntityError(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                entity_name=entity_name,
+                attributes=attributes,
+                matching_entities=matching_entities,
+                missing_attributes=missing_attributes
+            )
+        else:
+            return None
     
     def neighbors(self) -> List[Node]:
         if self.grid_map:
             return self.grid_map.get_neighbors(self.position.value)
         return []
     
-    def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
-        self.remove_entity(old_entity)
-        self.add_entity(new_entity)
+    def _get_entity_info(self, node: Node) -> Tuple[List[str], List[Tuple[str, Any]]]:
+        entity_types = []
+        entity_attributes = []
+        for entity in node.entities:
+            entity_types.append(type(entity).__name__)
+            attributes = [(attr.name, attr.value) for attr in entity.all_attributes().values()]
+            entity_attributes.extend(attributes)
+        return entity_types, entity_attributes
+    
+
     def __hash__(self):
         entity_info = []
         for entity in self.entities:
@@ -2086,6 +2338,17 @@ class GridMap:
         self.width = width
         self.height = height
         self.grid: List[List[Node]] = [[Node(position=Position(value=(x, y)), grid_map=self) for y in range(height)] for x in range(width)]
+        self.actions: Dict[str, Type[Action]] = {}
+    
+    def register_action(self, action_class: Type[Action]):
+        self.actions[action_class.__name__] = action_class
+
+    def register_actions(self, action_classes: List[Type[Action]]):
+        for action_class in action_classes:
+            self.register_action(action_class)
+    
+    def get_actions(self) -> Dict[str, Type[Action]]:
+        return self.actions
 
     def get_node(self, position: Tuple[int, int]) -> Node:
         x, y = position
@@ -2123,6 +2386,13 @@ class GridMap:
                 if 0 <= new_x < self.width and 0 <= new_y < self.height:
                     neighbors.append(self.grid[new_x][new_y])
         return neighbors
+    
+    def find_entity(self, entity_type: Type[GameEntity], position: Tuple[int, int], entity_id: Optional[str] = None,
+                    entity_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> Optional[GameEntity]:
+        node = self.get_node(position)
+        if node is None:
+            return None
+        return node.find_entity(entity_type, entity_id, entity_name, attributes)
 
     def dijkstra(self, start: Node, max_distance: int, allow_diagonal: bool = True) -> Tuple[Dict[Tuple[int, int], int], Dict[Tuple[int, int], Path]]:
         distances: Dict[Tuple[int, int], int] = {start.position.value: 0}
@@ -2285,6 +2555,44 @@ class GridMap:
         nodes = [self.get_node(cell) for cell in visible_cells]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
     
+    def convert_summarized_payload(self, summarized_payload: SummarizedActionPayload) -> ActionsPayload:
+        source_entity_result = self.find_entity(summarized_payload.source_entity_type, summarized_payload.source_entity_position,
+                                                summarized_payload.source_entity_id, summarized_payload.source_entity_name,
+                                                summarized_payload.source_entity_attributes)
+        target_entity_result = self.find_entity(summarized_payload.target_entity_type, summarized_payload.target_entity_position,
+                                                summarized_payload.target_entity_id, summarized_payload.target_entity_name,
+                                                summarized_payload.target_entity_attributes)
+
+        if isinstance(source_entity_result, AmbiguousEntityError):
+            raise ActionConversionError(
+                message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}",
+                source_entity_error=source_entity_result
+            )
+        if isinstance(target_entity_result, AmbiguousEntityError):
+            raise ActionConversionError(
+                message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}",
+                target_entity_error=target_entity_result
+            )
+
+        source_entity = source_entity_result
+        target_entity = target_entity_result
+
+        if source_entity is None:
+            raise ActionConversionError(
+                message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}"
+            )
+        if target_entity is None:
+            raise ActionConversionError(
+                message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}"
+            )
+
+        action_class = self.actions.get(summarized_payload.action_name)
+        if action_class is None:
+            raise ActionConversionError(message=f"Action '{summarized_payload.action_name}' not found")
+
+        action_instance = ActionInstance(source_id=source_entity.id, target_id=target_entity.id, action=action_class())
+        return ActionsPayload(actions=[action_instance])
+    
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
         if len(payload.actions) > 0:
@@ -2294,27 +2602,33 @@ class GridMap:
             target = GameEntity.get_instance(action_instance.target_id)
             action = action_instance.action
 
+            state_before = {
+                "source": source.get_state(),
+                "target": target.get_state()
+            }
+
             if action.is_applicable(source, target):
                 try:
                     updated_source, updated_target = action.apply(source, target)
-
                     # Handle inventory-related updates
                     if updated_source.stored_in != source.stored_in:
                         if source.stored_in and source in source.stored_in.inventory:
                             source.stored_in.inventory.remove(source)
                         if updated_source.stored_in:
                             updated_source.stored_in.inventory.append(updated_source)
-
                     if updated_target.stored_in != target.stored_in:
                         if target.stored_in and target in target.stored_in.inventory:
                             target.stored_in.inventory.remove(target)
                         if updated_target.stored_in:
                             updated_target.stored_in.inventory.append(updated_target)
 
-                    results.append(ActionResult(action_instance=action_instance, success=True))
+                    state_after = {
+                        "source": updated_source.get_state(),
+                        "target": updated_target.get_state()
+                    }
+                    results.append(ActionResult(action_instance=action_instance, success=True, state_before=state_before, state_after=state_after))
                 except ValueError as e:
-                    results.append(ActionResult(action_instance=action_instance, success=False, error=str(e)))
-                    break
+                    results.append(ActionResult(action_instance=action_instance, success=False, error=str(e), state_before=state_before))
             else:
                 # Check which prerequisite failed and provide a detailed error message
                 failed_prerequisites = []
@@ -2327,10 +2641,8 @@ class GridMap:
                 for statement in action.prerequisites.source_target_statements:
                     if not statement.validate_comparisons(source, target):
                         failed_prerequisites.append(f"Source-Target prerequisite failed: {statement}")
-
                 error_message = "Prerequisites not met:\n" + "\n".join(failed_prerequisites)
-                results.append(ActionResult(action_instance=action_instance, success=False, error=error_message))
-                break
+                results.append(ActionResult(action_instance=action_instance, success=False, error=error_message, state_before=state_before))
 
         return ActionsResults(results=results)
     

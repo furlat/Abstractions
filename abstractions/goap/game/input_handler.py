@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
 from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
 from abstractions.goap.actions import Action
@@ -54,21 +54,17 @@ class InputHandler:
         self.inventory_widget = inventory_widget
         self.inventory_widget.setup_input_handler(self)
         self.text_entry_box = text_entry_box
-
-        
-
-
-
         self.latest_mouse_click = (0, 0)
+        self.llm_action_payload = None
 
-    def handle_input(self, event):
+    def handle_input(self, event: pygame.event.Event):
         if event.type == pygame.KEYDOWN: 
             self.handle_keypress_on_gridmap(event.key)
         elif event.type == pygame.MOUSEMOTION:
             self.handle_mouse_motion(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             self.handle_mouse_click(event.button, event.pos)
-           
+ 
     def handle_keypress_on_gridmap(self, key):
         if self.text_entry_box.rect.collidepoint(self.latest_mouse_click):
             print("trying keywriting but latest was a notepad window clicked")
@@ -118,6 +114,9 @@ class InputHandler:
                 self.camera_control.move = (0, -1)
             elif key == pygame.K_DOWN:
                 self.camera_control.move = (0, 1)
+            elif key == pygame.K_F1:
+                self.llm_action_payload = self.text_entry_box.get_text()
+                
 
 
     def handle_mouse_click(self, button, pos, camera_pos, cell_size):
@@ -180,6 +179,7 @@ class InputHandler:
             if action.is_applicable(source, target):
                 available_actions.append(action.name)
         return available_actions
+    
     
     def update_available_actions(self):
         player_id = self.active_entities.controlled_entity_id

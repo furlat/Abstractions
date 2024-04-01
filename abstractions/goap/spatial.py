@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
-from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union, Set
+from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union, Set, Type
 from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
 import uuid
 import re
@@ -41,43 +41,22 @@ class Path(BaseModel):
             if nodes[i].blocks_movement:
                 raise ValueError(f"Node {nodes[i]} is not walkable")
         return nodes
+
+class BaseShapeFromSource(BaseModel):
+    source: Node = Field(description="The source node of the shape")
+    max_radius: int = Field(description="The maximum radius of the shape")
+    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the shape")
+
+    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
+        source_x, source_y = self.source.position.value
+        return x - source_x, y - source_y
     
-class Radius(BaseModel):
-    source: Node = Field(description="The source node of the radius")
-    max_radius: int = Field(description="The maximum radius of the area")
-    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the radius")
 
-    @validator('nodes')
-    def validate_radius(cls, nodes, values):
-        source = values['source']
-        max_radius = values['max_radius']
-        grid_map = source.grid_map
-        for node in nodes:
-            if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
-                raise ValueError(f"Node {node} is outside the specified radius")
-        return nodes
-
-class Shadow(BaseModel):
-    source: Node = Field(description="The source node of the shadow")
-    max_radius: int = Field(description="The maximum radius of the shadow")
-    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the shadow")
-
-    @validator('nodes')
-    def validate_shadow(cls, nodes, values):
-        source = values['source']
-        max_radius = values['max_radius']
-        grid_map = source.grid_map
-        for node in nodes:
-            if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
-                raise ValueError(f"Node {node} is outside the specified shadow radius")
-        return nodes
-    
-   
     def to_entity_groups(self, use_egocentric: bool = False) -> str:
         groups = {}
 
         for node in self.nodes:
-            entity_types, entity_attributes = self._get_entity_info(node)
+            entity_types, entity_attributes = node._get_entity_info(node)
             group_key = (tuple(entity_types), tuple(sorted(entity_attributes)))
 
             if group_key not in groups:
@@ -168,66 +147,43 @@ class Shadow(BaseModel):
             summarized.extend(f"({x}, {y})" for x, y in remaining_positions)
 
         return ", ".join(summarized)
-    def _get_entity_info(self, node: Node) -> Tuple[Tuple[str, ...], Tuple[Tuple[str, Any], ...]]:
-        entity_types = []
-        entity_attributes = []
-        for entity in node.entities:
-            entity_types.append(type(entity).__name__)
-            attributes = tuple((attr.name, attr.value) for attr in entity.all_attributes().values())
-            entity_attributes.extend(attributes)
-        return tuple(entity_types), tuple(sorted(entity_attributes))
 
-    def _are_nodes_equivalent(self, node1: Node, node2: Node) -> bool:
-        return self._hash_node(node1) == self._hash_node(node2)
 
-    def _hash_node(self, node: Node) -> int:
-        entity_info = []
-        for entity in node.entities:
-            attributes = sorted([(attr.name, attr.value) for attr in entity.all_attributes().values()])
-            entity_info.append((type(entity).__name__, tuple(attributes)))
-        return hash(tuple(sorted(entity_info)))
 
-    def _get_entity_info(self, node: Node) -> Tuple[List[str], List[Tuple[str, Any]]]:
-        entity_types = []
-        entity_attributes = []
-        for entity in node.entities:
-            entity_types.append(type(entity).__name__)
-            attributes = [(attr.name, attr.value) for attr in entity.all_attributes().values()]
-            entity_attributes.extend(attributes)
-        return entity_types, entity_attributes
+
+class Radius(BaseShapeFromSource):
+    source: Node = Field(description="The source node of the radius")
+    max_radius: int = Field(description="The maximum radius of the area")
+    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the radius")
+
+    @validator('nodes')
+    def validate_radius(cls, nodes, values):
+        source = values['source']
+        max_radius = values['max_radius']
+        grid_map = source.grid_map
+        for node in nodes:
+            if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
+                raise ValueError(f"Node {node} is outside the specified radius")
+        return nodes
+
+class Shadow(BaseShapeFromSource):
+    source: Node = Field(description="The source node of the shadow")
+    max_radius: int = Field(description="The maximum radius of the shadow")
+    nodes: List[Node] = Field(default_factory=list, description="The list of nodes within the shadow")
+
+    @validator('nodes')
+    def validate_shadow(cls, nodes, values):
+        source = values['source']
+        max_radius = values['max_radius']
+        grid_map = source.grid_map
+        for node in nodes:
+            if grid_map._get_distance(source.position.value, node.position.value) > max_radius:
+                raise ValueError(f"Node {node} is outside the specified shadow radius")
+        return nodes
     
-
-    def to_list(self, use_egocentric: bool = False,  include_attributes: bool = False) -> str:
-        node_info = []
-        for node in self.nodes:
-            x, y = node.position.value
-            if use_egocentric:
-                x, y = self._to_egocentric_coordinates(x, y)
-            entities = node.entities
-            entity_info = [self._entity_to_string(entity, include_attributes) for entity in entities]
-            node_info.append(f"({x}, {y}): [{', '.join(entity_info)}]")
-
-        return '\n'.join(node_info)
-
-
-    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
-        source_x, source_y = self.source.position.value
-        return x - source_x, y - source_y
-
    
 
-    def _entity_to_string(self, entity: GameEntity, include_attributes: bool) -> str:
-        entity_info = f"{entity.name} ({entity.id})"
-        if include_attributes:
-            attributes_info = ', '.join([f"{attr.name}: {attr.value}" for attr in entity.all_attributes().values()])
-            entity_info += f" [{attributes_info}]"
-        return entity_info
-
     
-
-    @staticmethod
-    def _get_distance(a: Tuple[int, int], b: Tuple[int, int]) -> float:
-        return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 class RayCast(BaseModel):
     source: Node = Field(description="The source node of the raycast")
@@ -262,14 +218,52 @@ class ActionInstance(BaseModel):
 class ActionsPayload(BaseModel):
     actions: List[ActionInstance]
 
+class SummarizedActionPayload(BaseModel):
+    action_name: str
+    source_entity_type: str
+    source_entity_position: Tuple[int, int]
+    source_entity_id: Optional[str] = None
+    source_entity_name: Optional[str] = None
+    source_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    target_entity_type: str
+    target_entity_position: Tuple[int, int]
+    target_entity_id: Optional[str] = None
+    target_entity_name: Optional[str] = None
+    target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
 class ActionResult(BaseModel):
     action_instance: ActionInstance
     success: bool
     error: str = None
+    state_before: Dict[str, Any] = Field(default_factory=dict)
+    state_after: Dict[str, Any] = Field(default_factory=dict)
 
 class ActionsResults(BaseModel):
     results: List[ActionResult]
 
+class AmbiguousEntityError(BaseModel):
+    entity_type: Type[GameEntity]
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
+    matching_entities: List[GameEntity]
+    missing_attributes: List[str]
+
+    def __str__(self):
+        return f"Ambiguous entity: {self.entity_type.__name__}, Matching entities: {len(self.matching_entities)}, Missing attributes: {', '.join(self.missing_attributes)}" 
+
+class ActionConversionError(BaseModel):
+    message: str
+    source_entity_error: Optional[AmbiguousEntityError] = None
+    target_entity_error: Optional[AmbiguousEntityError] = None
+
+    def __str__(self):
+        error_message = self.message
+        if self.source_entity_error:
+            error_message += f"\nSource Entity Error: {self.source_entity_error}"
+        if self.target_entity_error:
+            error_message += f"\nTarget Entity Error: {self.target_entity_error}"
+        return error_message
 
 class GameEntity(Entity):
     blocks_movement: BlocksMovement = Field(default_factory=BlocksMovement, description="Attribute indicating if the entity blocks movement")
@@ -354,6 +348,14 @@ class GameEntity(Entity):
         else:
             entity.add_to_inventory(self)
 
+    def get_state(self) -> Dict[str, Any]:
+        state = {}
+        for attr_name, attr_value in self.__dict__.items():
+            if isinstance(attr_value, Attribute) and attr_name not in ["position", "inventory"]:
+                state[attr_name] = attr_value.value
+        state["position"] = self.position.value
+        state["inventory"] = [item.id for item in self.inventory]
+        return state
     
     def __repr__(self):
         attrs = {}
@@ -410,6 +412,10 @@ class Node(BaseModel, RegistryHolder):
         self.entities.remove(entity)
         entity.node = None
         self.update_blocking_properties()
+    
+    def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
+        self.remove_entity(old_entity)
+        self.add_entity(new_entity)
 
     def update_blocking_properties(self):
         self.blocks_movement = any(entity.blocks_movement.value for entity in self.entities if not entity.stored_in)
@@ -419,15 +425,59 @@ class Node(BaseModel, RegistryHolder):
         self.entities.clear()
         self.blocks_movement = False
         self.blocks_light = False
+
+    def find_entity(self, entity_type: Type[GameEntity], entity_id: Optional[str] = None,
+                entity_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> Optional[Union[GameEntity, AmbiguousEntityError]]:
+        matching_entities = []
+        for entity in self.entities:
+            if isinstance(entity, entity_type):
+                if entity_id is not None and entity.id != entity_id:
+                    continue
+                if entity_name is not None and entity.name != entity_name:
+                    continue
+                if attributes is not None:
+                    entity_attributes = {attr_name: getattr(entity, attr_name).value for attr_name in attributes}
+                    if any(attr_name not in entity_attributes or entity_attributes[attr_name] != attr_value
+                        for attr_name, attr_value in attributes.items()):
+                        continue
+                matching_entities.append(entity)
+
+        if len(matching_entities) == 1:
+            return matching_entities[0]
+        elif len(matching_entities) > 1:
+            missing_attributes = []
+            if entity_id is None:
+                missing_attributes.append("entity_id")
+            if entity_name is None:
+                missing_attributes.append("entity_name")
+            if attributes is None:
+                missing_attributes.extend(attr.name for attr in matching_entities[0].all_attributes())
+            return AmbiguousEntityError(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                entity_name=entity_name,
+                attributes=attributes,
+                matching_entities=matching_entities,
+                missing_attributes=missing_attributes
+            )
+        else:
+            return None
     
     def neighbors(self) -> List[Node]:
         if self.grid_map:
             return self.grid_map.get_neighbors(self.position.value)
         return []
     
-    def update_entity(self, old_entity: GameEntity, new_entity: GameEntity):
-        self.remove_entity(old_entity)
-        self.add_entity(new_entity)
+    def _get_entity_info(self, node: Node) -> Tuple[List[str], List[Tuple[str, Any]]]:
+        entity_types = []
+        entity_attributes = []
+        for entity in node.entities:
+            entity_types.append(type(entity).__name__)
+            attributes = [(attr.name, attr.value) for attr in entity.all_attributes().values()]
+            entity_attributes.extend(attributes)
+        return entity_types, entity_attributes
+    
+
     def __hash__(self):
         entity_info = []
         for entity in self.entities:
@@ -445,6 +495,18 @@ class GridMap:
         self.width = width
         self.height = height
         self.grid: List[List[Node]] = [[Node(position=Position(value=(x, y)), grid_map=self) for y in range(height)] for x in range(width)]
+        self.actions: Dict[str, Type[Action]] = {}
+        self.entity_type_map: Dict[str, Type[GameEntity]] = {}
+    
+    def register_action(self, action_class: Type[Action]):
+        self.actions[action_class.__name__] = action_class
+
+    def register_actions(self, action_classes: List[Type[Action]]):
+        for action_class in action_classes:
+            self.register_action(action_class)
+    
+    def get_actions(self) -> Dict[str, Type[Action]]:
+        return self.actions
 
     def get_node(self, position: Tuple[int, int]) -> Node:
         x, y = position
@@ -482,6 +544,13 @@ class GridMap:
                 if 0 <= new_x < self.width and 0 <= new_y < self.height:
                     neighbors.append(self.grid[new_x][new_y])
         return neighbors
+    
+    def find_entity(self, entity_type: Type[GameEntity], position: Tuple[int, int], entity_id: Optional[str] = None,
+                    entity_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> Optional[GameEntity]:
+        node = self.get_node(position)
+        if node is None:
+            return None
+        return node.find_entity(entity_type, entity_id, entity_name, attributes)
 
     def dijkstra(self, start: Node, max_distance: int, allow_diagonal: bool = True) -> Tuple[Dict[Tuple[int, int], int], Dict[Tuple[int, int], Path]]:
         distances: Dict[Tuple[int, int], int] = {start.position.value: 0}
@@ -644,6 +713,62 @@ class GridMap:
         nodes = [self.get_node(cell) for cell in visible_cells]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
     
+    def generate_entity_type_map(self):
+        self.entity_type_map = {}
+        for row in self.grid:
+            for node in row:
+                for entity in node.entities:
+                    entity_type = type(entity)
+                    entity_type_name = entity_type.__name__
+                    if entity_type_name not in self.entity_type_map:
+                        self.entity_type_map[entity_type_name] = entity_type
+    
+    def convert_summarized_payload(self, summarized_payload: SummarizedActionPayload) -> Union[ActionsPayload, ActionConversionError]:
+        source_entity_type = self.entity_type_map.get(summarized_payload.source_entity_type)
+        if source_entity_type is None:
+            return ActionConversionError(message=f"Invalid source entity type: {summarized_payload.source_entity_type}")
+
+        target_entity_type = self.entity_type_map.get(summarized_payload.target_entity_type)
+        if target_entity_type is None:
+            return ActionConversionError(message=f"Invalid target entity type: {summarized_payload.target_entity_type}")
+
+        source_entity_result = self.find_entity(source_entity_type, summarized_payload.source_entity_position,
+                                                summarized_payload.source_entity_id, summarized_payload.source_entity_name,
+                                                summarized_payload.source_entity_attributes)
+        target_entity_result = self.find_entity(target_entity_type, summarized_payload.target_entity_position,
+                                                summarized_payload.target_entity_id, summarized_payload.target_entity_name,
+                                                summarized_payload.target_entity_attributes)
+
+        if isinstance(source_entity_result, AmbiguousEntityError):
+            return ActionConversionError(
+                message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}",
+                source_entity_error=source_entity_result
+            )
+        if isinstance(target_entity_result, AmbiguousEntityError):
+            return ActionConversionError(
+                message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}",
+                target_entity_error=target_entity_result
+            )
+
+        source_entity = source_entity_result
+        target_entity = target_entity_result
+
+        if source_entity is None:
+            return ActionConversionError(
+                message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}"
+            )
+        if target_entity is None:
+            return ActionConversionError(
+                message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}"
+            )
+
+        action_class = self.actions.get(summarized_payload.action_name)
+        if action_class is None:
+            return ActionConversionError(message=f"Action '{summarized_payload.action_name}' not found")
+
+        action_instance = ActionInstance(source_id=source_entity.id, target_id=target_entity.id, action=action_class())
+        return ActionsPayload(actions=[action_instance])
+    
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
         if len(payload.actions) > 0:
@@ -653,27 +778,33 @@ class GridMap:
             target = GameEntity.get_instance(action_instance.target_id)
             action = action_instance.action
 
+            state_before = {
+                "source": source.get_state(),
+                "target": target.get_state()
+            }
+
             if action.is_applicable(source, target):
                 try:
                     updated_source, updated_target = action.apply(source, target)
-
                     # Handle inventory-related updates
                     if updated_source.stored_in != source.stored_in:
                         if source.stored_in and source in source.stored_in.inventory:
                             source.stored_in.inventory.remove(source)
                         if updated_source.stored_in:
                             updated_source.stored_in.inventory.append(updated_source)
-
                     if updated_target.stored_in != target.stored_in:
                         if target.stored_in and target in target.stored_in.inventory:
                             target.stored_in.inventory.remove(target)
                         if updated_target.stored_in:
                             updated_target.stored_in.inventory.append(updated_target)
 
-                    results.append(ActionResult(action_instance=action_instance, success=True))
+                    state_after = {
+                        "source": updated_source.get_state(),
+                        "target": updated_target.get_state()
+                    }
+                    results.append(ActionResult(action_instance=action_instance, success=True, state_before=state_before, state_after=state_after))
                 except ValueError as e:
-                    results.append(ActionResult(action_instance=action_instance, success=False, error=str(e)))
-                    break
+                    results.append(ActionResult(action_instance=action_instance, success=False, error=str(e), state_before=state_before))
             else:
                 # Check which prerequisite failed and provide a detailed error message
                 failed_prerequisites = []
@@ -686,10 +817,8 @@ class GridMap:
                 for statement in action.prerequisites.source_target_statements:
                     if not statement.validate_comparisons(source, target):
                         failed_prerequisites.append(f"Source-Target prerequisite failed: {statement}")
-
                 error_message = "Prerequisites not met:\n" + "\n".join(failed_prerequisites)
-                results.append(ActionResult(action_instance=action_instance, success=False, error=error_message))
-                break
+                results.append(ActionResult(action_instance=action_instance, success=False, error=error_message, state_before=state_before))
 
         return ActionsResults(results=results)
     

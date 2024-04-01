@@ -3,7 +3,7 @@ import pygame
 
 from abstractions.goap.spatial import GridMap, GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
@@ -61,8 +61,11 @@ def main():
    
     # Create the grid map and generate the dungeon
     grid_map = GridMap(width=50, height=50)
+    grid_map.register_actions([MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction])
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
+    # Generate the entity type map
+    grid_map.generate_entity_type_map()
    
     # Define the sprite mappings
     sprite_mappings = [

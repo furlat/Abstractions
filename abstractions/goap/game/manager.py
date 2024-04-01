@@ -2,7 +2,7 @@ import pygame
 import pygame_gui
 
 from typing import List, Tuple, Set, Optional
-from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult
+from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult,ActionsPayload,SummarizedActionPayload
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
 from abstractions.goap.game.input_handler import InputHandler
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
@@ -46,14 +46,14 @@ class GameManager:
         container= self.notepad_window)
         #Initialize the texstate Window
         # the textstate window can be uptad by calling textstate_box.set_text("text")
-        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Action Logger")
+        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 790), window_display_title="Action Logger")
         self.actionlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.actionlog_window.get_container().get_size()),
         html_text="",
         container=self.actionlog_window)
         self.action_logs = []
         #Initialize the ObsLogger Window
-        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 400), window_display_title="Observation Logger")
+        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title="Observation Logger")
         self.observationlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.observationlog_window.get_container().get_size()),
         html_text="",
@@ -98,17 +98,44 @@ class GameManager:
         path = self.grid_map.a_star(source_node, target_node) if target_node else None
         return radius, shadow, raycast, path
 
-    def update_action_logs(self,action_results:ActionsResults):
-                    for result in action_results.results:
-                        if result.success:
-                            action_name = result.action_instance.action.name
-                            source_name = GameEntity.get_instance(result.action_instance.source_id).name
-                            target_name = GameEntity.get_instance(result.action_instance.target_id).name
-                            
-                            new_action_text = f"{source_name} just {action_name} to {target_name}"
-                            self.action_logs.append(new_action_text)
-                    inverted_list_action = self.action_logs[::-1]
-                    self.actionlog_box.set_text("\n".join(inverted_list_action))
+    def update_action_logs(self, action_results: ActionsResults, only_changes: bool = True):
+        for result in action_results.results:
+            action_name = result.action_instance.action.name
+            source_name = GameEntity.get_instance(result.action_instance.source_id).name
+            target_name = GameEntity.get_instance(result.action_instance.target_id).name
+
+            log_entry = f"Action: {action_name}\n"
+            log_entry += f"Source: {source_name}\n"
+            log_entry += f"Target: {target_name}\n"
+            log_entry += f"Result: {'Success' if result.success else 'Failure'}\n"
+
+            if not result.success:
+                log_entry += f"Reason: {result.error}\n"
+
+            if only_changes:
+                state_before = {k: v for k, v in result.state_before.items() if k in result.state_after and v != result.state_after[k]}
+                state_after = {k: v for k, v in result.state_after.items() if k in result.state_before and v != result.state_before[k]}
+            else:
+                state_before = result.state_before
+                state_after = result.state_after
+
+            log_entry += "State Before:\n"
+            for entity, state in state_before.items():
+                log_entry += f"  {entity.capitalize()}:\n"
+                for attr, value in state.items():
+                    log_entry += f"    {attr}: {value}\n"
+
+            if result.success:
+                log_entry += "State After:\n"
+                for entity, state in state_after.items():
+                    log_entry += f"  {entity.capitalize()}:\n"
+                    for attr, value in state.items():
+                        log_entry += f"    {attr}: {value}\n"
+
+            self.action_logs.append(log_entry)
+
+        inverted_list_action = self.action_logs[::-1]
+        self.actionlog_box.set_text(log_entry)
     
     def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
         sprite_mappings=self.sprite_mappings
@@ -122,7 +149,18 @@ class GameManager:
         
         print("diocane",self.observation_logs[-1])
         self.observationlog_box.set_text(self.observation_logs[-1])
-        
+    
+    def handle_action_payload_submission(self, action_payload_json:str):
+        try:
+            summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
+            actions_payload = self.grid_map.convert_summarized_payload(summarized_payload)
+            if isinstance(actions_payload, ActionsPayload):
+                self.input_handler.actions_payload.actions.extend(actions_payload.actions)
+            else:
+                print(f"Action Conversion Error: {actions_payload}")
+        except ValidationError as e:
+            print(f"Invalid action payload: {e}")
+            
     def run(self):
         self.screen.blit(self.vertical_background, (400, 0))
         self.screen.blit(self.horizontal_background, (0, 300))
@@ -150,7 +188,10 @@ class GameManager:
                     controlled_entity = self.get_controlled_entity()
                     radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
                 self.ui_manager.process_events(event)
-            
+                if self.input_handler.llm_action_payload is not None:
+                    self.handle_action_payload_submission(self.input_handler.llm_action_payload)
+                    self.input_handler.llm_action_payload = None
+                
 
             # Update the camera control based on input
             self.renderer.handle_camera_control(self.input_handler.camera_control)
@@ -166,6 +207,8 @@ class GameManager:
 
             # Apply the action payload to the grid map
             actions_results = self.grid_map.apply_actions_payload(self.input_handler.actions_payload)
+            if len(actions_results.results) > 0:
+                self.update_action_logs(actions_results, only_changes=True)
 
             # Check if there are any successful actions
             successful_actions = any(result.success for result in actions_results.results)
@@ -173,8 +216,8 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                self.update_observation_logs(shadow,mode="groups",use_egoncentric=True)
-                self.update_action_logs(actions_results)
+                self.update_observation_logs(shadow,mode="groups",use_egoncentric=False)
+                
 
             
             # Recalculate the available actions after applying the action payload
