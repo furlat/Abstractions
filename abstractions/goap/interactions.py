@@ -105,22 +105,29 @@ def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
     return source
 
 def source_node_comparison(source: Node, target: Node) -> bool:
+    """Check if the source node is the same as or a neighbor of the target node."""
     return source in target.neighbors() or source.id == target.id
 
 def source_node_comparison_and_walkable(source: Node, target: Node) -> bool:
+    """Check if the source node is the same as or a neighbor of the target node and the target node is walkable."""
     if target.blocks_movement:
         return False
     return source in target.neighbors() or source.id == target.id
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
+    """Check if the target entity does not block movement."""
     return not target.blocks_movement.value
 
 def move_to_target_node(source: GameEntity, target: GameEntity) -> Node:
+    """Move the source entity to the target entity's node."""
     return target.node
+
+
 
 MoveToTargetNode: Callable[[GameEntity, GameEntity], Node] = move_to_target_node
 
 class MoveStep(Action):
+    """Represents a single step movement action."""
     name: str = "Move Step"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -136,6 +143,7 @@ class MoveStep(Action):
 SetStoredIn: Callable[[GameEntity, GameEntity], GameEntity] = set_stored_in
 
 def set_node(source: GameEntity, target: GameEntity) -> Node:
+    
     target.set_stored_in(None)
     source.node.add_entity(target)
     return source.node
@@ -155,6 +163,7 @@ RemoveFromInventory: Callable[[GameEntity, GameEntity], None] = remove_from_inve
 
 
 class PickupAction(Action):
+    """Represents the action of picking up an entity."""
     name: str = "Pickup"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -194,6 +203,7 @@ def calculate_damage(source: LivingEntity, target: LivingEntity) -> int:
     return max(0, target.health.value - source.attack_power.value)
 
 class AttackAction(Action):
+    """Represents the action of attacking another entity."""
     name: str = "Attack"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -214,6 +224,7 @@ def calculate_heal_amount(source: LivingEntity, target: LivingEntity) -> int:
     return min(target.health.value + source.attack_power.value, target.max_health.value)
 
 class HealAction(Action):
+    """Represents the action of healing another entity."""
     name: str = "Heal"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[
@@ -248,6 +259,7 @@ def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
 ClearStoredIn: Callable[[GameEntity, GameEntity], None] = clear_stored_in
 
 class DropAction(Action):
+    """Represents the action of dropping an entity."""
     name: str = "Drop"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -262,6 +274,7 @@ class DropAction(Action):
 
 
 class OpenAction(Action):
+    """Represents the action of opening a Entity."""
     name: str = "Open"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -285,6 +298,7 @@ class OpenAction(Action):
 
         return updated_source, updated_target
 class CloseAction(Action):
+    """Represents the action of closing a Entity."""
     name: str = "Close"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -313,6 +327,7 @@ def has_required_key(source: GameEntity, target: Door) -> bool:
     return any(item.key_name.value == target.required_key.value for item in source.inventory)
 
 class UnlockAction(Action):
+    """Represents the action of unlocking a Entity."""
     name: str = "Unlock"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
@@ -330,6 +345,7 @@ class UnlockAction(Action):
     )
 
 class LockAction(Action):
+    """ Represents the action of locking a Entity."""
     name: str = "Lock"
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],

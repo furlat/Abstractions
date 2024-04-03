@@ -77,11 +77,11 @@ class BaseShapeFromSource(BaseModel):
         vanilla_output = '\n'.join(group_strings_vanilla)
         summarized_output = '\n'.join(group_strings_summarized)
 
-        print(f"Vanilla Length: {len(vanilla_output)}")
-        print(f"Summarized Length: {len(summarized_output)}")
-        print(f"Efficiency Gain: {len(vanilla_output) - len(summarized_output)}")
-        print(f"Vanilla Output:\n{vanilla_output}")
-        print(f"Summarized Output:\n{summarized_output}")
+        # print(f"Vanilla Length: {len(vanilla_output)}")
+        # print(f"Summarized Length: {len(summarized_output)}")
+        # print(f"Efficiency Gain: {len(vanilla_output) - len(summarized_output)}")
+        # print(f"Vanilla Output:\n{vanilla_output}")
+        # print(f"Summarized Output:\n{summarized_output}")
 
         return summarized_output
 

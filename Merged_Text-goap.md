@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-04-01T21:26:26.593813`
+- Created: `2024-04-02T23:03:13.093800`
 
 ## init
 
@@ -359,7 +359,7 @@ class InventoryWidget(pygame_gui.elements.UIWindow):
 
 ## input handler
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
 from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
 from abstractions.goap.actions import Action
@@ -415,21 +415,17 @@ class InputHandler:
         self.inventory_widget = inventory_widget
         self.inventory_widget.setup_input_handler(self)
         self.text_entry_box = text_entry_box
-
-        
-
-
-
         self.latest_mouse_click = (0, 0)
+        self.llm_action_payload = None
 
-    def handle_input(self, event):
+    def handle_input(self, event: pygame.event.Event):
         if event.type == pygame.KEYDOWN: 
             self.handle_keypress_on_gridmap(event.key)
         elif event.type == pygame.MOUSEMOTION:
             self.handle_mouse_motion(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             self.handle_mouse_click(event.button, event.pos)
-           
+ 
     def handle_keypress_on_gridmap(self, key):
         if self.text_entry_box.rect.collidepoint(self.latest_mouse_click):
             print("trying keywriting but latest was a notepad window clicked")
@@ -479,6 +475,9 @@ class InputHandler:
                 self.camera_control.move = (0, -1)
             elif key == pygame.K_DOWN:
                 self.camera_control.move = (0, 1)
+            elif key == pygame.K_F1:
+                self.llm_action_payload = self.text_entry_box.get_text()
+                
 
 
     def handle_mouse_click(self, button, pos, camera_pos, cell_size):
@@ -541,6 +540,7 @@ class InputHandler:
             if action.is_applicable(source, target):
                 available_actions.append(action.name)
         return available_actions
+    
     
     def update_available_actions(self):
         player_id = self.active_entities.controlled_entity_id
@@ -677,7 +677,7 @@ import pygame
 
 from abstractions.goap.spatial import GridMap, GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
@@ -735,8 +735,11 @@ def main():
    
     # Create the grid map and generate the dungeon
     grid_map = GridMap(width=50, height=50)
+    grid_map.register_actions([MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction])
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
+    # Generate the entity type map
+    grid_map.generate_entity_type_map()
    
     # Define the sprite mappings
     sprite_mappings = [
@@ -772,7 +775,7 @@ import pygame
 import pygame_gui
 
 from typing import List, Tuple, Set, Optional
-from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult
+from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult,ActionsPayload,SummarizedActionPayload
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
 from abstractions.goap.game.input_handler import InputHandler
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
@@ -919,7 +922,18 @@ class GameManager:
         
         print("diocane",self.observation_logs[-1])
         self.observationlog_box.set_text(self.observation_logs[-1])
-        
+    
+    def handle_action_payload_submission(self, action_payload_json:str):
+        try:
+            summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
+            actions_payload = self.grid_map.convert_summarized_payload(summarized_payload)
+            if isinstance(actions_payload, ActionsPayload):
+                self.input_handler.actions_payload.actions.extend(actions_payload.actions)
+            else:
+                print(f"Action Conversion Error: {actions_payload}")
+        except ValidationError as e:
+            print(f"Invalid action payload: {e}")
+            
     def run(self):
         self.screen.blit(self.vertical_background, (400, 0))
         self.screen.blit(self.horizontal_background, (0, 300))
@@ -947,7 +961,10 @@ class GameManager:
                     controlled_entity = self.get_controlled_entity()
                     radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
                 self.ui_manager.process_events(event)
-            
+                if self.input_handler.llm_action_payload is not None:
+                    self.handle_action_payload_submission(self.input_handler.llm_action_payload)
+                    self.input_handler.llm_action_payload = None
+                
 
             # Update the camera control based on input
             self.renderer.handle_camera_control(self.input_handler.camera_control)
@@ -972,7 +989,7 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                self.update_observation_logs(shadow,mode="groups",use_egoncentric=True)
+                self.update_observation_logs(shadow,mode="groups",use_egoncentric=False)
                 
 
             
@@ -2339,6 +2356,7 @@ class GridMap:
         self.height = height
         self.grid: List[List[Node]] = [[Node(position=Position(value=(x, y)), grid_map=self) for y in range(height)] for x in range(width)]
         self.actions: Dict[str, Type[Action]] = {}
+        self.entity_type_map: Dict[str, Type[GameEntity]] = {}
     
     def register_action(self, action_class: Type[Action]):
         self.actions[action_class.__name__] = action_class
@@ -2555,21 +2573,39 @@ class GridMap:
         nodes = [self.get_node(cell) for cell in visible_cells]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
     
-    def convert_summarized_payload(self, summarized_payload: SummarizedActionPayload) -> ActionsPayload:
-        source_entity_result = self.find_entity(summarized_payload.source_entity_type, summarized_payload.source_entity_position,
+    def generate_entity_type_map(self):
+        self.entity_type_map = {}
+        for row in self.grid:
+            for node in row:
+                for entity in node.entities:
+                    entity_type = type(entity)
+                    entity_type_name = entity_type.__name__
+                    if entity_type_name not in self.entity_type_map:
+                        self.entity_type_map[entity_type_name] = entity_type
+    
+    def convert_summarized_payload(self, summarized_payload: SummarizedActionPayload) -> Union[ActionsPayload, ActionConversionError]:
+        source_entity_type = self.entity_type_map.get(summarized_payload.source_entity_type)
+        if source_entity_type is None:
+            return ActionConversionError(message=f"Invalid source entity type: {summarized_payload.source_entity_type}")
+
+        target_entity_type = self.entity_type_map.get(summarized_payload.target_entity_type)
+        if target_entity_type is None:
+            return ActionConversionError(message=f"Invalid target entity type: {summarized_payload.target_entity_type}")
+
+        source_entity_result = self.find_entity(source_entity_type, summarized_payload.source_entity_position,
                                                 summarized_payload.source_entity_id, summarized_payload.source_entity_name,
                                                 summarized_payload.source_entity_attributes)
-        target_entity_result = self.find_entity(summarized_payload.target_entity_type, summarized_payload.target_entity_position,
+        target_entity_result = self.find_entity(target_entity_type, summarized_payload.target_entity_position,
                                                 summarized_payload.target_entity_id, summarized_payload.target_entity_name,
                                                 summarized_payload.target_entity_attributes)
 
         if isinstance(source_entity_result, AmbiguousEntityError):
-            raise ActionConversionError(
+            return ActionConversionError(
                 message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}",
                 source_entity_error=source_entity_result
             )
         if isinstance(target_entity_result, AmbiguousEntityError):
-            raise ActionConversionError(
+            return ActionConversionError(
                 message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}",
                 target_entity_error=target_entity_result
             )
@@ -2578,17 +2614,17 @@ class GridMap:
         target_entity = target_entity_result
 
         if source_entity is None:
-            raise ActionConversionError(
+            return ActionConversionError(
                 message=f"Unable to find source entity: {summarized_payload.source_entity_type} at position {summarized_payload.source_entity_position}"
             )
         if target_entity is None:
-            raise ActionConversionError(
+            return ActionConversionError(
                 message=f"Unable to find target entity: {summarized_payload.target_entity_type} at position {summarized_payload.target_entity_position}"
             )
 
         action_class = self.actions.get(summarized_payload.action_name)
         if action_class is None:
-            raise ActionConversionError(message=f"Action '{summarized_payload.action_name}' not found")
+            return ActionConversionError(message=f"Action '{summarized_payload.action_name}' not found")
 
         action_instance = ActionInstance(source_id=source_entity.id, target_id=target_entity.id, action=action_class())
         return ActionsPayload(actions=[action_instance])

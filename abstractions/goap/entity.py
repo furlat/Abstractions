@@ -121,8 +121,11 @@ class Statement(BaseModel, RegistryHolder):
                 return False
         return True
 
-    def validate_callables(self, source: Entity, target: Entity) -> bool:
+    def validate_callables(self, source: Entity, target: Optional[Entity] = None) -> bool:
         for callable_func in self.callables:
             if not callable_func(source, target):
                 return False
         return True
+    
+    def validate_all(self, source: Entity, target: Optional[Entity] = None) -> bool:
+        return self.validate_condition(source) and (self.validate_comparisons(source, target) if target else True) and self.validate_callables(source, target)
