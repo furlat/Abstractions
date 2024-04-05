@@ -8,6 +8,7 @@ from abstractions.goap.game.main import generate_dungeon
 import outlines
 from outlines import models, generate
 from llama_cpp import Llama
+import re
 
 from abc import ABC, abstractmethod
 
@@ -16,6 +17,7 @@ class MemoryInstance(BaseModel):
     action: Optional[Union[SummarizedActionPayload, "OutlinesActionPayload", "OutlinesEgoActionPayload"]] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    failed_prerequisites: Optional[List[str]] = None
     notes: Optional[str] = None
 
 class MemorySequence(BaseModel):
@@ -28,29 +30,92 @@ class MemorySequence(BaseModel):
     def get_recent_entries(self, count: int) -> List[MemoryInstance]:
         return self.entries[-count:]
 
-    def summarize(self, length: Optional[int] = None) -> str:
+    def summarize(self, length: Optional[int] = None, character_id: Optional[str] = None) -> str:
         summaries = []
         target = self.entries if length is None else self.entries[-length:]
-
         for entry in target:
-            summary = f"Observation: {entry.observation}\n"
+            summary = f"Observation: {self._summarize_observation(entry.observation)}\n"
             if entry.action:
-                if isinstance(entry.action, SummarizedActionPayload):
-                    summary += f"Action: {entry.action.model_dump()}\n"
-                elif isinstance(entry.action, (OutlinesActionPayload, OutlinesEgoActionPayload)):
-                    summary += f"Action: {entry.action.to_summarized_payload().model_dump()}\n"
+                summary += f"Action: {self._summarize_action(entry.action, character_id)}\n"
             if entry.result:
-                summary += f"Result: {entry.result}\n"
+                summary += f"Result: {self._summarize_result(entry.result)}\n"
             if entry.error:
                 summary += f"Error: {entry.error}\n"
+            if entry.failed_prerequisites:
+                summary += f"Failed Prerequisites:\n{self._summarize_failed_prerequisites(entry.failed_prerequisites)}\n"
             if entry.notes:
                 summary += f"Notes: {entry.notes}\n"
             summaries.append(summary)
-
         if self.notes:
             summaries.append(f"Sequence Notes: {self.notes}")
-
         return "\n".join(summaries)
+
+    def _summarize_observation(self, observation: str) -> str:
+        # Extract key entities, positions, and state changes compared to the previous observation
+        lines = observation.split("\n")
+        summary = []
+        for line in lines:
+            if "Entity Types" in line:
+                entity_types = re.findall(r"\[.*?\]", line)[0]
+                summary.append(f"Entity Types: {entity_types}")
+            elif "Positions" in line:
+                positions = line.split("Positions:")[1].strip()
+                summary.append(f"Positions: {positions}")
+            elif "Attributes" in line:
+                attributes = re.findall(r"\(.*?\)", line)
+                filtered_attributes = [attr for attr in attributes if "BlocksMovement" in attr or "BlocksLight" in attr]
+                if filtered_attributes:
+                    summary.append(f"Attributes: {', '.join(filtered_attributes)}")
+        return "\n".join(summary)
+
+    def _summarize_action(self, action: Union[SummarizedActionPayload, "OutlinesActionPayload", "OutlinesEgoActionPayload"], character_id: str) -> str:
+        if isinstance(action, SummarizedActionPayload):
+            return action.model_dump()
+        elif isinstance(action, (OutlinesActionPayload, OutlinesEgoActionPayload)):
+            return action.to_summarized_payload(character_id=character_id).model_dump()
+
+    def _summarize_result(self, result: Dict[str, Any]) -> str:
+        # Extract the success status and highlight the main changes in the source and target entities
+        success = result["success"]
+        source_before = result["state_before"]["source"]
+        source_after = result["state_after"]["source"]
+        target_before = result["state_before"]["target"]
+        target_after = result["state_after"]["target"]
+
+        summary = [f"Success: {success}"]
+
+        source_changes = self._get_entity_changes(source_before, source_after)
+        if source_changes:
+            summary.append(f"Source Changes: {', '.join(source_changes)}")
+
+        target_changes = self._get_entity_changes(target_before, target_after)
+        if target_changes:
+            summary.append(f"Target Changes: {', '.join(target_changes)}")
+
+        return "\n".join(summary)
+
+    def _get_entity_changes(self, before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+        changes = []
+        for key in before:
+            if key in after and before[key] != after[key]:
+                changes.append(f"{key}: {before[key]} -> {after[key]}")
+        return changes
+
+    def _summarize_failed_prerequisites(self, failed_prerequisites: List[str]) -> str:
+        # Extract the failed prerequisite statements and include the docstrings of any failed callables
+        summary = []
+        for prerequisite in failed_prerequisites:
+            summary.append(prerequisite)
+            if "Callable" in prerequisite:
+                callable_name = prerequisite.split(":")[1].strip()
+                callable_obj = next((c for c in self.entries[-1].action.prerequisites.source_statements + 
+                                     self.entries[-1].action.prerequisites.target_statements +
+                                     self.entries[-1].action.prerequisites.source_target_statements
+                                     if hasattr(c, "callables") and callable_name in [c.__name__ for c in c.callables]), None)
+                if callable_obj:
+                    docstring = callable_obj.__doc__ or "No docstring available"
+                    summary.append(f"  {docstring}")
+        return "\n".join(summary)
 
 class AgentGoal(BaseModel):
     statement: Statement
@@ -152,6 +217,7 @@ def system_prompt(registered_actions, use_egocentric, use_outlines, outlines_ego
     """
     <|im_start|>system
     You are an agent in a turn-based game world. The game takes place on a grid-based map, where each node can contain various entities, such as characters, items, and obstacles.
+    Your controlled entity has the type Character, so when you will se references to a Character entity, it represents you, the agent.
 
     Available Actions:
     {% for action_name, action_class in registered_actions.items() %}
@@ -203,6 +269,7 @@ def system_prompt(registered_actions, use_egocentric, use_outlines, outlines_ego
     - You receive observations in the form of Shadow payloads, which represent your visible surroundings.
     - Each Shadow payload contains a list of visible nodes and the entities present at each node.
     - Entities have types, names, and attributes that describe their properties and state.
+    - Give particulat attetion tothe BlocksMovement and BlocksLight attributes of the entities in the Shadow payload as they propagate to all entities in the same node. So if a node has both a floor and closed door that blocks movement, the floor will also block movement.
     - The positions in the Shadow payload are compressed to save space using the following techniques:
       - Positions are grouped by entity equivalence classes, where all positions with the same set of entities are reported together.
       - Positions are represented using range notation, where a contiguous range of positions is denoted as "start:end".
@@ -252,37 +319,40 @@ def system_prompt(registered_actions, use_egocentric, use_outlines, outlines_ego
     """
 
 @outlines.prompt
-def action_generation_prompt(shadow_payload, goals, memory_summary, use_egocentric, use_outlines, memory_length, outlines_ego_action_payload, outlines_action_payload, summarized_ego_action_payload, summarized_action_payload):
+def action_generation_prompt(shadow_payload, goals, memory_summary, use_egocentric, use_outlines, memory_length, outlines_ego_action_payload, outlines_action_payload, summarized_ego_action_payload, summarized_action_payload, character_position):
     """
     <|im_start|>user
     Current Observation:
     {{ shadow_payload }}
-
     Goals:
     {% for goal in goals %}
     - {{ goal.statement }}: (Priority: {{ goal.priority }})
     {% endfor %}
-
     {% if memory_length > 0 %}
     Memory Summary (last {{ memory_length }} steps):
     {{ memory_summary }}
     {% endif %}
-
     Based on the current observation{% if memory_length > 0 %}, your goals, and memory{% else %} and your goals{% endif %}, what action do you want to take next?
-    Respond with a valid action payload following the structure defined by the game engine's registered actions. Remember to always indicate they Target Type as a string e.g. Floor, Door, Key, etc.
-    in the action payload.
+    Respond with a valid action payload following the structure defined by the game engine's registered actions. Remember to always indicate the Target Type as a string e.g. Floor, Door, Key, etc. in the action payload.
+    The Character entity represents you, the agent, in the game world. When targeting entities, keep in mind that you can only interact with entities within a range of 1 in all 8 directions relative to your current position.
     {% if use_egocentric %}
+    Remember that the range of your actions is limited to the following positions relative to your current position:
+    (-1, 0), (0, -1), (0, 1), (1, 0), (0, 0), (-1, -1), (-1, 1), (1, -1), (1, 1)
     Remember to provide positions relative to your current position (egocentric perspective).
     {% else %}
+    Remember that the range of your actions is limited to the following positions relative to your current position ({{ character_position }}):
+    {% set x, y = character_position %}
+    ({{ x - 1 }}, {{ y }}), ({{ x }}, {{ y - 1 }}), ({{ x }}, {{ y + 1 }}), ({{ x + 1 }}, {{ y }}), ({{ x }}, {{ y }}), ({{ x - 1 }}, {{ y - 1 }}), ({{ x - 1 }}, {{ y + 1 }}), ({{ x + 1 }}, {{ y - 1 }}), ({{ x + 1 }}, {{ y + 1 }})
     Remember to provide absolute positions on the grid map.
     {% endif %}
     {% if use_outlines %}
     The action payload should follow the structure of the {{ outlines_ego_action_payload | schema if use_egocentric else outlines_action_payload | schema }}.
     {% else %}
     The action payload should follow the structure of the {{ summarized_ego_action_payload | schema if use_egocentric else summarized_action_payload | schema }}.
-    {% endif %}<|im_end|>
+    {% endif %}
+    Please provide a brief explanation of your behavior and the reasoning behind your chosen action.
+    <|im_end|>
     <|im_start|>assistant
-
     """
 
 class OutlinesActionPayload(BaseModel):
@@ -291,7 +361,7 @@ class OutlinesActionPayload(BaseModel):
     """
     action_name: str = Field(description="The name of the action.")
     target_entity_type: str = Field(description="The type of the target entity. The most fundamental field to be filled in.")
-    target_entity_position: conlist(int, min_length=2, max_length=2) = Field(description="The absolute position of the target entity.")
+    target_entity_position: conlist(str, min_length=2, max_length=2) = Field(description="The absolute position of the target entity.the most fundamental field to be filled in. Should be possibl to convert to Integers.")
     explanation_of_my_behavior:str = Field(description="The explanation of the agent's behavior behind the choice of action.")
 
     def to_summarized_payload(self, character_id: str) -> "SummarizedActionPayload":
@@ -306,7 +376,8 @@ class OutlinesActionPayload(BaseModel):
             source_entity_type="Character",
             source_entity_position=character_position,
             target_entity_type=self.target_entity_type,
-            target_entity_position=tuple(self.target_entity_position),
+            target_entity_position=tuple(int(x) for x in self.target_entity_position),
+            explanation_of_my_behavior=self.explanation_of_my_behavior
         )
 
     def to_ego_payload(self, character_id: str) -> "OutlinesEgoActionPayload":
@@ -317,6 +388,7 @@ class OutlinesActionPayload(BaseModel):
             action_name=self.action_name,
             target_entity_type=self.target_entity_type,
             target_entity_position=self.target_entity_position,
+            explanation_of_my_behavior=self.explanation_of_my_behavior
         )
 
 class OutlinesEgoActionPayload(BaseModel):
@@ -325,7 +397,8 @@ class OutlinesEgoActionPayload(BaseModel):
     """
     action_name: str = Field(description="The name of the action.")
     target_entity_type: str = Field(description="The type of the target entity.")
-    target_entity_position: conlist(int, min_length=2, max_length=2) = Field(description="The position of the target entity relative to the character.")
+    target_entity_position: conlist(str, min_length=2, max_length=2) = Field(description="The position of the target entity relative to the character. Can be negative. the most fundamental field to be filled in. Should be possibl to convert to Integers.")
+    explanation_of_my_behavior:str = Field(description="The explanation of the agent's behavior behind the choice of action.")
 
     def to_absolute_payload(self, character_id: str) -> "OutlinesActionPayload":
         """
@@ -338,14 +411,15 @@ class OutlinesEgoActionPayload(BaseModel):
         character_position = character_entity.node.position.value
 
         abs_target_position = [
-            character_position[0] + self.target_entity_position[0],
-            character_position[1] + self.target_entity_position[1]
+            character_position[0] + int(self.target_entity_position[0]),
+            character_position[1] + int(self.target_entity_position[1])
         ]
 
         return OutlinesActionPayload(
             action_name=self.action_name,
             target_entity_type=self.target_entity_type,
             target_entity_position=abs_target_position,
+            explanation_of_my_behavior=self.explanation_of_my_behavior
         )
 
     def to_summarized_payload(self, character_id: str) -> "SummarizedEgoActionPayload":
@@ -357,17 +431,18 @@ class OutlinesEgoActionPayload(BaseModel):
             source_entity_type="Character",
             source_entity_position=(0, 0),
             target_entity_type=self.target_entity_type,
-            target_entity_position=tuple(self.target_entity_position),
+            target_entity_position=tuple(int(x) for x in self.target_entity_position),
+            explanation_of_my_behavior=self.explanation_of_my_behavior
         )
 
 class LLMAgent(AbcAgent):
     def __init__(self, grid_map: GridMap, character_id: str, model_path: str, use_egocentric: bool = False, memory_length: int = 0):
         super().__init__(grid_map, character_id, use_egocentric, use_outlines=True)
-        self.model = models.llamacpp(model_path, model_kwargs={"seed": 1337, "n_ctx": 8000, "n_gpu_layers": -1, "verbose": True})
+        self.model = models.llamacpp(model_path, model_kwargs={"seed": 1337, "n_ctx": 30000, "n_gpu_layers": -1, "verbose": True})
         self.generator = generate.json(self.model, OutlinesEgoActionPayload if use_egocentric else OutlinesActionPayload)
         self.memory_length = memory_length
 
-    def generate_action(self, shadow_payload: str) -> Optional[Union[OutlinesActionPayload, OutlinesEgoActionPayload]]:
+    def generate_action(self, shadow_payload: str, memory: MemorySequence) -> Optional[Union[OutlinesActionPayload, OutlinesEgoActionPayload]]:
         system_prompt_text = system_prompt(
             self.grid_map.get_actions(),
             self.use_egocentric,
@@ -377,7 +452,8 @@ class LLMAgent(AbcAgent):
             SummarizedEgoActionPayload,
             SummarizedActionPayload
         )
-        memory_summary = self.memory.summarize(self.memory_length) if self.memory_length > 0 else ""
+        character_position = self.get_current_position()
+        memory_summary = memory.summarize(length=self.memory_length, character_id=self.character_id)
         action_prompt_text = action_generation_prompt(
             shadow_payload,
             self.goals,
@@ -388,26 +464,33 @@ class LLMAgent(AbcAgent):
             OutlinesEgoActionPayload,
             OutlinesActionPayload,
             SummarizedEgoActionPayload,
-            SummarizedActionPayload
+            SummarizedActionPayload,
+            character_position
         )
         prompt_text = f"{system_prompt_text}\n\n{action_prompt_text}"
         action_payload = self.generator(prompt_text)
         return action_payload
+
+
+    def get_current_position(self) -> Tuple[int, int]:
+        character_entity = self.get_character_entity()
+        if character_entity and character_entity.node:
+            return character_entity.node.position.value
+        return None
+
+    def get_character_entity(self) -> Optional[GameEntity]:
+        return GameEntity.get_instance(self.character_id)
 
 class CharacterAgent:
     def __init__(self, grid_map: GridMap, agent: AbcAgent):
         self.grid_map = grid_map
         self.agent = agent
         self.memory = MemorySequence()
-        self.set_agent_memory()
         self.goals: List[AgentGoal] = []
         self.metadata: RunMetadata = None
         self.raw_results_payloads = []
         self.use_egocentric = self.agent.use_egocentric
         self.use_outlines = self.agent.use_outlines
-    
-    def set_agent_memory(self):
-        self.agent.memory = self.memory
 
     def set_goals(self, goals: List[AgentGoal]):
         self.goals = goals
@@ -415,7 +498,6 @@ class CharacterAgent:
 
     def update_memory_notes(self, notes: str):
         self.memory.notes = notes
-        
 
     def update_instance_notes(self, notes: str):
         if self.memory.entries:
@@ -425,7 +507,7 @@ class CharacterAgent:
         self.metadata = metadata
 
     def generate_action(self, shadow_payload: str) -> Optional[Union[OutlinesActionPayload, OutlinesEgoActionPayload]]:
-        action_payload = self.agent.generate_action(shadow_payload)
+        action_payload = self.agent.generate_action(shadow_payload, self.memory)
         print(f"Generated Action: {action_payload}")
         if action_payload:
             if self.use_egocentric:
@@ -434,12 +516,14 @@ class CharacterAgent:
                 return action_payload
         return None
 
-    def process_action_result(self, shadow_payload: str, action_payload: Optional[Union[OutlinesActionPayload, OutlinesEgoActionPayload]], result: Optional[Dict[str, Any]] = None, error: Optional[str] = None):
+    def process_action_result(self, shadow_payload: str, action_payload: Optional[Union[OutlinesActionPayload, OutlinesEgoActionPayload]], result: Optional[Dict[str, Any]] = None, error: Optional[str] = None, failed_prerequisites: Optional[List[str]] = None):
         memory_instance = MemoryInstance(
             observation=shadow_payload,
             action=action_payload,
             result=result,
-            error=error
+            error=error,
+            failed_prerequisites=failed_prerequisites,
+            notes=None
         )
         self.memory.add_entry(memory_instance)
 
@@ -450,10 +534,10 @@ class CharacterAgent:
             print(f"\n--- Step: {step_count} ---")
             action_payload = self.generate_action(observation)
             print(f"Generated Action: {action_payload}")
-            result, error = self.execute_action(action_payload)
+            result, error, failed_prerequisites = self.execute_action(action_payload)
             self.process_action_result(observation, action_payload, result, error)
             if error:
-                print(f"Error: {error}")
+                print(f"Error: {error}, Failed Prerequisites: {failed_prerequisites}")
             if result:
                 print("Action Result:")
                 print(f" State Before: {result['state_before']}")
@@ -483,23 +567,17 @@ class CharacterAgent:
                         "state_before": action_result.state_before,
                         "state_after": action_result.state_after
                     }
-                    return result, None
+                    return result, None, None
                 else:
                     error = "Action execution failed"
-                    return None, error
+                    failed_prerequisites = [prereq for result in actions_results.results for prereq in result.failed_prerequisites]
+                    return None, error, failed_prerequisites
             else:
                 error = str(action_result)
-                return None, error
+                return None, error, None
         else:
             print("No valid action payload generated.")
-            return None, None
-
-    def get_current_position(self) -> Tuple[int, int]:
-        character_entity = self.get_character_entity()
-        if character_entity and character_entity.node:
-            return character_entity.node.position.value
-        return None
-
+            return None, None, None
     def get_current_observation(self) -> str:
         character_entity = self.get_character_entity()
         if character_entity and character_entity.node:

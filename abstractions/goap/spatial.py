@@ -76,6 +76,19 @@ class BaseShapeFromSource(BaseModel):
 
         vanilla_output = '\n'.join(group_strings_vanilla)
         summarized_output = '\n'.join(group_strings_summarized)
+        # Add information about blocks_light and blocks_movement nodes
+        light_blocking_groups = [group_key for group_key in groups if any(attr[0] == 'BlocksLight' and attr[1] for attr in group_key[1])]
+        movement_blocking_groups = [group_key for group_key in groups if any(attr[0] == 'BlocksMovement' and attr[1] for attr in group_key[1])]
+        
+        if light_blocking_groups:
+            light_blocking_info = f"Light Blocking Groups: {', '.join(str(group) for group in light_blocking_groups)}"
+            summarized_output += f"\n{light_blocking_info}"
+        
+        if movement_blocking_groups:
+            movement_blocking_info = f"Movement Blocking Groups: {', '.join(str(group) for group in movement_blocking_groups)}"
+            summarized_output += f"\n{movement_blocking_info}"
+        
+        return summarized_output
 
         # print(f"Vanilla Length: {len(vanilla_output)}")
         # print(f"Summarized Length: {len(summarized_output)}")
@@ -83,7 +96,6 @@ class BaseShapeFromSource(BaseModel):
         # print(f"Vanilla Output:\n{vanilla_output}")
         # print(f"Summarized Output:\n{summarized_output}")
 
-        return summarized_output
 
     def _summarize_positions(self, positions: List[Tuple[int, int]]) -> str:
         if not positions:
@@ -233,6 +245,7 @@ class SummarizedActionPayload(BaseModel):
     target_entity_id: Optional[str] = Field(default=None, description="The unique identifier of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
     target_entity_name: Optional[str] = Field(default=None, description="The name of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
     target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional attributes of the target entity.")
+    explanation_of_my_behavior:Optional[str] = Field(description="The explanation of the agent's behavior behind the choice of action.")
 
     def to_ego_payload(self, character_position: Tuple[int, int]) -> "SummarizedEgoActionPayload":
         """
@@ -309,8 +322,10 @@ class ActionResult(BaseModel):
     action_instance: ActionInstance
     success: bool
     error: str = None
+    failed_prerequisites: List[str] = Field(default_factory=list)
     state_before: Dict[str, Any] = Field(default_factory=dict)
     state_after: Dict[str, Any] = Field(default_factory=dict)
+
 
     def to_text_state(self, use_egocentric: bool = False) -> str:
         action_name = self.action_instance.action.__class__.__name__
@@ -345,7 +360,8 @@ class ActionResult(BaseModel):
         else:
             result = "Failure"
             error = self.error
-            return f"Action: {action_name}\nSource Before: {source_before_state}\nSource Before Position: {source_before_position}\nTarget Before: {target_before_state}\nTarget Before Position: {target_before_position}\nResult: {result}\nError: {error}\n"
+            failed_prerequisites_text = "\n".join(self.failed_prerequisites)
+            return f"Action: {action_name}\nSource Before: {source_before_state}\nSource Before Position: {source_before_position}\nTarget Before: {target_before_state}\nTarget Before Position: {target_before_position}\nResult: {result}\nError: {error}\nFailed Prerequisites:\n{failed_prerequisites_text}\n"
 
     def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
         source_x, source_y = self.state_before["source"]["position"]
