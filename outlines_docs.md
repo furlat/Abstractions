@@ -1263,3 +1263,509 @@ model = models.LlamaCpp(llm)
 
 
 
+Models
+TransformerTokenizer
+Bases: Tokenizer
+
+Represents a tokenizer for models in the transformers library.
+
+Source code in outlines/models/transformers.py
+Transformers
+Represents a transformers model.
+
+Source code in outlines/models/transformers.py
+forward(input_ids, attention_mask, past_key_values=None)
+Compute a forward pass through the transformer model.
+
+PARAMETERS
+input_ids The input token ids. Must be one or two dimensional. attention_mask The attention mask. Must be one or two dimensional. past_key_values A tuple of tuples containing the cached key and value tensors for each attention head.
+
+RETURNS
+The computed logits and the new cached key and value tensors.
+
+Source code in outlines/models/transformers.py
+get_llama_tokenizer_types()
+Get all the Llama tokenizer types/classes that need work-arounds.
+
+When they can't be imported, a dummy class is created.
+
+Source code in outlines/models/transformers.py
+transformers(model_name, device=None, model_kwargs={}, tokenizer_kwargs={})
+Instantiate a model from the transformers library and its tokenizer.
+
+Parameters
+model_name The name of the model as listed on Hugging Face's model page. device The device(s) on which the model should be loaded. This overrides the device_map entry in model_kwargs when provided. model_kwargs A dictionary that contains the keyword arguments to pass to the from_pretrained method when loading the model. tokenizer_kwargs A dictionary that contains the keyword arguments to pass to the from_pretrained method when loading the tokenizer.
+
+Returns
+A TransformersModel model instance.
+
+Source code in outlines/models/transformers.py
+Integration with OpenAI's API.
+
+OpenAI
+An object that represents the OpenAI API.
+
+Source code in outlines/models/openai.py
+__call__(prompt, max_tokens=None, stop_at=None, *, system_prompt=None, temperature=None, samples=None)
+Call the OpenAI API to generate text.
+
+PARAMETERS
+prompt A string or list of strings that will be used to prompt the model max_tokens The maximum number of tokens to generate stop_at A string or array of strings which, such that the generation stops when they are generated. system_prompt The content of the system message that precedes the user's prompt. temperature The value of the temperature used to sample tokens samples The number of completions to generate for each prompt stop_at Up to 4 words where the API will stop the completion.
+
+Source code in outlines/models/openai.py
+__init__(client, config, tokenizer=None, system_prompt=None)
+Create an OpenAI instance.
+
+This class supports the standard OpenAI API, the Azure OpeanAI API as well as compatible APIs that rely on the OpenAI client.
+
+PARAMETERS
+client An instance of the API's async client. config An instance of OpenAIConfig. Can be useful to specify some parameters that cannot be set by calling this class' methods. tokenizer The tokenizer associated with the model the client connects to.
+
+Source code in outlines/models/openai.py
+generate_choice(prompt, choices, max_tokens=None, system_prompt=None)
+Call the OpenAI API to generate one of several choices.
+
+PARAMETERS
+prompt A string or list of strings that will be used to prompt the model choices The list of strings between which we ask the model to choose max_tokens The maximum number of tokens to generate system_prompt The content of the system message that precedes the user's prompt.
+
+Source code in outlines/models/openai.py
+generate_json()
+Call the OpenAI API to generate a JSON object.
+
+Source code in outlines/models/openai.py
+OpenAIConfig dataclass
+Represents the parameters of the OpenAI API.
+
+The information was last fetched on 2023/11/20. We document below the properties that are specific to the OpenAI API. Not all these properties are supported by Outlines.
+
+Properties
+model The name of the model. Available models can be found on OpenAI's website. frequence_penalty Number between 2.0 and -2.0. Positive values penalize new tokens based on their existing frequency in the text, logit_bias Modifies the likelihood of specified tokens to appear in the completion. Number between -100 (forbid) and +100 (only allows). n The number of completions to return for each prompt. presence_penalty Similar to frequency penalty. response_format Specifies the format the model must output. {"type": "json_object"} enables JSON mode. seed Two completions with the same seed value should return the same completion. This is however not guaranteed. stop Up to 4 words where the API will stop the completion. temperature Number between 0 and 2. Higher values make the output more random, while lower values make it more deterministic. top_p Number between 0 and 1. Parameter for nucleus sampling. user A unique identifier for the end-user.
+
+Source code in outlines/models/openai.py
+build_optimistic_mask(transposed, max_mask_size=300)
+We build the largest mask possible.
+
+Tokens are added from left to right, so if the encoded choices are e.g. [[1,2], [3,4]], 1 and 3 will be added before 2 and 4.
+
+Parameters
+transposed A list of lists that contain the nth token of each choice.
+
+Source code in outlines/models/openai.py
+error_handler(api_call_fn)
+Handle OpenAI API errors and missing API key.
+
+Source code in outlines/models/openai.py
+find_longest_intersection(response, choice)
+Find the longest intersection between the response and the choice.
+
+Source code in outlines/models/openai.py
+find_response_choices_intersection(response, choices)
+Find the longest intersection between the response and the different choices.
+
+Say the response is of the form [1, 2, 3, 4, 5] and we have the choices [[1, 2], [1, 2, 3], [6, 7, 8] then the function will return [1, 2, 3] as the intersection, and [[]] as the list of choices left.
+
+Parameters
+response The model's response choices The remaining possible choices
+
+Returns
+A tuple that contains the longest intersection between the response and the different choices, and the choices which start with this intersection, with the intersection removed.
+
+Source code in outlines/models/openai.py
+generate_chat(prompt, system_prompt, client, config) async
+Call OpenAI's Chat Completion API.
+
+Parameters
+prompt The prompt we use to start the generation. Passed to the model with the "user" role. system_prompt The system prompt, passed to the model with the "system" role before the prompt. client The API client config An OpenAIConfig instance.
+
+Returns
+A tuple that contains the model's response(s) and usage statistics.
+
+
+Prompts
+Prompt dataclass
+Represents a prompt function.
+
+We return a Prompt class instead of a simple function so the template defined in prompt functions can be accessed.
+
+Source code in outlines/prompts.py
+__call__(*args, **kwargs)
+Render and return the template.
+
+RETURNS
+The rendered template as a Python str.
+
+Source code in outlines/prompts.py
+get_fn_description(fn)
+Returns the first line of a callable's docstring.
+
+Source code in outlines/prompts.py
+get_fn_name(fn)
+Returns the name of a callable.
+
+Source code in outlines/prompts.py
+get_fn_signature(fn)
+Return the signature of a callable.
+
+Source code in outlines/prompts.py
+get_fn_source(fn)
+Return the source code of a callable.
+
+Source code in outlines/prompts.py
+get_schema_dict(model)
+Return a pretty-printed dictionary
+
+Source code in outlines/prompts.py
+get_schema_pydantic(model)
+Return the schema of a Pydantic model.
+
+Source code in outlines/prompts.py
+parse_pydantic_schema(raw_schema, definitions)
+Parse the output of Basemodel.[schema|model_json_schema]().
+
+This recursively follows the references to other schemas in case of nested models. Other schemas are stored under the "definitions" key in the schema of the top-level model.
+
+Source code in outlines/prompts.py
+prompt(fn)
+Decorate a function that contains a prompt template.
+
+This allows to define prompts in the docstring of a function and simplify their manipulation by providing some degree of encapsulation. It uses the render function internally to render templates.
+
+import outlines
+
+@outlines.prompt def build_prompt(question): ... "I have a ${question}" ... prompt = build_prompt("How are you?")
+
+This API can also be helpful in an "agent" context where parts of the prompt are set when the agent is initialized and never modified later. In this situation we can partially apply the prompt function at initialization.
+
+import outlines import functools as ft ... @outlines.prompt ... def solve_task(name: str, objective: str, task: str): ... '''Your name is {{name}}. .. Your overall objective is to {{objective}}. ... Please solve the following task: {{task}} ... ''' ... hal = ft.partial(solve_task, "HAL", "Travel to Jupiter")
+
+Returns
+A Prompt callable class which will render the template when called.
+
+Source code in outlines/prompts.py
+render(template, **values)
+Parse a Jinaj2 template and translate it into an Outlines graph.
+
+This function removes extra whitespaces and linebreaks from templates to allow users to enter prompts more naturally than if they used Python's constructs directly. See the examples for a detailed explanation.
+
+Examples
+Outlines follow Jinja2's syntax
+
+import outlines outline = outlines.render("I like {{food}} and {{sport}}", food="tomatoes", sport="tennis") I like tomatoes and tennis
+
+If the first line of the template is empty, render removes it
+
+from outlines import render
+
+tpl = ''' ... A new string''' tpl ... '\nA new string' render(tpl) ... 'a new string'
+
+Similarly, render ignores linebreaks introduced by placing the closing quotes underneath the text:
+
+tpl = ''' ... A new string ... ''' tpl ... '\nA new string\n' render(tpl) ... 'A new string'
+
+If you want to insert a linebreak at the end of the rendered template, you will need to leave an empty line at the end of the template:
+
+tpl = ''' ... A new string ... ... ''' tpl ... '\nA new string\n\n' render(tpl) ... 'A new string\n'
+
+render removes the identation in docstrings. This is particularly important when using prompt functions
+
+tpl = ''' ... a string ... and another string''' tpl ... '\n a string\n and another string' render(tpl) ... 'a string\nand another string'
+
+The indentation of the first line is assumed to be the same as the second line's
+
+tpl = '''a string ... and another''' tpl ... 'a string\n and another' render(tpl) ... 'a string\nand another'
+
+To get a different indentation for the first and the second line, we can start the prompt on the string's second line:
+
+tpl = ''' ... First line ... Second line''' render(tpl) ... 'First Line\n Second Line'
+
+Parameters
+template A string that contains a template written with the Jinja2 syntax. **values Map from the variables in the template to their value.
+
+Returns
+A string that contains the rendered template.
+
+Source code in outlines/prompts.py
+
+
+Json schema
+build_regex_from_schema(schema, whitespace_pattern=None)
+Turn a JSON schema into a regex that matches any JSON object that follows this schema.
+
+JSON Schema is a declarative language that allows to annotate JSON documents with types and descriptions. These schemas can be generated from any Python datastructure that has type annotation: namedtuples, dataclasses, Pydantic models. And by ensuring that the generation respects the schema we ensure that the output can be parsed into these objects. This function parses the provided schema and builds a generation schedule which mixes deterministic generation (fixed strings), and sampling with constraints.
+
+Parameters
+
+schema A string that represents a JSON Schema. whitespace_pattern Pattern to use for JSON syntactic whitespace (doesn't impact string literals) Example: allow only a single space or newline with whitespace_pattern=r"[ ]?"
+
+Returns
+
+A generation schedule. A list of strings that represent the JSON schema's structure and regular expression that define the structure of the fields.
+
+References
+
+.. [0] JSON Schema. https://json-schema.org/
+
+Source code in outlines/fsm/json_schema.py
+get_schema_from_signature(fn)
+Turn a function signature into a JSON schema.
+
+Every JSON object valid to the output JSON Schema can be passed to fn using the ** unpacking syntax.
+
+Source code in outlines/fsm/json_schema.py
+to_regex(resolver, instance, whitespace_pattern=None)
+Translate a JSON Schema instance into a regex that validates the schema.
+
+Note
+
+Many features of JSON schema are missing: - Handle additionalProperties keyword - Handle types defined as a list - Handle constraints on numbers - Handle special patterns: date, uri, etc.
+
+This does not support recursive definitions.
+
+Parameters
+
+resolver An object that resolves references to other instances within a schema instance The instance to translate whitespace_pattern Pattern to use for JSON syntactic whitespace (doesn't impact string literals) Example: allow only a single space or newline with whitespace_pattern=r"[ ]?"
+
+Source code in outlines/fsm/json_schema.py
+
+Guide
+CFGGuide
+Bases: Guide
+
+Guide to generate text that is in the language of a context-free grammar.
+
+Source code in outlines/fsm/guide.py
+copy()
+Create a copy of the FSM.
+
+Source code in outlines/fsm/guide.py
+get_next_instruction(state)
+Generate an instruction for the next step.
+
+Upon initialization, the CFG incremental parser is used to determine the first regex and construct the first FSM to generate the first terminal.
+
+This FSM is used for proposals until either:
+
+The FSM is exhausted, and its only remaining option is the EOS token, in which case we feed the generated terminal to the CFG incremental parser and allow it to propose the next regex corresponding to the next set of valid terminals.
+The current FSM can be exhausted, but the EOS token is not the only remaining option. In this case we allow proposal of current terminal extensions, store the current FSM and its state, then also use the CFG parser to propose a new regex corresponding to terminating the current terminal and starting the next one. The model can then sample from either of these sets to determine whether to extend the current terminal or terminate it and start the next one.
+The CFG incremental parser is allowed to propose the EOS token from any accepting state, and once it is generated, the FSM will continue to always generate the EOS token.
+
+PARAMETERS
+state The current state of the FSM.
+
+RETURNS
+A list that contains the tokens to mask.
+
+Source code in outlines/fsm/guide.py
+get_next_state(state, token_id)
+Update the state of the guide.
+
+Transitions the underlying regex FSM to its next state. If at max tokens or EOS token, transition permanently to the final state. Update stored partial generations for subsequent incremental parsing.
+
+PARAMETERS
+state The current state of the FSM. token_id The id of the token that was just generated.
+
+RETURNS
+The new state of the FSM.
+
+Source code in outlines/fsm/guide.py
+Generate dataclass
+Generate instruction
+
+Attributes
+tokens The tokens that lead to a valid completion if generated.
+
+Source code in outlines/fsm/guide.py
+Guide
+Bases: Protocol
+
+Base definition of a generation guide.
+
+A generation guide defines the behavior of a finite-state machine that guides a text generation procedure. Unlike the DFAs built from regular expressions guides can also emit a Write instructions which tells the model that it can append a sequence of tokens (or token word) instead of generating it.
+
+Source code in outlines/fsm/guide.py
+RegexGuide
+Bases: Guide
+
+Guide to generate text in the language of a regular expression.
+
+Source code in outlines/fsm/guide.py
+__init__(regex_string, tokenizer)
+Source code in outlines/fsm/guide.py
+get_next_instruction(state)
+Return the next instruction for guided generation.
+
+The initialization of the guide builds an index which maps FSM states to a map from authorized tokens to the state in which the guide needs to move if said token is generated. Therefore the authorized tokens at the current state are the keys of the map returned by the value of the index for current state.
+
+If the current state is not contained in the end this means that we are in a final state of the guide. We only authorize EOS tokens in the final state.
+
+PARAMETERS
+state The current state of the guide.
+
+RETURNS
+A Generate instance that contains the model and the allowed token ids.
+
+Source code in outlines/fsm/guide.py
+get_next_state(state, token_id)
+Update the state of the guide.
+
+We use the index to determine to which state the guide should transition given the token that was just generated.
+
+PARAMETERS
+state The current state of the guide. token_id The id of the token that was just generated.
+
+RETURNS
+The new state of the guide.
+
+Source code in outlines/fsm/guide.py
+is_final_state(state)
+Determine whether the current state of the guide is a final state.
+
+Source code in outlines/fsm/guide.py
+StopAtEOSGuide
+Bases: Guide
+
+Guide to generate tokens until the EOS token has been generated.
+
+Source code in outlines/fsm/guide.py
+__init__(tokenizer)
+Initialize the generation guide.
+
+model The logit generator used to generate the next token.
+
+Source code in outlines/fsm/guide.py
+Write dataclass
+Write instruction.
+
+Attributes
+tokens The sequence of tokens to be added to the current sequence by the generation process.
+
+Source code in outlines/fsm/guide.py
+
+
+Parsing
+PartialIndenter
+Bases: Indenter
+
+An Indenter that doesn't reset its state every time process is called.
+
+Source code in outlines/fsm/parsing.py
+PartialParserState
+Bases: ParserState
+
+Source code in outlines/fsm/parsing.py
+feed_token_no_stack(token, is_end=False)
+This is a copy of ParserState.feed_token with all the value stack steps removed. Since we're not exactly parsing in order to obtain a CST or anything similar, we can avoid the growing expense of tracking the parse tree.
+
+Source code in outlines/fsm/parsing.py
+PartialParsingFrontend
+Bases: ParsingFrontend
+
+Source code in outlines/fsm/parsing.py
+PartialScanner
+Bases: Scanner
+
+Source code in outlines/fsm/parsing.py
+get_terminals_info(fsm_state_seq)
+Get the possible terminal symbols for an FSM state sequence.
+
+Source code in outlines/fsm/parsing.py
+match(text, pos, last_fsm_state_seq=None)
+Determine an FSM match over text starting at pos and continuing last_fsm_state_seq.
+
+Source code in outlines/fsm/parsing.py
+terminals_to_fsms(lp)
+Construct a dict mapping terminal symbol names to their finite state machines.
+
+Source code in outlines/fsm/parsing.py
+
+Regex
+regex(model, regex_str, sampler=multinomial())
+Generate structured text in the language of a regular expression.
+
+Parameters
+model: An instance of Transformer that represents a model from the transformers library. regex_str: The regular expression that the output must follow. sampler: The sampling algorithm to use to generate token ids from the logits distribution.
+
+Returns
+A SequenceGenerator instance that generates text constrained by the regular expression.
+
+Source code in outlines/generate/regex.py
+
+Samplers
+BeamSearchSampler
+Beam Search sampling algorithm.
+
+Attributes
+samples The number of samples taken for each input sequence.
+
+Source code in outlines/samplers.py
+__call__(next_token_logits, sequence_weights, _)
+Call the beam search sampler.
+
+PARAMETERS
+next_token_logits A tensor of shape (n_seqs, vocab_size,) that represents the probability distribution of the next token over the vocabulary. sequence_weights A tensor of shape (n_seqs,) that represents the cumulative weight of each sequence. rng A random number generator.
+
+RETURNS
+A tuple with an array that contains the ids of the sampled tokens of shape (n_seqs, 1), an array that contains the ancestors of each sampled id of shape (n_seqs,) and an array that contains the updated cumulative weights of each sequence of shape (n_seqs,).
+
+Source code in outlines/samplers.py
+GreedySampler
+Greedy Sampling algorithm.
+
+Greedy sampling consists in choosing the token with the largest likelihood at every step.
+
+We don't allow more than one sample. We could attribute this a meaning, for instance the k-th sample represents the k-th most likely token. In which case it would be equivalent to beam search without the sequence weights.
+
+Attributes
+samples The number of samples taken for each input sequence.
+
+Source code in outlines/samplers.py
+__call__(next_token_logits, sequence_weights, _)
+Call the greedy sampler.
+
+PARAMETERS
+next_token_logits A tensor of shape (n_seqs, vocab_size,) that represents the probability distribution of the next token over the vocabulary. sequence_weights A tensor of shape (n_seqs,) that represents the cumulative weight of each sequence. rng A random number generator.
+
+RETURNS
+A tuple with an array that contains the ids of the sampled tokens of shape (n_seqs, 1), an array that contains the ancestors of each sampled id of shape (n_seqs,) and an array that contains the updated cumulative weights of each sequence of shape (n_seqs,).
+
+Source code in outlines/samplers.py
+MultinomialSampler
+Multinomial sampling algorithm.
+
+Multinomial sampling consists in randomly sampling the next token assuming its distribution is a Categorical distribution parametrized by the next-token logits.
+
+Attributes
+samples The number of samples taken for each input sequence.
+
+Source code in outlines/samplers.py
+__call__(next_token_logits, sequence_weights, rng)
+Call the multinomial sampler.
+
+PARAMETERS
+next_token_logits A tensor of shape (n_seqs, vocab_size,) that represents the probability distribution of the next token over the vocabulary. sequence_weights A tensor of shape (n_seqs,) that represents the cumulative weight of each sequence. rng A random number generator.
+
+RETURNS
+A tuple with an array that contains the ids of the sampled tokens of shape (n_seqs, 1), an array that contains the ancestors of each sampled id of shape (n_seqs,) and an array that contains the updated cumulative weights of each sequence of shape (n_seqs,).
+
+Source code in outlines/samplers.py
+keep_top_k_logits(k)
+Build a function that masks logits values smaller than the top k ones.
+
+Parameters
+k The ranking below which logit values are replaced by -math.inf.
+
+Source code in outlines/samplers.py
+keep_top_p_logits(p)
+Build a function that masks the lowest probability tokens whose cumulative probability is below a certain threshold.
+
+Parameters
+p The value of the threshold. We keep the highest probability tokens whose cumulative distribution is greater than or equal to p and mask the others. Its value must be between 0 (excluded) and 1 (included).
+
+Source code in outlines/samplers.py
+rescale_logits(temperature)
+Build a function that rescales the token probabilities exponentially.
+
+Parameters
+temperature The value by which we rescale the logits.
+
+Source code in outlines/samplers.py

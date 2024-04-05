@@ -97,6 +97,10 @@ class Trap(InanimateEntity):
 class Floor(InanimateEntity):
     blocks_movement: BlocksMovement = BlocksMovement(value=False)
 
+class Wall(InanimateEntity):
+    blocks_movement: BlocksMovement = BlocksMovement(value=True)
+    blocks_light: BlocksLight = BlocksLight(value=True)
+
 class TestItem(InanimateEntity):
     is_pickupable: IsPickupable = IsPickupable(value=True)
 

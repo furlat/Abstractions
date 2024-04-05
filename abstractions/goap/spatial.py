@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abstractions.goap.entity import Entity, Attribute, RegistryHolder
 from typing import List, Tuple, TYPE_CHECKING, Optional, Any, ForwardRef, Dict, Union, Set, Type
-from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator
+from pydantic import Field, BaseModel, validator, ConfigDict, ValidationInfo, field_validator, conlist
 import uuid
 import re
 import math
@@ -219,17 +219,91 @@ class ActionsPayload(BaseModel):
     actions: List[ActionInstance]
 
 class SummarizedActionPayload(BaseModel):
-    action_name: str
-    source_entity_type: str
-    source_entity_position: Tuple[int, int]
-    source_entity_id: Optional[str] = None
-    source_entity_name: Optional[str] = None
-    source_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    target_entity_type: str
-    target_entity_position: Tuple[int, int]
-    target_entity_id: Optional[str] = None
-    target_entity_name: Optional[str] = None
-    target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    """
+    Represents an action payload with absolute positions and dictionary-based attributes.
+    """
+    action_name: str = Field(description="The name of the action.")
+    source_entity_type: str = Field(description="The type of the source entity.")
+    source_entity_position: Tuple[int, int] = Field(description="The absolute position of the source entity.")
+    source_entity_id: Optional[str] = Field(default=None, description="The unique identifier of the source entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    source_entity_name: Optional[str] = Field(default=None, description="The name of the source entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    source_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional attributes of the source entity.")
+    target_entity_type: str = Field(description="The type of the target entity.")
+    target_entity_position: Tuple[int, int] = Field(description="The absolute position of the target entity.")
+    target_entity_id: Optional[str] = Field(default=None, description="The unique identifier of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    target_entity_name: Optional[str] = Field(default=None, description="The name of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional attributes of the target entity.")
+
+    def to_ego_payload(self, character_position: Tuple[int, int]) -> "SummarizedEgoActionPayload":
+        """
+        Convert the action payload to an egocentric version relative to the character's position.
+        """
+        source_x, source_y = self.source_entity_position
+        target_x, target_y = self.target_entity_position
+        char_x, char_y = character_position
+
+        ego_source_position = (source_x - char_x, source_y - char_y)
+        ego_target_position = (target_x - char_x, target_y - char_y)
+
+        return SummarizedEgoActionPayload(
+            action_name=self.action_name,
+            source_entity_type=self.source_entity_type,
+            source_entity_position=ego_source_position,
+            source_entity_id=self.source_entity_id,
+            source_entity_name=self.source_entity_name,
+            source_entity_attributes=self.source_entity_attributes,
+            target_entity_type=self.target_entity_type,
+            target_entity_position=ego_target_position,
+            target_entity_id=self.target_entity_id,
+            target_entity_name=self.target_entity_name,
+            target_entity_attributes=self.target_entity_attributes,
+        )
+
+
+class SummarizedEgoActionPayload(BaseModel):
+    """
+    Represents an action payload with positions relative to the character and dictionary-based attributes.
+    """
+    action_name: str = Field(description="The name of the action.")
+    source_entity_type: str = Field(description="The type of the source entity.")
+    source_entity_position: Tuple[int, int] = Field(description="The position of the source entity relative to the character.")
+    source_entity_id: Optional[str] = Field(default=None, description="The unique identifier of the source entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    source_entity_name: Optional[str] = Field(default=None, description="The name of the source entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    source_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional attributes of the source entity.")
+    target_entity_type: str = Field(description="The type of the target entity.")
+    target_entity_position: Tuple[int, int] = Field(description="The position of the target entity relative to the character.")
+    target_entity_id: Optional[str] = Field(default=None, description="The unique identifier of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    target_entity_name: Optional[str] = Field(default=None, description="The name of the target entity. Use only when necessary to disambiguate between multiple entities at the same location.")
+    target_entity_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional attributes of the target entity.")
+
+    def to_absolute_payload(self, character_position: Tuple[int, int]) -> "SummarizedActionPayload":
+        """
+        Convert the egocentric action payload to an absolute version based on the character's position.
+        """
+        char_x, char_y = character_position
+        source_x, source_y = self.source_entity_position
+        target_x, target_y = self.target_entity_position
+
+        abs_source_position = (char_x + source_x, char_y + source_y)
+        abs_target_position = (char_x + target_x, char_y + target_y)
+
+        return SummarizedActionPayload(
+            action_name=self.action_name,
+            source_entity_type=self.source_entity_type,
+            source_entity_position=abs_source_position,
+            source_entity_id=self.source_entity_id,
+            source_entity_name=self.source_entity_name,
+            source_entity_attributes=self.source_entity_attributes,
+            target_entity_type=self.target_entity_type,
+            target_entity_position=abs_target_position,
+            target_entity_id=self.target_entity_id,
+            target_entity_name=self.target_entity_name,
+            target_entity_attributes=self.target_entity_attributes,
+        )
+
+
+
+    
 
 class ActionResult(BaseModel):
     action_instance: ActionInstance
@@ -238,8 +312,88 @@ class ActionResult(BaseModel):
     state_before: Dict[str, Any] = Field(default_factory=dict)
     state_after: Dict[str, Any] = Field(default_factory=dict)
 
+    def to_text_state(self, use_egocentric: bool = False) -> str:
+        action_name = self.action_instance.action.__class__.__name__
+
+        source_before = self.state_before["source"].copy()
+        target_before = self.state_before["target"].copy()
+        source_before_position = source_before.pop("position")
+        target_before_position = target_before.pop("position")
+
+        if use_egocentric:
+            source_before_position = self._to_egocentric_coordinates(source_before_position[0], source_before_position[1])
+            target_before_position = self._to_egocentric_coordinates(target_before_position[0], target_before_position[1])
+
+        source_before_state = self._format_entity_state(source_before)
+        target_before_state = self._format_entity_state(target_before)
+
+        if self.success:
+            result = "Success"
+            source_after = self.state_after["source"].copy()
+            target_after = self.state_after["target"].copy()
+            source_after_position = source_after.pop("position")
+            target_after_position = target_after.pop("position")
+
+            if use_egocentric:
+                source_after_position = self._to_egocentric_coordinates(source_after_position[0], source_after_position[1])
+                target_after_position = self._to_egocentric_coordinates(target_after_position[0], target_after_position[1])
+
+            source_after_state = self._format_entity_state(source_after)
+            target_after_state = self._format_entity_state(target_after)
+
+            return f"Action: {action_name}\nSource Before: {source_before_state}\nSource Before Position: {source_before_position}\nTarget Before: {target_before_state}\nTarget Before Position: {target_before_position}\nResult: {result}\nSource After: {source_after_state}\nSource After Position: {source_after_position}\nTarget After: {target_after_state}\nTarget After Position: {target_after_position}\n"
+        else:
+            result = "Failure"
+            error = self.error
+            return f"Action: {action_name}\nSource Before: {source_before_state}\nSource Before Position: {source_before_position}\nTarget Before: {target_before_state}\nTarget Before Position: {target_before_position}\nResult: {result}\nError: {error}\n"
+
+    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
+        source_x, source_y = self.state_before["source"]["position"]
+        return x - source_x, y - source_y
+
+    def _format_entity_state(self, state: Dict[str, Any]) -> str:
+        formatted_state = ", ".join(f"{key}: {value}" for key, value in state.items())
+        return f"{{{formatted_state}}}"
+
+    
+
 class ActionsResults(BaseModel):
     results: List[ActionResult]
+
+    def to_text_state(self, use_egocentric: bool = False) -> str:
+        timesteps = []
+        current_timestep = []
+
+        for result in self.results:
+            if result.success:
+                current_timestep.append(result)
+            else:
+                if current_timestep:
+                    timestep_text = self._format_timestep(current_timestep, use_egocentric)
+                    timesteps.append(timestep_text)
+                    current_timestep = []
+
+                failure_text = self._format_failure(result, use_egocentric)
+                timesteps.append(failure_text)
+
+        if current_timestep:
+            timestep_text = self._format_timestep(current_timestep, use_egocentric)
+            timesteps.append(timestep_text)
+
+        return "\n".join(timesteps)
+
+    def _format_timestep(self, timestep: List[ActionResult], use_egocentric: bool) -> str:
+        action_states = []
+        for i, result in enumerate(timestep, start=1):
+            action_state = f"Action {i}:\n{result.to_text_state(use_egocentric)}"
+            action_states.append(action_state)
+
+        timestep_text = f"Timestep:\n{''.join(action_states)}"
+        return timestep_text
+
+    def _format_failure(self, failure: ActionResult, use_egocentric: bool) -> str:
+        failure_text = f"Failure:\n{failure.to_text_state(use_egocentric)}"
+        return failure_text
 
 class AmbiguousEntityError(BaseModel):
     entity_type: Type[GameEntity]

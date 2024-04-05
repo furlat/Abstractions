@@ -3,7 +3,7 @@ import pygame
 
 from abstractions.goap.spatial import GridMap, GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from abstractions.goap.game.manager import GameManager
 
 BASE_PATH = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
-# BASE_PATH = "/Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/goap"
+BASE_PATH = "/Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/goap"
 def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
     room_x = (grid_map.width - room_width) // 2
     room_y = (grid_map.height - room_height) // 2
@@ -20,7 +20,7 @@ def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
         for y in range(room_y, room_y + room_height):
             if x == room_x or x == room_x + room_width - 1 or y == room_y or y == room_y + room_height - 1:
                 if (x, y) != (room_x + room_width // 2, room_y):
-                    wall = InanimateEntity(name=f"Wall_{x}_{y}", blocks_movement=BlocksMovement(value=True), blocks_light=BlocksLight(value=True))
+                    wall = Wall(name=f"Wall_{x}_{y}", blocks_movement=BlocksMovement(value=True), blocks_light=BlocksLight(value=True))
                     grid_map.get_node((x, y)).add_entity(wall)
             else:
                 floor = Floor(name=f"Floor_{x}_{y}")
