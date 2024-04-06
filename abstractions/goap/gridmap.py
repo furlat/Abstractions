@@ -135,8 +135,8 @@ class GridMap(BaseModel, RegistryHolder):
                 "target": target.get_state()
             }
             print(f"Attempting to apply action: {action.name}")
-            print(f"Source: {source}")
-            print(f"Target: {target}")
+            # print(f"Source: {source}")
+            # print(f"Target: {target}")
             if action.is_applicable(source, target):
                 try:
                     updated_source, updated_target = action.apply(source, target)

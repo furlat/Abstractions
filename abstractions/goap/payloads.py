@@ -34,6 +34,7 @@ class ActionsPayload(BaseModel):
             self.results = ActionsResults(results=[])
         self.results.results.append(result)
 
+
 class SummarizedActionPayload(BaseModel):
     """
     Represents an action payload with absolute positions and dictionary-based attributes.

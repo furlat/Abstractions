@@ -1,10 +1,12 @@
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, Union
 from abstractions.goap.shapes import Shadow
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.nodes import Node, GameEntity, BlocksMovement, BlocksLight
 from abstractions.goap.spatial import WalkableGraph
 from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
 from abstractions.goap.game.main import generate_dungeon
+from abstractions.goap.payloads import ActionsPayload, ActionInstance, ActionResult
+
 
 class ObservationState:
     def __init__(self, character_id: str, config: Dict[str, bool]):
@@ -21,11 +23,11 @@ class ObservationState:
 
         if self.config.get("visibility_matrix", True):
             visibility_matrix, dimensions = self._generate_visibility_matrix(shadow, self.character_id)
-            observation_message += f"# Visibility Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{visibility_matrix}\n\n"
+            observation_message += f"# Nodes Allowing Light Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{visibility_matrix}\n\n"
 
         if self.config.get("movement_matrix", True):
             movement_matrix, dimensions = self._generate_movement_matrix(shadow, self.character_id)
-            observation_message += f"# Movement Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{movement_matrix}\n\n"
+            observation_message += f"# Nodes Allowing Movement Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{movement_matrix}\n\n"
 
         if self.config.get("path_matrix", True):
             path_matrix, dimensions, self.paths = self._generate_path_matrix(shadow, self.character_id)
@@ -101,7 +103,7 @@ class ObservationState:
     @staticmethod
     def _generate_visibility_matrix(shadow: Shadow, character_id: str) -> str:
         """
-        Generates a matrix representing the visibility of the nodes in the shadow.
+        Generates a matrix representing whether know allows raypath to cross them or not.
         """
         character = GameEntity.get_instance(character_id)
         if character is None:
@@ -135,7 +137,7 @@ class ObservationState:
     @staticmethod
     def _generate_movement_matrix(shadow: Shadow, character_id: str) -> str:
         """
-        Generates a matrix representing the movement blocking of the nodes in the shadow.
+        Generates a matrix representing whether the node is walkable.
         """
         character = GameEntity.get_instance(character_id)
         if character is None:
@@ -394,3 +396,190 @@ class ObservationState:
         """
         # TODO: Implement cognitive insights generation based on the current game state and character's situation
         return "Cognitive Insights: Not implemented yet."
+    
+
+
+class ActionState:
+    def __init__(self, action_result: ActionResult):
+        self.action_result = action_result
+
+    def generate_analysis(self) -> str:
+        if self.action_result.success:
+            return self._generate_success_analysis()
+        else:
+            return self._generate_failure_analysis()
+
+    def _generate_success_analysis(self) -> str:
+        action_name = self.action_result.action_instance.action.__class__.__name__
+        source_before = self.action_result.state_before["source"]
+        source_after = self.action_result.state_after["source"]
+        target_before = self.action_result.state_before["target"]
+        target_after = self.action_result.state_after["target"]
+
+        source_entity_before = GameEntity.get_instance(self.action_result.action_instance.source_id)
+        source_entity_after = GameEntity.get_instance(self.action_result.action_instance.source_id)
+        target_entity_before = GameEntity.get_instance(self.action_result.action_instance.target_id)
+        target_entity_after = GameEntity.get_instance(self.action_result.action_instance.target_id)
+
+        analysis = "# Action Result Analysis\n"
+        analysis += f"## Action: {action_name}\n"
+        analysis += "### Result: Success\n"
+        analysis += "### Before:\n"
+        analysis += f"- Source: {self._format_entity_state(source_before, source_entity_before)}\n"
+        analysis += f"- Target: {self._format_entity_state(target_before, target_entity_before)}\n"
+        analysis += "### Changes:\n"
+
+        source_changes = []
+        target_changes = []
+
+        for attr_name, attr_value_before in source_before.items():
+            attr_value_after = source_after.get(attr_name)
+            if attr_value_before != attr_value_after:
+                source_changes.append(f"{attr_name}: {attr_value_before} -> {attr_value_after}")
+
+        for attr_name, attr_value_before in target_before.items():
+            attr_value_after = target_after.get(attr_name)
+            if attr_value_before != attr_value_after:
+                target_changes.append(f"{attr_name}: {attr_value_before} -> {attr_value_after}")
+
+        if source_changes:
+            analysis += f"- Source: {self._format_entity_brief(source_after, source_entity_after)} [{', '.join(source_changes)}]\n"
+        if target_changes:
+            analysis += f"- Target: {self._format_entity_brief(target_after, target_entity_after)} [{', '.join(target_changes)}]\n"
+
+        if source_changes or target_changes:
+            analysis += "### Natural Language Summary:\n"
+            if source_changes:
+                attr_name, attr_value_change = source_changes[0].split(': ')
+                attr_value_before, attr_value_after = attr_value_change.split(' -> ')
+                analysis += f"The {attr_name}: {attr_value_before} of {self._format_entity_brief(source_before, source_entity_before)} changed to {attr_value_after} as a result of {action_name}.\n"
+            if target_changes:
+                attr_name, attr_value_change = target_changes[0].split(': ')
+                attr_value_before, attr_value_after = attr_value_change.split(' -> ')
+                analysis += f"The {attr_name}: {attr_value_before} of {self._format_entity_brief(target_before, target_entity_before)} changed to {attr_value_after} as a result of {action_name}.\n"
+
+        return analysis
+
+    def _generate_failure_analysis(self) -> str:
+        action_name = self.action_result.action_instance.action.__class__.__name__
+        source_state = self.action_result.state_before["source"]
+        target_state = self.action_result.state_before["target"]
+        source_entity = GameEntity.get_instance(self.action_result.action_instance.source_id)
+        target_entity = GameEntity.get_instance(self.action_result.action_instance.target_id)
+
+        analysis = "# Action Result Analysis\n"
+        analysis += f"## Action: {action_name}\n"
+        analysis += "### Result: Failure\n"
+        analysis += "### Reason: Prerequisites not met\n"
+        analysis += "### Prerequisites:\n"
+
+        prerequisites = self.action_result.action_instance.action.prerequisites
+        failed_prerequisites = self.action_result.failed_prerequisites
+
+        for statement_type in ["source_statements", "target_statements", "source_target_statements"]:
+            statements = getattr(prerequisites, statement_type)
+            for statement in statements:
+                is_failed = any(statement.id in prerequisite for prerequisite in failed_prerequisites)
+                status = "Failed" if is_failed else "Passed"
+                analysis += f"- {statement_type.capitalize().replace('_', ' ')}:\n"
+                analysis += f"  - Status: {status}\n"
+
+                if statement.conditions:
+                    analysis += "  - Conditions:\n"
+                    for attr_name, desired_value in statement.conditions.items():
+                        actual_value = source_state[attr_name] if statement_type == "source_statements" else target_state[attr_name]
+                        condition_met = actual_value == desired_value
+                        analysis += f"    - {attr_name}: {'Met' if condition_met else 'Not Met'} (Desired: {desired_value}, Actual: {actual_value})\n"
+
+                if statement.comparisons:
+                    analysis += "  - Comparisons:\n"
+                    for comparison_name, (source_attr, target_attr, comparison_func) in statement.comparisons.items():
+                        comparison_description = comparison_func.__doc__.strip() if comparison_func.__doc__ else "No description available"
+                        source_value = source_state[source_attr] if source_attr in source_state else getattr(source_entity, source_attr)
+                        target_value = target_state[target_attr] if target_attr in target_state else getattr(target_entity, target_attr)
+                        comparison_met = comparison_func(source_value, target_value)
+                        analysis += f"    - {comparison_name.capitalize()}:\n"
+                        analysis += f"      - Source Attribute: {source_attr}\n"
+                        analysis += f"      - Target Attribute: {target_attr}\n"
+                        analysis += f"      - Comparison: {'Met' if comparison_met and status == 'Passed' else 'Not Met'}\n"
+                        analysis += f"      - Description: {comparison_description}\n"
+
+                if statement.callables:
+                    analysis += "  - Callables:\n"
+                    for callable_func in statement.callables:
+                        callable_description = callable_func.__doc__.strip() if callable_func.__doc__ else "No description available"
+                        callable_met = callable_func(source_entity, target_entity)
+                        analysis += f"    - {'Met' if callable_met and status == 'Passed' else 'Not Met'}\n"
+                        analysis += f"      - Description: {callable_description}\n"
+
+        return analysis
+        
+    def _format_entity_state(self, entity_state: Dict[str, Any], entity: GameEntity) -> str:
+        entity_type = entity.__class__.__name__
+        position = entity_state.get("position", (0, 0))
+        attributes = ", ".join(f"{attr_name}: {attr_value}" for attr_name, attr_value in entity_state.items() if attr_name not in ["position"])
+        return f"{entity_type} '{entity.name}' ({position[0]}, {position[1]}) [{attributes}]"
+
+    def _format_entity_brief(self, entity_state: Dict[str, Any], entity: GameEntity) -> str:
+        entity_type = entity.__class__.__name__
+        position = entity_state.get("position", (0, 0))
+        return f"{entity_type} '{entity.name}'"
+
+class StrActionConverter:
+    def __init__(self, grid_map: GridMap):
+        self.grid_map = grid_map
+
+    def convert_action_string(self, action_string: str, character_id: str) -> Union[ActionsPayload, str]:
+        parts = action_string.split(" ")
+        if len(parts) != 3:
+            return "Invalid action string format. Expected: 'direction action_name target_type'"
+
+        direction, action_name, target_type = parts
+        character = GameEntity.get_instance(character_id)
+        if character is None:
+            return "Character not found"
+
+        character_node = character.node
+        if character_node is None:
+            return "Character is not in a node"
+
+        target_node = self._get_target_node(character_node, direction)
+        if target_node is None:
+            return "Invalid direction"
+
+        target_entity = self._find_target_entity(target_node, target_type)
+        if target_entity is None:
+            return f"Target entity of type '{target_type}' not found in the target node"
+
+        action_class = self.grid_map.actions.get(action_name)
+        if action_class is None:
+            return f"Action '{action_name}' not found"
+
+        action_instance = ActionInstance(source_id=character_id, target_id=target_entity.id, action=action_class())
+        return ActionsPayload(actions=[action_instance])
+
+    def _get_target_node(self, character_node: Node, direction: str) -> Optional[Node]:
+        direction_map = {
+            "North": (0, -1),
+            "South": (0, 1),
+            "East": (1, 0),
+            "West": (-1, 0),
+            "NorthEast": (1, -1),
+            "NorthWest": (-1, -1),
+            "SouthEast": (1, 1),
+            "SouthWest": (-1, 1)
+        }
+
+        offset = direction_map.get(direction)
+        if offset is None:
+            return None
+
+        target_position = (character_node.position.x + offset[0], character_node.position.y + offset[1])
+        return self.grid_map.get_node(target_position)
+
+    def _find_target_entity(self, target_node: Node, target_type: str) -> Optional[GameEntity]:
+        entity_type = self.grid_map.entity_type_map.get(target_type)
+        if entity_type is None:
+            return None
+
+        return target_node.find_entity(entity_type)
