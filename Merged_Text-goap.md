@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-04-06T03:05:51.432603`
+- Created: `2024-04-06T13:57:14.220970`
 
 ## init
 
@@ -91,6 +91,7 @@ class Consequences(BaseModel):
             updated_target = target
 
         return updated_source, updated_target
+    
 class Action(BaseModel):
     name: str = Field("", description="The name of the action")
     prerequisites: Prerequisites = Field(default_factory=Prerequisites, description="The prerequisite conditions for the action")

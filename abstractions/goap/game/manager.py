@@ -147,6 +147,7 @@ class GameManager:
         elif mode == "list":
             pass
         self.observationlog_box.set_text(self.observation_logs[-1])
+        print(self.observation_logs[-1])
         
     def handle_action_payload_submission(self, action_payload_json:str):
         try:

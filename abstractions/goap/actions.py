@@ -76,6 +76,7 @@ class Consequences(BaseModel):
             updated_target = target
 
         return updated_source, updated_target
+    
 class Action(BaseModel):
     name: str = Field("", description="The name of the action")
     prerequisites: Prerequisites = Field(default_factory=Prerequisites, description="The prerequisite conditions for the action")
