@@ -464,10 +464,7 @@ class Node(BaseModel, RegistryHolder):
         """
         grid_map: Optional[GridMap] = RegistryHolder.get_instance(self.gridmap_id)
         if grid_map:
-            print("FOUDN THE GRID MAP")
             return grid_map.get_neighbors(self.position.value)
-        else:
-            print("DID NOT FIND THE GRID MAP")
         return []
     
     

@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-04-06T02:13:03.858042`
+- Created: `2024-04-06T03:05:51.432603`
 
 ## init
 
@@ -1423,6 +1423,7 @@ from abstractions.goap.interactions import Character
 from pydantic import ValidationError
 from abstractions.goap.game.gui_widgets import InventoryWidget
 from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
+from abstractions.goap.textstate import ShadowTextState
 
 class GameManager:
     def __init__(self, screen: pygame.Surface, grid_map: GridMap, sprite_mappings: List[SpriteMapping],
@@ -1550,19 +1551,14 @@ class GameManager:
         inverted_list_action = self.action_logs[::-1]
         self.actionlog_box.set_text(log_entry)
     
-    def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
-        sprite_mappings=self.sprite_mappings
+    def update_observation_logs(self, observation: Shadow, mode: str, use_egocentric: bool = False,):
         if mode == "groups":
-            self.observation_logs.append(observation.to_entity_groups(use_egocentric=use_egoncentric))
-        
+            shadow_text_state = ShadowTextState(shadow=observation)
+            self.observation_logs.append(shadow_text_state.to_text(use_egocentric=use_egocentric))
         elif mode == "list":
-            obs = observation.to_list( use_egocentric=use_egoncentric,include_attributes=include_attributes)
-            self.observation_logs.append(obs)
-
-        
-        print("diocane",self.observation_logs[-1])
+            pass
         self.observationlog_box.set_text(self.observation_logs[-1])
-    
+        
     def handle_action_payload_submission(self, action_payload_json:str):
         try:
             summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
@@ -1629,7 +1625,7 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                self.update_observation_logs(shadow,mode="groups",use_egoncentric=False)
+                self.update_observation_logs(shadow,mode="groups",use_egocentric=False)
                 
 
             
@@ -1831,10 +1827,13 @@ class PayloadGenerator:
                 if mapping.name_pattern is None or re.match(mapping.name_pattern, entity.name):
                     return mapping
         raise ValueError(f"No sprite mapping found for entity: {entity}")
-    
+
     def generate_payload_for_node(self, node: Node) -> List[Dict[str, Any]]:
         entity_visuals = []
         if node.entities:
+            # Set the hash resolution of the entities to "attributes"
+            for entity in node.entities:
+                entity.set_hash_resolution("attributes")
             sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
             for entity in sorted_entities:
                 sprite_mapping = self.get_sprite_mapping(entity)
@@ -1844,6 +1843,9 @@ class PayloadGenerator:
                     "draw_order": sprite_mapping.draw_order
                 }
                 entity_visuals.append(entity_visual)
+            # Reset the hash resolution of the entities to the default value
+            for entity in node.entities:
+                entity.reset_hash_resolution()
         return entity_visuals
 
     def generate_payload(self, nodes: List[Node], camera_pos: Tuple[int, int], fov: Optional[Shadow] = None) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
@@ -1858,39 +1860,18 @@ class PayloadGenerator:
                 if position in self.payload_cache and self.is_node_unchanged(node):
                     payload[position] = self.payload_cache[position]
                 else:
-                    entity_visuals = []
-                    if node.entities:
-                        sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
-                        for entity in sorted_entities:
-                            sprite_mapping = self.get_sprite_mapping(entity)
-                            entity_visual = {
-                                "sprite_path": sprite_mapping.sprite_path,
-                                "ascii_char": sprite_mapping.ascii_char,
-                                "draw_order": sprite_mapping.draw_order
-                            }
-                            entity_visuals.append(entity_visual)
+                    entity_visuals = self.generate_payload_for_node(node)
                     payload[position] = entity_visuals
                     self.payload_cache[position] = entity_visuals
         return payload
-    
+
     @lru_cache(maxsize=None)
     def is_node_unchanged(self, node: Node) -> bool:
         position = node.position.value
         if position not in self.payload_cache:
             return False
         cached_entity_visuals = self.payload_cache[position]
-        current_entity_visuals = []
-        if node.entities:
-            sorted_entities = sorted(node.entities, key=lambda e: self.get_sprite_mapping(e).draw_order)
-            for entity in sorted_entities:
-                sprite_mapping = self.get_sprite_mapping(entity)
-                entity_visual = {
-                    "sprite_path": sprite_mapping.sprite_path,
-                    "ascii_char": sprite_mapping.ascii_char,
-                    "draw_order": sprite_mapping.draw_order,
-                    "attribute_conditions": sprite_mapping.attribute_conditions
-                }
-                current_entity_visuals.append(entity_visual)
+        current_entity_visuals = self.generate_payload_for_node(node)
         return cached_entity_visuals == current_entity_visuals
 
 ---
@@ -2427,13 +2408,8 @@ def source_node_comparison(source: Node, target: Node) -> bool:
 def source_node_comparison_and_walkable(source: Node, target: Node) -> bool:
     """Check if the source node is the same as or a neighbor of the target node and the target node is walkable."""
     if target.blocks_movement.value:
-        print("Target is not walkable",target.position.value, target.blocks_movement.value)
         return False
-    target_in_neighbors = target in source.neighbors()
-    if not target_in_neighbors:
-        print("Target is not in neighbors", target.position.value)
-    if source.id == target.id:
-        print("Source is target", source.position.value)
+
     return target in source.neighbors() or source.id == target.id
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
@@ -3154,10 +3130,7 @@ class Node(BaseModel, RegistryHolder):
         """
         grid_map: Optional[GridMap] = RegistryHolder.get_instance(self.gridmap_id)
         if grid_map:
-            print("FOUDN THE GRID MAP")
             return grid_map.get_neighbors(self.position.value)
-        else:
-            print("DID NOT FIND THE GRID MAP")
         return []
     
     
@@ -3847,8 +3820,100 @@ class ActionsResultsTextState(TextStateModel):
     def _format_failure(self, failure: ActionResult, use_egocentric: bool, resolution: str) -> str:
         failure_text = f"Failure:\n{ActionResultTextState(action_result=failure).to_text(use_egocentric, resolution)}"
         return failure_text
-    
 
+class ShadowTextState(TextStateModel):
+    shadow: Shadow
+
+    def to_text(self, use_egocentric: bool = False, resolution: str = "default") -> str:
+        groups = {}
+        for node in self.shadow.nodes:
+            entity_types, entity_attributes = node._get_entity_info()
+            group_key = (tuple(entity_types), tuple(sorted(entity_attributes)))
+            if group_key not in groups:
+                groups[group_key] = []
+            position = self._to_egocentric_coordinates(node.position.x, node.position.y) if use_egocentric else (node.position.x, node.position.y)
+            groups[group_key].append(position)
+        group_strings_summarized = []
+        for (entity_types, entity_attributes), positions in groups.items():
+            summarized_positions = self._summarize_positions(positions)
+            group_strings_summarized.append(f"Entity Types: {list(entity_types)}, Attributes: {list(entity_attributes)}, Positions: {summarized_positions}")
+        summarized_output = '\n'.join(group_strings_summarized)
+        light_blocking_groups = [group_key for group_key in groups if any(attr[0] == 'BlocksLight' and attr[1] for attr in group_key[1])]
+        movement_blocking_groups = [group_key for group_key in groups if any(attr[0] == 'BlocksMovement' and attr[1] for attr in group_key[1])]
+        if light_blocking_groups:
+            light_blocking_info = f"Light Blocking Groups: {', '.join(str(group) for group in light_blocking_groups)}"
+            summarized_output += f"\n{light_blocking_info}"
+        if movement_blocking_groups:
+            movement_blocking_info = f"Movement Blocking Groups: {', '.join(str(group) for group in movement_blocking_groups)}"
+            summarized_output += f"\n{movement_blocking_info}"
+        return summarized_output
+
+    def _to_egocentric_coordinates(self, x: int, y: int) -> Tuple[int, int]:
+        source_x, source_y = self.shadow.source.position.value
+        return x - source_x, y - source_y
+
+    def _summarize_positions(self, positions: List[Tuple[int, int]]) -> str:
+        if not positions:
+            return ""
+
+        min_x = min(x for x, _ in positions)
+        min_y = min(y for _, y in positions)
+        max_x = max(x for x, _ in positions)
+        max_y = max(y for _, y in positions)
+
+        grid = [[0] * (max_x - min_x + 1) for _ in range(max_y - min_y + 1)]
+        for x, y in positions:
+            grid[y - min_y][x - min_x] = 1
+
+        def find_largest_rectangle(grid):
+            if not grid or not grid[0]:
+                return 0, 0, 0, 0
+
+            rows = len(grid)
+            cols = len(grid[0])
+            max_area = 0
+            max_rect = (0, 0, 0, 0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    if grid[i][j] == 1:
+                        width = 1
+                        height = 1
+                        while j + width < cols and all(grid[i][j + width] == 1 for i in range(i, rows)):
+                            width += 1
+                        while i + height < rows and all(grid[i + height][j] == 1 for j in range(j, j + width)):
+                            height += 1
+                        area = width * height
+                        if area > max_area:
+                            max_area = area
+                            max_rect = (j, i, width, height)
+
+            return max_rect
+
+        rectangles = []
+        while any(1 in row for row in grid):
+            x, y, width, height = find_largest_rectangle(grid)
+            rectangles.append((x + min_x, y + min_y, width, height))
+            for i in range(y, y + height):
+                for j in range(x, x + width):
+                    grid[i][j] = 0
+
+        summarized = []
+        for x, y, width, height in rectangles:
+            if width == 1 and height == 1:
+                summarized.append(f"({x}, {y})")
+            elif width == 1:
+                summarized.append(f"({x}, {y}:{y + height})")
+            elif height == 1:
+                summarized.append(f"({x}:{x + width}, {y})")
+            else:
+                summarized.append(f"({x}:{x + width}, {y}:{y + height})")
+
+        remaining_positions = [(x, y) for x, y in positions if not any(x >= rx and x < rx + rw and y >= ry and y < ry + rh for rx, ry, rw, rh in rectangles)]
+        if remaining_positions:
+            summarized.extend(f"({x}, {y})" for x, y in remaining_positions)
+
+        return ", ".join(summarized)
 
 
 class GridMapTextState(TextStateModel):
