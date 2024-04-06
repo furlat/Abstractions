@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Tuple, Callable, Any
 from pydantic import BaseModel, Field
 from abstractions.goap.entity import Entity, Statement, Attribute
-from abstractions.goap.spatial import GameEntity, ActionInstance, Node
+from abstractions.goap.nodes import GameEntity, Node
 
 class Prerequisites(BaseModel):
     source_statements: List[Statement] = Field(default_factory=list, description="Statements involving only the source entity")
@@ -111,4 +111,3 @@ class Action(BaseModel):
     def propagate_inventory_consequences(self, source: Entity, target: Entity) -> None:
         # Implement inventory consequence propagation logic here
         pass
-ActionInstance.model_rebuild()

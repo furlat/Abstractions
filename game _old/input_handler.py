@@ -1,8 +1,5 @@
 from typing import Optional, Tuple, List, Union
-from abstractions.goap.nodes import GameEntity, Node
-from abstractions.goap.gridmap import GridMap
-from abstractions.goap.payloads import ActionsPayload, ActionInstance
-from abstractions.goap.shapes import Path
+from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
 from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
 from abstractions.goap.actions import Action
 from abstractions.goap.game.renderer import CameraControl
@@ -12,7 +9,7 @@ from abstractions.goap.game.gui_widgets import InventoryWidget
 import pygame
 import pygame_gui
 from pygame_gui import UIManager, UI_TEXT_ENTRY_CHANGED
-from pygame_gui.elements import UIWindow, UITextEntryBox
+from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
 
 
 class ActiveEntities(BaseModel):
@@ -43,8 +40,7 @@ class ActiveEntities(BaseModel):
         return v
 
 class InputHandler:
-    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager,
-                 grid_map_widget_size: Tuple[int, int], inventory_widget: InventoryWidget, text_entry_box: UITextEntryBox):
+    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager, grid_map_widget_size: Tuple[int, int],inventory_widget: InventoryWidget, text_entry_box: UITextEntryBox):
         self.grid_map = grid_map
         self.active_entities = ActiveEntities()
         self.mouse_highlighted_node: Optional[Node] = None
@@ -53,7 +49,7 @@ class InputHandler:
         self.available_actions: List[str] = []
         self.sprite_mappings = sprite_mappings
         self.active_widget: Optional[str] = None
-        self.grid_map_widget_size = grid_map_widget_size
+        self.grid_map_widget_size = grid_map_widget_size 
         self.ui_manager = ui_manager
         self.inventory_widget = inventory_widget
         self.inventory_widget.setup_input_handler(self)
@@ -206,6 +202,7 @@ class InputHandler:
         # Convert screen coordinates to grid coordinates
         grid_x = camera_pos[0] + pos[0] // cell_size
         grid_y = camera_pos[1] + pos[1] // cell_size
+
         # Check if the grid coordinates are within the grid map bounds
         if 0 <= grid_x < self.grid_map.width and 0 <= grid_y < self.grid_map.height:
             return self.grid_map.get_node((grid_x, grid_y))
@@ -290,7 +287,7 @@ class ActionPayloadGenerator:
         if controlled_entity_id:
             controlled_entity = GameEntity.get_instance(controlled_entity_id)
             start_node = controlled_entity.node
-            path = grid_map.get_path(start_node, target_node)
+            path = grid_map.a_star(start_node, target_node)
             if path:
                 move_actions = ActionPayloadGenerator.generate_move_actions(controlled_entity_id, path)
                 return ActionsPayload(actions=move_actions)

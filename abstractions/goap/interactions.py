@@ -1,6 +1,6 @@
 from abstractions.goap.actions import Action, Prerequisites, Consequences
 from abstractions.goap.entity import Attribute, Statement, Entity
-from abstractions.goap.spatial import GameEntity, Node, BlocksMovement, BlocksLight
+from abstractions.goap.nodes import GameEntity, Node, BlocksMovement, BlocksLight
 from typing import Callable, Dict, Tuple, Optional, List, Union
 from pydantic import Field
 
@@ -110,13 +110,19 @@ def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
 
 def source_node_comparison(source: Node, target: Node) -> bool:
     """Check if the source node is the same as or a neighbor of the target node."""
-    return source in target.neighbors() or source.id == target.id
+    return target in source.neighbors() or source.id == target.id
 
 def source_node_comparison_and_walkable(source: Node, target: Node) -> bool:
     """Check if the source node is the same as or a neighbor of the target node and the target node is walkable."""
-    if target.blocks_movement:
+    if target.blocks_movement.value:
+        print("Target is not walkable",target.position.value, target.blocks_movement.value)
         return False
-    return source in target.neighbors() or source.id == target.id
+    target_in_neighbors = target in source.neighbors()
+    if not target_in_neighbors:
+        print("Target is not in neighbors", target.position.value)
+    if source.id == target.id:
+        print("Source is target", source.position.value)
+    return target in source.neighbors() or source.id == target.id
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
     """Check if the target entity does not block movement."""

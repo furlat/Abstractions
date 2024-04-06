@@ -1,10 +1,8 @@
 import pygame
 import pygame_gui
+
 from typing import List, Tuple, Set, Optional
-from abstractions.goap.gridmap import GridMap
-from abstractions.goap.shapes import Path, Shadow, RayCast, Radius, Rectangle
-from abstractions.goap.nodes import Node, GameEntity
-from abstractions.goap.payloads import ActionsResults, ActionResult, ActionsPayload, SummarizedActionPayload
+from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult,ActionsPayload,SummarizedActionPayload
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
 from abstractions.goap.game.input_handler import InputHandler
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
@@ -12,7 +10,6 @@ from abstractions.goap.interactions import Character
 from pydantic import ValidationError
 from abstractions.goap.game.gui_widgets import InventoryWidget
 from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
-from abstractions.goap.textstate import ShadowTextState
 
 class GameManager:
     def __init__(self, screen: pygame.Surface, grid_map: GridMap, sprite_mappings: List[SpriteMapping],
@@ -89,16 +86,16 @@ class GameManager:
         radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
         return controlled_entity, inventory, radius, shadow, raycast, path
     
-    def compute_shapes(self, source_node: Node, target_node: Optional[Node] = None):
+    def compute_shapes(self,source_node:Node, target_node: Optional[Node] = None):
         radius = self.grid_map.get_radius(source_node, max_radius=10)
         shadow = self.grid_map.get_shadow(source_node, max_radius=10)
-
+       
         try:
             raycast = self.grid_map.get_raycast(source_node, target_node) if target_node else None
         except ValidationError as e:
             print(f"Error: {e}")
             raycast = None
-        path = self.grid_map.get_path(source_node, target_node) if target_node else None
+        path = self.grid_map.a_star(source_node, target_node) if target_node else None
         return radius, shadow, raycast, path
 
     def update_action_logs(self, action_results: ActionsResults, only_changes: bool = True):
@@ -140,14 +137,19 @@ class GameManager:
         inverted_list_action = self.action_logs[::-1]
         self.actionlog_box.set_text(log_entry)
     
-    def update_observation_logs(self, observation: Shadow, mode: str, use_egocentric: bool = False,):
+    def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
+        sprite_mappings=self.sprite_mappings
         if mode == "groups":
-            shadow_text_state = ShadowTextState(shadow=observation)
-            self.observation_logs.append(shadow_text_state.to_text(use_egocentric=use_egocentric))
-        elif mode == "list":
-            pass
-        self.observationlog_box.set_text(self.observation_logs[-1])
+            self.observation_logs.append(observation.to_entity_groups(use_egocentric=use_egoncentric))
         
+        elif mode == "list":
+            obs = observation.to_list( use_egocentric=use_egoncentric,include_attributes=include_attributes)
+            self.observation_logs.append(obs)
+
+        
+        print("diocane",self.observation_logs[-1])
+        self.observationlog_box.set_text(self.observation_logs[-1])
+    
     def handle_action_payload_submission(self, action_payload_json:str):
         try:
             summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
@@ -214,7 +216,7 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                self.update_observation_logs(shadow,mode="groups",use_egocentric=False)
+                self.update_observation_logs(shadow,mode="groups",use_egoncentric=False)
                 
 
             
@@ -227,16 +229,7 @@ class GameManager:
             # Generate the payload based on the camera position and FOV
             camera_pos = self.renderer.grid_map_widget.camera_pos
             fov = shadow if self.renderer.grid_map_widget.show_fov else None
-
-            if fov:
-                visible_nodes = [node for node in fov.nodes]
-            else:
-                rect_top_left = camera_pos
-                rect_width = self.renderer.grid_map_widget.rect.width // self.renderer.grid_map_widget.cell_size
-                rect_height = self.renderer.grid_map_widget.rect.height // self.renderer.grid_map_widget.cell_size
-                rect = Rectangle(top_left=rect_top_left, width=rect_width, height=rect_height, nodes=[])
-                visible_nodes = self.grid_map.get_nodes_in_rect(rect)
-
+            visible_nodes = [node for node in fov.nodes] if fov else self.grid_map.get_nodes_in_rect(camera_pos, self.renderer.grid_map_widget.rect.size)
             visible_positions = {node.position.value for node in visible_nodes}
 
             # Update the grid map visual with the new payload
