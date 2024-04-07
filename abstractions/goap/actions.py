@@ -112,3 +112,14 @@ class Action(BaseModel):
     def propagate_inventory_consequences(self, source: Entity, target: Entity) -> None:
         # Implement inventory consequence propagation logic here
         pass
+    
+class Goal(BaseModel):
+    name: str
+    source_entity_id: str
+    target_entity_id: Optional[str] = None
+    prerequisites: Prerequisites
+
+    def is_achieved(self) -> bool:
+        source_entity = GameEntity.get_instance(self.source_entity_id)
+        target_entity = GameEntity.get_instance(self.target_entity_id) if self.target_entity_id else None
+        return self.prerequisites.is_satisfied(source_entity, target_entity)

@@ -157,7 +157,8 @@ def line_of_sight(start: Tuple[int, int], end: Tuple[int, int], visibility_graph
     for point in line_points[1:]:
         x, y = point
         if not visibility_graph.visibility_matrix[y][x]:
-            return False, visible_points
+            blocking_point = point
+            return False, visible_points, blocking_point
         else:
             visible_points.append(point)
-    return True, visible_points
+    return True, visible_points, None

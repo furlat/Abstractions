@@ -2,7 +2,7 @@
 from typing import List, Optional, Set, Dict, Any
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
-from abstractions.goap.nodes import Node
+from abstractions.goap.nodes import Node, GameEntity
 
 class BaseShape(BaseModel):
     """
@@ -109,6 +109,22 @@ def validate_path(node: Node, values: Dict[str, Any]) -> Node:
     if node.blocks_movement.value:
         raise ValueError(f"Node {node} is not walkable")
     return node
+
+class BlockedRaycast(BaseShape):
+    """
+    Represents a blocked line of sight between a source node and a target node.
+    Attributes:
+        source (Node): The source node of the raycast.
+        target (Node): The target node of the raycast.
+        nodes (List[Node]): The list of nodes along the raycast path up to the blocking node.
+        blocking_node (Node): The node where the raycast is blocked.
+        blocking_entity (Optional[GameEntity]): The entity in the blocking node that blocks light.
+    """
+    source: Node = Field(description="The source node of the raycast")
+    target: Node = Field(description="The target node of the raycast")
+    nodes: List[Node] = Field(description="The list of nodes along the raycast path up to the blocking node")
+    blocking_node: Node = Field(description="The node where the raycast is blocked")
+    blocking_entity: GameEntity = Field(description="The entity in the blocking node that blocks light")
 
 class Path(BaseShape):
     """

@@ -7,7 +7,7 @@ from abstractions.goap.actions import Action
 from abstractions.goap.payloads import ActionsPayload, ActionInstance, SummarizedActionPayload, ActionResult, ActionsResults
 from abstractions.goap.errors import ActionConversionError, AmbiguousEntityError
 from abstractions.goap.spatial import VisibilityGraph, WalkableGraph, PathDistanceResult, shadow_casting, dijkstra, a_star, line_of_sight
-from abstractions.goap.shapes import Radius, Shadow, RayCast, Path, Rectangle
+from abstractions.goap.shapes import Radius, Shadow, RayCast, Path, Rectangle, BlockedRaycast
 import uuid
 
 class GridMap(BaseModel, RegistryHolder):
@@ -81,12 +81,34 @@ class GridMap(BaseModel, RegistryHolder):
                 if node is not None:
                     walkable_matrix[y][x] = not node.blocks_movement.value
         return WalkableGraph(walkable_matrix=walkable_matrix)
+    
+    def get_rectangle(self, top_left: Tuple[int, int] = (0, 0), width: Optional[int] = None, height: Optional[int] = None) -> Rectangle:
+        if width is None:
+            width = self.width - top_left[0]
+        if height is None:
+            height = self.height - top_left[1]
+        start_x, start_y = top_left
+        end_x = min(start_x + width, self.width)
+        end_y = min(start_y + height, self.height)
+        nodes = []
+        for y in range(start_y, end_y):
+            for x in range(start_x, end_x):
+                node = self.get_node((x, y))
+                if node:
+                    nodes.append(node)
+        return Rectangle(top_left=top_left, width=end_x - start_x, height=end_y - start_y, nodes=nodes)
 
     def get_radius(self, source: Node, max_radius: int) -> Radius:
-        visibility_graph = self.get_visibility_graph()
-        visible_cells = shadow_casting(source.position.value, visibility_graph, max_radius)
-        nodes = [self.get_node(cell) for cell in visible_cells if self.get_node(cell) is not None]
+        nodes = []
+        for x in range(max(0, source.position.x - max_radius), min(self.width, source.position.x + max_radius + 1)):
+            for y in range(max(0, source.position.y - max_radius), min(self.height, source.position.y + max_radius + 1)):
+                node = self.get_node((x, y))
+                if node and self._get_distance(source.position.value, node.position.value) <= max_radius:
+                    nodes.append(node)
         return Radius(source=source, max_radius=max_radius, nodes=nodes)
+
+    def _get_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
+        return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1]))
 
     def get_shadow(self, source: Node, max_radius: int) -> Shadow:
         visibility_graph = self.get_visibility_graph()
@@ -94,11 +116,22 @@ class GridMap(BaseModel, RegistryHolder):
         nodes = [self.get_node(cell) for cell in visible_cells if self.get_node(cell) is not None]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
 
-    def get_raycast(self, source: Node, target: Node) -> RayCast:
+    def get_raycast(self, source: Node, target: Node) -> Union[RayCast, BlockedRaycast]:
         visibility_graph = self.get_visibility_graph()
-        has_path, points = line_of_sight(source.position.value, target.position.value, visibility_graph)
+        has_path, points, blocking_point = line_of_sight(source.position.value, target.position.value, visibility_graph)
         nodes = [self.get_node(point) for point in points if self.get_node(point) is not None]
-        return RayCast(source=source, target=target, nodes=nodes)
+        if has_path:
+            return RayCast(source=source, target=target, nodes=nodes)
+        else:
+            blocking_node = self.get_node(blocking_point)
+            blocking_entity = self.get_blocking_entity(blocking_node)
+            return BlockedRaycast(source=source, target=target, nodes=nodes, blocking_node=blocking_node, blocking_entity=blocking_entity)
+
+    def get_blocking_entity(self, node: Node) -> Optional[GameEntity]:
+        for entity in node.entities:
+            if entity.blocks_light.value:
+                return entity
+        return None
 
     def get_path(self, start: Node, goal: Node, allow_diagonal: bool = True) -> Optional[Path]:
         walkable_graph = self.get_walkable_graph()
