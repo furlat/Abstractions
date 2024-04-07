@@ -30,30 +30,77 @@ class GoalState:
             source_entity = GameEntity.get_instance(goal.source_entity_id)
             target_entity = GameEntity.get_instance(goal.target_entity_id) if goal.target_entity_id else None
 
-            if target_entity and target_entity.id != character.id and target_entity not in character.inventory:
-                goal_message += self.generate_spatial_info(source_entity, target_entity, shape)
+            if (source_entity and (source_entity.id != character.id or source_entity not in character.inventory)) or \
+            (target_entity and (target_entity.id != character.id or target_entity not in character.inventory)):
+                goal_message += self.generate_spatial_info(character, source_entity, target_entity, shape)
 
             goal_message += self.generate_prerequisites_info(goal.prerequisites, source_entity, target_entity)
             goal_message += "\n"
 
         return goal_message.strip()
 
-    def generate_spatial_info(self, source_entity: GameEntity, target_entity: GameEntity, shape: Union[Rectangle, Shadow, Radius]) -> str:
+    def generate_spatial_info(self, character: GameEntity, source_entity: GameEntity, target_entity: Optional[GameEntity], shape: Union[Rectangle, Shadow, Radius]) -> str:
         spatial_info = "### Spatial Information:\n"
+        character_node = character.node
         source_node = source_entity.node
-        target_node = target_entity.node
+        target_node = target_entity.node if target_entity else None
 
-        if source_node and target_node and self.is_observable(target_node, shape):
-            distance = self.calculate_distance(source_node, target_node)
-            spatial_info += f"- Distance: {distance}\n"
-
-            path = self.find_path(source_node, target_node)
-            spatial_info += f"- Path: {self.format_path(path)}\n"
-
-            raycast = self.calculate_ray(source_node, target_node, shape)
+        if target_node and character_node != target_node:
+            distance = self.calculate_distance(character_node, target_node)
+            spatial_info += f"- Distance from Character to {target_entity.__class__.__name__}: {distance}\n"
+            if distance == 1:
+                direction = self.get_direction(character_node, target_node)
+                spatial_info += f"- {target_entity.__class__.__name__} is in the {direction} direction\n"
+            else:
+                if target_node.blocks_movement.value:
+                    neighboring_nodes = [node for node in target_node.neighbors() if not node.blocks_movement.value]
+                    if neighboring_nodes:
+                        shortest_path_node = min(neighboring_nodes, key=lambda node: len(self.find_path(character_node, node)))
+                        path = self.find_path(character_node, shortest_path_node)
+                        spatial_info += f"- Path from Character to {target_entity.__class__.__name__}'s neighboring node: {self.format_path(path)}\n"
+                        spatial_info += f"- {target_entity.__class__.__name__} is blocked by: {', '.join(entity.__class__.__name__ for entity in target_node.entities if entity.blocks_movement.value)}\n"
+                    else:
+                        spatial_info += f"- No path found to {target_entity.__class__.__name__} or its neighboring nodes\n"
+                else:
+                    path = self.find_path(character_node, target_node)
+                    spatial_info += f"- Path from Character to {target_entity.__class__.__name__}: {self.format_path(path)}\n"
+            raycast = self.calculate_ray(character_node, target_node, shape)
+            spatial_info += f"- {raycast}\n"
+        elif source_node and character_node != source_node:
+            distance = self.calculate_distance(character_node, source_node)
+            spatial_info += f"- Distance from Character to {source_entity.__class__.__name__}: {distance}\n"
+            if distance == 1:
+                direction = self.get_direction(character_node, source_node)
+                spatial_info += f"- {source_entity.__class__.__name__} is in the {direction} direction\n"
+            else:
+                path = self.find_path(character_node, source_node)
+                spatial_info += f"- Path from Character to {source_entity.__class__.__name__}: {self.format_path(path)}\n"
+            raycast = self.calculate_ray(character_node, source_node, shape)
             spatial_info += f"- {raycast}\n"
 
         return spatial_info
+    
+    def get_direction(self, source_node: Node, target_node: Node) -> str:
+        dx = target_node.position.x - source_node.position.x
+        dy = target_node.position.y - source_node.position.y
+        if dx == 0 and dy == -1:
+            return "North"
+        elif dx == 1 and dy == -1:
+            return "NorthEast"
+        elif dx == 1 and dy == 0:
+            return "East"
+        elif dx == 1 and dy == 1:
+            return "SouthEast"
+        elif dx == 0 and dy == 1:
+            return "South"
+        elif dx == -1 and dy == 1:
+            return "SouthWest"
+        elif dx == -1 and dy == 0:
+            return "West"
+        elif dx == -1 and dy == -1:
+            return "NorthWest"
+        else:
+            raise ValueError("Invalid direction")
 
     def is_observable(self, node: Node, shape: Union[Rectangle, Shadow, Radius]) -> bool:
         if isinstance(shape, Rectangle):
