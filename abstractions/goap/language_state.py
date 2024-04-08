@@ -4,16 +4,15 @@ from abstractions.goap.shapes import Shadow, Path, Radius,Rectangle, RayCast, Bl
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.nodes import Node, GameEntity, BlocksMovement, BlocksLight
 from abstractions.goap.spatial import WalkableGraph
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
-from abstractions.goap.game.main import generate_dungeon
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, Open, Close, Unlock, Lock, Pickup, Drop, Move
 from abstractions.goap.payloads import ActionsPayload, ActionInstance, ActionResult
 from pydantic import BaseModel
 from abstractions.goap.actions import Prerequisites, Consequences, Goal
 
 class GoalState:
-    def __init__(self, character_id: str):
+    def __init__(self, character_id: str, goals: Optional[List[Goal]] = []):
         self.character_id = character_id
-        self.goals: List[Goal] = []
+        self.goals = goals
 
     def add_goal(self, goal: Goal):
         self.goals.append(goal)
@@ -464,16 +463,25 @@ class ObservationState:
         return f"{header}{content}\n"
 
 class ActionState:
-    def __init__(self, action_result: ActionResult):
+    def __init__(self, action_result: Optional[ActionResult] = None):
         self.action_result = action_result
 
-    def generate_analysis(self) -> str:
+    def update_state(self, action_result: ActionResult):
+        if not isinstance(action_result, ActionResult):
+            raise ValueError("Invalid action result")
+        self.action_result = action_result
+
+    def generate(self, action_result: Optional[ActionResult]) -> str:
+        if action_result:
+            self.update_state(action_result)
         if self.action_result.success:
             return self._generate_success_analysis()
         else:
             return self._generate_failure_analysis()
 
-    def _generate_success_analysis(self) -> str:
+    def _generate_success_analysis(self,) -> str:
+        if not self.action_result:
+            raise ValueError("Action result not set")
         action_name = self.action_result.action_instance.action.__class__.__name__
         source_before = self.action_result.state_before["source"]
         source_after = self.action_result.state_after["source"]

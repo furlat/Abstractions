@@ -2,12 +2,15 @@ import pygame
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.nodes import GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
+from abstractions.goap.actions import Goal, Prerequisites
+from abstractions.goap.entity import Statement
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, Open, Close, Unlock, Lock, Pickup, Drop, Move
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
 from pydantic import ValidationError
 from abstractions.goap.game.manager import GameManager
+from typing import Optional
 
 BASE_PATH = r"C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap"
 # BASE_PATH = "/Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/goap"
@@ -43,6 +46,39 @@ def generate_dungeon(grid_map: GridMap, room_width: int, room_height: int):
                 grid_map.get_node((x, y)).add_entity(floor)
     return character, door, key, treasure
 
+
+def source_target_position_comparison(source: tuple[int,int], target: tuple[int,int]) -> bool:
+    """Check if the source entity's position is the same as the target entity's position."""
+    if source and target:
+        return source == target
+    return False
+
+def treasure_in_neighborhood(source: GameEntity, target: Optional[GameEntity] = None) -> bool:
+    """Check if the treasure is in the character's neighborhood."""
+    if source.node and target and target.node:
+        return source.node in target.node.neighbors()
+    return False
+
+def key_in_inventory(source: GameEntity, target: Optional[GameEntity] = None) -> bool:
+    """Check if the key is in the character's inventory."""
+    if target:
+        return target in source.inventory
+    return False
+
+def is_treasure(source: GameEntity, target: Optional[GameEntity] = None) -> bool:
+    """Check if the target entity is a Treasure."""
+
+    
+    return isinstance(target, Treasure)
+
+def is_golden_key(source: GameEntity, target: Optional[GameEntity] = None) -> bool:
+    """Check if the entity is a Golden Key."""
+    return isinstance(target, Key) and target.key_name.value == "Golden Key"
+
+def is_door(entity: GameEntity, target: Optional[GameEntity] = None) -> bool:
+    """Check if the entity is a Door."""
+    return isinstance(entity, Door)
+
 def main():
     # Initialize Pygame
     pygame.init()
@@ -53,7 +89,7 @@ def main():
     
     # Create the grid map and generate the dungeon
     grid_map = GridMap(width=10, height=10)
-    grid_map.register_actions([MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction])
+    grid_map.register_actions([Move, Pickup, Drop, Open, Close, Unlock, Lock])
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
     
@@ -73,9 +109,69 @@ def main():
         SpriteMapping(entity_type=TestItem, sprite_path=os.path.join(BASE_PATH, "sprites", "filled_storage.png"), ascii_char="$", draw_order=1),
         SpriteMapping(entity_type=GameEntity, name_pattern=r"^Wall", sprite_path=os.path.join(BASE_PATH, "sprites", "wall.png"), ascii_char="#", draw_order=1),
     ]
-    
+    # add the goals
+
+        # Goal 1: Check if the character's position is the same as the treasure's position
+    reach_treasure_goal = Goal(
+        name="Reach the treasure",
+        source_entity_id=character.id,
+        target_entity_id=treasure.id,
+        prerequisites=Prerequisites(
+            source_statements=[Statement(conditions={"can_act": True})],
+            target_statements=[Statement(callables=[is_treasure])],
+            source_target_statements=[
+                Statement(comparisons={
+                    "source_position": ("position", "position", source_target_position_comparison)
+                })
+            ]
+        )
+    )
+
+    # Goal 2: Check if the treasure is in the character's neighborhood
+    treasure_in_neighborhood_goal = Goal(
+        name="Treasure in neighborhood",
+        source_entity_id=character.id,
+        target_entity_id=treasure.id,
+        prerequisites=Prerequisites(
+            source_statements=[Statement(conditions={"can_act": True})],
+            target_statements=[Statement(callables=[is_treasure])],
+            source_target_statements=[
+                Statement(callables=[treasure_in_neighborhood])
+            ]
+        )
+    )
+
+    # Goal 3: Check if the key is in the character's inventory
+    key_in_inventory_goal = Goal(
+        name="Key in inventory",
+        source_entity_id=character.id,
+        target_entity_id=key.id,
+        prerequisites=Prerequisites(
+            source_statements=[Statement(conditions={"can_act": True})],
+            target_statements=[Statement(callables=[is_golden_key])],
+            source_target_statements=[
+                Statement(callables=[key_in_inventory])
+            ]
+        )
+    )
+
+    # Goal 4: Check if the door is unlocked
+    door_unlocked_goal = Goal(
+        name="Door unlocked",
+        source_entity_id=door.id,
+        prerequisites=Prerequisites(
+            source_statements=[
+                Statement(callables=[is_door]),
+                Statement(conditions={"is_locked": False})
+            ],
+            target_statements=[],
+            source_target_statements=[]
+        )
+    )
+    goals = [reach_treasure_goal, treasure_in_neighborhood_goal, key_in_inventory_goal, door_unlocked_goal]
+
     # Create the game manager
-    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(400, 300), controlled_entity_id=character.id)
+    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(400, 300), controlled_entity_id=character.id, goals=goals)
     
     # Run the game
     game_manager.run()

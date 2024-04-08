@@ -2,7 +2,7 @@
 
 - Full filepath to the merged directory: `C:\Users\Tommaso\Documents\Dev\Abstractions\abstractions\goap`
 
-- Created: `2024-04-07T15:27:11.748461`
+- Created: `2024-04-08T00:46:45.100327`
 
 ## init
 
@@ -127,6 +127,17 @@ class Action(BaseModel):
     def propagate_inventory_consequences(self, source: Entity, target: Entity) -> None:
         # Implement inventory consequence propagation logic here
         pass
+    
+class Goal(BaseModel):
+    name: str
+    source_entity_id: str
+    target_entity_id: Optional[str] = None
+    prerequisites: Prerequisites
+
+    def is_achieved(self) -> bool:
+        source_entity = GameEntity.get_instance(self.source_entity_id)
+        target_entity = GameEntity.get_instance(self.target_entity_id) if self.target_entity_id else None
+        return self.prerequisites.is_satisfied(source_entity, target_entity)
 
 
 ---
@@ -138,7 +149,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from pydantic import BaseModel, Field, conlist
 from abstractions.goap.entity import Statement
 from abstractions.goap.spatial import GridMap, Node, GameEntity, ActionResult, ActionsPayload, SummarizedActionPayload, SummarizedEgoActionPayload
-from abstractions.goap.interactions import MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction
+from abstractions.goap.interactions import Move, Pickup, Drop, Open, Close, Unlock, Lock
 from abstractions.goap.game.main import generate_dungeon
 import outlines
 from outlines import models, generate
@@ -303,7 +314,7 @@ class FakeLLM(AbcAgent):
                 if self.use_egocentric:
                     if self.use_outlines:
                         move_action = OutlinesEgoActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=[0, 0],
                             target_entity_type="Floor",
@@ -311,7 +322,7 @@ class FakeLLM(AbcAgent):
                         )
                     else:
                         move_action = SummarizedEgoActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=(0, 0),
                             target_entity_type="Floor",
@@ -320,7 +331,7 @@ class FakeLLM(AbcAgent):
                 else:
                     if self.use_outlines:
                         move_action = OutlinesActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=list(current_position),
                             target_entity_type="Floor",
@@ -328,7 +339,7 @@ class FakeLLM(AbcAgent):
                         )
                     else:
                         move_action = SummarizedActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=current_position,
                             target_entity_type="Floor",
@@ -1007,7 +1018,7 @@ from abstractions.goap.nodes import GameEntity, Node
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.payloads import ActionsPayload, ActionInstance
 from abstractions.goap.shapes import Path
-from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
+from abstractions.goap.interactions import Character, Move, Pickup, Drop, TestItem, Door, Lock, Unlock, Open, Close
 from abstractions.goap.actions import Action
 from abstractions.goap.game.renderer import CameraControl
 from abstractions.goap.game.payloadgen import SpriteMapping
@@ -1156,15 +1167,15 @@ class InputHandler:
                         self.available_actions = self.get_available_actions(player, target_entity)
                         if clicked_node == player.node or clicked_node in player.node.neighbors():
                             if hasattr(target_entity, 'is_pickupable') and target_entity.is_pickupable.value:
-                                pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=PickupAction())
+                                pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Pickup())
                                 self.actions_payload.actions.append(pickup_action)
-                                print(f"PickupAction generated: {pickup_action}")  # Debug print statement
+                                print(f"Pickup generated: {pickup_action}")  # Debug print statement
                             elif isinstance(target_entity, Door):
                                 if target_entity.open.value:
-                                    close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=CloseAction())
+                                    close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Close())
                                     self.actions_payload.actions.append(close_action)
                                 else:
-                                    open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=OpenAction())
+                                    open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Open())
                                     self.actions_payload.actions.append(open_action)
                     else:
                         self.available_actions = []
@@ -1235,7 +1246,7 @@ class InputHandler:
         if target_entity_id:
             target_entity = GameEntity.get_instance(target_entity_id)
             if target_entity in player.inventory:
-                drop_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=DropAction())
+                drop_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Drop())
                 self.actions_payload.actions.append(drop_action)
             
     def generate_lock_unlock_action(self):
@@ -1246,10 +1257,10 @@ class InputHandler:
             target_entity = GameEntity.get_instance(target_entity_id)
             if isinstance(target_entity, Door):
                 if target_entity.is_locked.value:
-                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=UnlockAction())
+                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Unlock())
                     self.actions_payload.actions.append(unlock_action)
                 else:
-                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=LockAction())
+                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Lock())
                     self.actions_payload.actions.append(lock_action)
 
     def generate_move_step(self, direction):
@@ -1285,7 +1296,7 @@ class ActionPayloadGenerator:
                     floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
                     if floor_entities:
                         target_id = floor_entities[0].id
-                        move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=MoveStep())
+                        move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=Move())
                         return ActionsPayload(actions=[move_action])
         return None
 
@@ -1309,7 +1320,7 @@ class ActionPayloadGenerator:
             floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
             if floor_entities:
                 target_id = floor_entities[0].id
-                move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=MoveStep())
+                move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=Move())
                 move_actions.append(move_action)
         return move_actions
 
@@ -1322,7 +1333,7 @@ import pygame
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.nodes import GameEntity, Node, Attribute, BlocksMovement, BlocksLight
 import os
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, Open, Close, Unlock, Lock, Pickup, Drop, Move
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual, CameraControl
 from abstractions.goap.game.input_handler import InputHandler
@@ -1373,7 +1384,7 @@ def main():
     
     # Create the grid map and generate the dungeon
     grid_map = GridMap(width=10, height=10)
-    grid_map.register_actions([MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction])
+    grid_map.register_actions([Move, Pickup, Drop, Open, Close, Unlock, Lock])
     room_width, room_height = 6, 6
     character, door, key, treasure = generate_dungeon(grid_map, room_width, room_height)
     
@@ -2112,7 +2123,7 @@ from abstractions.goap.actions import Action
 from abstractions.goap.payloads import ActionsPayload, ActionInstance, SummarizedActionPayload, ActionResult, ActionsResults
 from abstractions.goap.errors import ActionConversionError, AmbiguousEntityError
 from abstractions.goap.spatial import VisibilityGraph, WalkableGraph, PathDistanceResult, shadow_casting, dijkstra, a_star, line_of_sight
-from abstractions.goap.shapes import Radius, Shadow, RayCast, Path, Rectangle
+from abstractions.goap.shapes import Radius, Shadow, RayCast, Path, Rectangle, BlockedRaycast
 import uuid
 
 class GridMap(BaseModel, RegistryHolder):
@@ -2186,12 +2197,34 @@ class GridMap(BaseModel, RegistryHolder):
                 if node is not None:
                     walkable_matrix[y][x] = not node.blocks_movement.value
         return WalkableGraph(walkable_matrix=walkable_matrix)
+    
+    def get_rectangle(self, top_left: Tuple[int, int] = (0, 0), width: Optional[int] = None, height: Optional[int] = None) -> Rectangle:
+        if width is None:
+            width = self.width - top_left[0]
+        if height is None:
+            height = self.height - top_left[1]
+        start_x, start_y = top_left
+        end_x = min(start_x + width, self.width)
+        end_y = min(start_y + height, self.height)
+        nodes = []
+        for y in range(start_y, end_y):
+            for x in range(start_x, end_x):
+                node = self.get_node((x, y))
+                if node:
+                    nodes.append(node)
+        return Rectangle(top_left=top_left, width=end_x - start_x, height=end_y - start_y, nodes=nodes)
 
     def get_radius(self, source: Node, max_radius: int) -> Radius:
-        visibility_graph = self.get_visibility_graph()
-        visible_cells = shadow_casting(source.position.value, visibility_graph, max_radius)
-        nodes = [self.get_node(cell) for cell in visible_cells if self.get_node(cell) is not None]
+        nodes = []
+        for x in range(max(0, source.position.x - max_radius), min(self.width, source.position.x + max_radius + 1)):
+            for y in range(max(0, source.position.y - max_radius), min(self.height, source.position.y + max_radius + 1)):
+                node = self.get_node((x, y))
+                if node and self._get_distance(source.position.value, node.position.value) <= max_radius:
+                    nodes.append(node)
         return Radius(source=source, max_radius=max_radius, nodes=nodes)
+
+    def _get_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
+        return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1]))
 
     def get_shadow(self, source: Node, max_radius: int) -> Shadow:
         visibility_graph = self.get_visibility_graph()
@@ -2199,11 +2232,22 @@ class GridMap(BaseModel, RegistryHolder):
         nodes = [self.get_node(cell) for cell in visible_cells if self.get_node(cell) is not None]
         return Shadow(source=source, max_radius=max_radius, nodes=nodes)
 
-    def get_raycast(self, source: Node, target: Node) -> RayCast:
+    def get_raycast(self, source: Node, target: Node) -> Union[RayCast, BlockedRaycast]:
         visibility_graph = self.get_visibility_graph()
-        has_path, points = line_of_sight(source.position.value, target.position.value, visibility_graph)
+        has_path, points, blocking_point = line_of_sight(source.position.value, target.position.value, visibility_graph)
         nodes = [self.get_node(point) for point in points if self.get_node(point) is not None]
-        return RayCast(source=source, target=target, nodes=nodes)
+        if has_path:
+            return RayCast(source=source, target=target, nodes=nodes)
+        else:
+            blocking_node = self.get_node(blocking_point)
+            blocking_entity = self.get_blocking_entity(blocking_node)
+            return BlockedRaycast(source=source, target=target, nodes=nodes, blocking_node=blocking_node, blocking_entity=blocking_entity)
+
+    def get_blocking_entity(self, node: Node) -> Optional[GameEntity]:
+        for entity in node.entities:
+            if entity.blocks_light.value:
+                return entity
+        return None
 
     def get_path(self, start: Node, goal: Node, allow_diagonal: bool = True) -> Optional[Path]:
         walkable_graph = self.get_walkable_graph()
@@ -2426,7 +2470,7 @@ def move_to_target_node(source: GameEntity, target: GameEntity) -> Node:
 
 MoveToTargetNode: Callable[[GameEntity, GameEntity], Node] = move_to_target_node
 
-class MoveStep(Action):
+class Move(Action):
     """Represents a single step movement action."""
     name: str = "Move Step"
     prerequisites: Prerequisites = Prerequisites(
@@ -2462,7 +2506,7 @@ AddToInventory: Callable[[GameEntity, GameEntity], None] = add_to_inventory
 RemoveFromInventory: Callable[[GameEntity, GameEntity], None] = remove_from_inventory
 
 
-class PickupAction(Action):
+class Pickup(Action):
     """Represents the action of picking up an entity."""
     name: str = "Pickup"
     prerequisites: Prerequisites = Prerequisites(
@@ -2558,7 +2602,7 @@ def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
 
 ClearStoredIn: Callable[[GameEntity, GameEntity], None] = clear_stored_in
 
-class DropAction(Action):
+class Drop(Action):
     """Represents the action of dropping an entity."""
     name: str = "Drop"
     prerequisites: Prerequisites = Prerequisites(
@@ -2573,7 +2617,7 @@ class DropAction(Action):
 
 
 
-class OpenAction(Action):
+class Open(Action):
     """Represents the action of opening a Entity."""
     name: str = "Open"
     prerequisites: Prerequisites = Prerequisites(
@@ -2597,7 +2641,7 @@ class OpenAction(Action):
         updated_target.node.update_blocking_properties()
 
         return updated_source, updated_target
-class CloseAction(Action):
+class Close(Action):
     """Represents the action of closing a Entity."""
     name: str = "Close"
     prerequisites: Prerequisites = Prerequisites(
@@ -2626,7 +2670,7 @@ class CloseAction(Action):
 def has_required_key(source: GameEntity, target: Door) -> bool:
     return any(item.key_name.value == target.required_key.value for item in source.inventory)
 
-class UnlockAction(Action):
+class Unlock(Action):
     """Represents the action of unlocking a Entity."""
     name: str = "Unlock"
     prerequisites: Prerequisites = Prerequisites(
@@ -2644,7 +2688,7 @@ class UnlockAction(Action):
         target_transformations={"is_locked": False}
     )
 
-class LockAction(Action):
+class Lock(Action):
     """ Represents the action of locking a Entity."""
     name: str = "Lock"
     prerequisites: Prerequisites = Prerequisites(
@@ -2667,203 +2711,291 @@ class LockAction(Action):
 ## language state
 
 from typing import Optional, Tuple, List, Dict, Any, Union
-from abstractions.goap.shapes import Shadow
+from abstractions.goap.entity import Entity, Statement, Attribute
+from abstractions.goap.shapes import Shadow, Path, Radius,Rectangle, RayCast, BlockedRaycast
 from abstractions.goap.gridmap import GridMap
 from abstractions.goap.nodes import Node, GameEntity, BlocksMovement, BlocksLight
 from abstractions.goap.spatial import WalkableGraph
-from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, OpenAction, CloseAction, UnlockAction, LockAction, PickupAction, DropAction, MoveStep
+from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, Open, Close, Unlock, Lock, Pickup, Drop, Move
 from abstractions.goap.game.main import generate_dungeon
 from abstractions.goap.payloads import ActionsPayload, ActionInstance, ActionResult
+from pydantic import BaseModel
+from abstractions.goap.actions import Prerequisites, Consequences, Goal
 
+class GoalState:
+    def __init__(self, character_id: str):
+        self.character_id = character_id
+        self.goals: List[Goal] = []
+
+    def add_goal(self, goal: Goal):
+        self.goals.append(goal)
+
+    def remove_goal(self, goal: Goal):
+        self.goals.remove(goal)
+
+    def generate(self, shape: Union[Rectangle, Shadow, Radius]) -> str:
+        goal_message = "# Agent Goals\n"
+        character = GameEntity.get_instance(self.character_id)
+
+        for goal in self.goals:
+            goal_message += f"## Goal: {goal.name}\n"
+            source_entity = GameEntity.get_instance(goal.source_entity_id)
+            target_entity = GameEntity.get_instance(goal.target_entity_id) if goal.target_entity_id else None
+
+            if (source_entity and (source_entity.id != character.id or source_entity not in character.inventory)) or \
+            (target_entity and (target_entity.id != character.id or target_entity not in character.inventory)):
+                goal_message += self.generate_spatial_info(character, source_entity, target_entity, shape)
+
+            goal_message += self.generate_prerequisites_info(goal.prerequisites, source_entity, target_entity)
+            goal_message += "\n"
+
+        return goal_message.strip()
+
+    def generate_spatial_info(self, character: GameEntity, source_entity: GameEntity, target_entity: Optional[GameEntity], shape: Union[Rectangle, Shadow, Radius]) -> str:
+        spatial_info = "### Spatial Information:\n"
+        character_node = character.node
+        source_node = source_entity.node
+        target_node = target_entity.node if target_entity else None
+
+        if target_node and character_node != target_node:
+            distance = self.calculate_distance(character_node, target_node)
+            spatial_info += f"- Distance from Character to {target_entity.__class__.__name__}: {distance}\n"
+            if distance == 1:
+                direction = self.get_direction(character_node, target_node)
+                spatial_info += f"- {target_entity.__class__.__name__} is in the {direction} direction\n"
+            else:
+                if target_node.blocks_movement.value:
+                    neighboring_nodes = [node for node in target_node.neighbors() if not node.blocks_movement.value]
+                    if neighboring_nodes:
+                        shortest_path_node = min(neighboring_nodes, key=lambda node: len(self.find_path(character_node, node)))
+                        path = self.find_path(character_node, shortest_path_node)
+                        spatial_info += f"- Path from Character to {target_entity.__class__.__name__}'s neighboring node: {self.format_path(path)}\n"
+                        spatial_info += f"- {target_entity.__class__.__name__} is blocked by: {', '.join(entity.__class__.__name__ for entity in target_node.entities if entity.blocks_movement.value)}\n"
+                    else:
+                        spatial_info += f"- No path found to {target_entity.__class__.__name__} or its neighboring nodes\n"
+                else:
+                    path = self.find_path(character_node, target_node)
+                    spatial_info += f"- Path from Character to {target_entity.__class__.__name__}: {self.format_path(path)}\n"
+            raycast = self.calculate_ray(character_node, target_node, shape)
+            spatial_info += f"- {raycast}\n"
+        elif source_node and character_node != source_node:
+            distance = self.calculate_distance(character_node, source_node)
+            spatial_info += f"- Distance from Character to {source_entity.__class__.__name__}: {distance}\n"
+            if distance == 1:
+                direction = self.get_direction(character_node, source_node)
+                spatial_info += f"- {source_entity.__class__.__name__} is in the {direction} direction\n"
+            else:
+                path = self.find_path(character_node, source_node)
+                spatial_info += f"- Path from Character to {source_entity.__class__.__name__}: {self.format_path(path)}\n"
+            raycast = self.calculate_ray(character_node, source_node, shape)
+            spatial_info += f"- {raycast}\n"
+
+        return spatial_info
+    
+    def get_direction(self, source_node: Node, target_node: Node) -> str:
+        dx = target_node.position.x - source_node.position.x
+        dy = target_node.position.y - source_node.position.y
+        if dx == 0 and dy == -1:
+            return "North"
+        elif dx == 1 and dy == -1:
+            return "NorthEast"
+        elif dx == 1 and dy == 0:
+            return "East"
+        elif dx == 1 and dy == 1:
+            return "SouthEast"
+        elif dx == 0 and dy == 1:
+            return "South"
+        elif dx == -1 and dy == 1:
+            return "SouthWest"
+        elif dx == -1 and dy == 0:
+            return "West"
+        elif dx == -1 and dy == -1:
+            return "NorthWest"
+        else:
+            raise ValueError("Invalid direction")
+
+    def is_observable(self, node: Node, shape: Union[Rectangle, Shadow, Radius]) -> bool:
+        if isinstance(shape, Rectangle):
+            return node.position.value in [n.position.value for n in shape.nodes]
+        elif isinstance(shape, (Shadow, Radius)):
+            return node in shape.nodes
+        return False
+
+    def generate_prerequisites_info(self, prerequisites: Prerequisites, source: GameEntity, target: Optional[GameEntity]) -> str:
+        info = ""
+        for statement_type in ["source_statements", "target_statements", "source_target_statements"]:
+            statements = getattr(prerequisites, statement_type)
+            if statements:
+                info += f"### {statement_type.capitalize().replace('_', ' ')}:\n"
+                for statement in statements:
+                    if statement.conditions:
+                        info += "- Conditions:\n"
+                        for attr_name, desired_value in statement.conditions.items():
+                            actual_value = getattr(source, attr_name, None) if statement_type == "source_statements" else getattr(target, attr_name, None)
+                            is_satisfied = statement.validate_condition(source) if statement_type == "source_statements" else statement.validate_condition(target)
+                            info += f"  - {attr_name}: {'Satisfied' if is_satisfied else 'Not Satisfied'} (Desired: {desired_value}, Actual: {actual_value.value if isinstance(actual_value, Attribute) else actual_value})\n"
+                    if statement.comparisons:
+                        info += "- Comparisons:\n"
+                        for comparison_name, (source_attr, target_attr, comparison_func) in statement.comparisons.items():
+                            source_value = getattr(source, source_attr, None)
+                            target_value = getattr(target, target_attr, None)
+                            is_satisfied = statement.validate_comparisons(source, target)
+                            info += f"  - {comparison_name}: {'Satisfied' if is_satisfied else 'Not Satisfied'} (Source: {source_value.value if isinstance(source_value, Attribute) else source_value}, Target: {target_value.value if isinstance(target_value, Attribute) else target_value})\n"
+                    if statement.callables:
+                        info += "- Callables:\n"
+                        for callable_func in statement.callables:
+                            is_satisfied = statement.validate_callables(source, target)
+                            info += f"  - {callable_func.__doc__}: {'Satisfied' if is_satisfied else 'Not Satisfied'}\n"
+        return info
+
+    def calculate_distance(self, source_node: Node, target_node: Node) -> int:
+        return abs(source_node.position.x - target_node.position.x) + abs(source_node.position.y - target_node.position.y)
+
+    def find_path(self, source_node: Node, target_node: Node) -> Optional[List[Tuple[int, int]]]:
+        grid_map = GridMap.get_instance(source_node.gridmap_id)
+        if grid_map:
+            path = grid_map.get_path(source_node, target_node)
+            if path:
+                return [node.position.value for node in path.nodes]
+        return None
+
+    def format_path(self, path: Optional[List[Tuple[int, int]]]) -> str:
+        if path:
+            return ' -> '.join(str(node) for node in path)
+        return "No path found"
+
+    def calculate_ray(self, source_node: Node, target_node: Node, shape: Union[Rectangle, Shadow, Radius]) -> str:
+        grid_map = GridMap.get_instance(source_node.gridmap_id)
+        if grid_map:
+            raycast = grid_map.get_raycast(source_node, target_node)
+            if isinstance(raycast, RayCast):
+                ray_path = ' -> '.join(str(node.position.value) for node in raycast.nodes)
+                return f"Ray: {ray_path}"
+            elif isinstance(raycast, BlockedRaycast):
+                ray_path = ' -> '.join(str(node.position.value) for node in raycast.nodes)
+                blocking_entity = raycast.blocking_entity
+                blocking_entity_name = blocking_entity.__class__.__name__ if blocking_entity else "Unknown"
+                blocking_entity_attributes = ", ".join(f"{attr.name}: {attr.value}" for attr in blocking_entity.all_attributes().values()) if blocking_entity else "N/A"
+                return f"Blocked Ray: {ray_path} (Blocked by {blocking_entity_name} at {raycast.blocking_node.position.value}, Attributes: {blocking_entity_attributes})"
+        return "Ray: Not available"
 
 class ObservationState:
-    def __init__(self, character_id: str, config: Dict[str, bool]):
+    def __init__(self, character_id: str):
         self.character_id = character_id
-        self.config = config
         self.paths = {}
 
-    def generate(self, shadow: Shadow) -> str:
-        observation_message = self._generate_introduction(self.config)
-
-        if self.config.get("character_summary", True):
-            character_summary = self._generate_character_summary(self.character_id)
-            observation_message += f"# Character Summary\n{character_summary}\n\n"
-
-        if self.config.get("visibility_matrix", True):
-            visibility_matrix, dimensions = self._generate_visibility_matrix(shadow, self.character_id)
-            observation_message += f"# Nodes Allowing Light Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{visibility_matrix}\n\n"
-
-        if self.config.get("movement_matrix", True):
-            movement_matrix, dimensions = self._generate_movement_matrix(shadow, self.character_id)
-            observation_message += f"# Nodes Allowing Movement Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{movement_matrix}\n\n"
-
-        if self.config.get("path_matrix", True):
-            path_matrix, dimensions, self.paths = self._generate_path_matrix(shadow, self.character_id)
-            observation_message += f"# Path Matrix ({dimensions[0]}x{dimensions[1]} Grid)\n{path_matrix}\n\n"
-
-        if self.config.get("immediate_neighbors", True):
-            immediate_neighbors = self._generate_immediate_neighbors(shadow, self.character_id)
-            observation_message += f"# Immediate Neighbors (3x3 Grid)\n{immediate_neighbors}\n\n"
-
-        if self.config.get("node_equivalence_classes", True):
-            node_equivalence_classes = self._generate_node_equivalence_classes(shadow)
-            observation_message += f"# Node Equivalence Classes\n{node_equivalence_classes}\n\n"
-
-        if self.config.get("living_entities", True):
-            living_entities = self._generate_living_entities(shadow)
-            observation_message += f"# Living Entities\n{living_entities}\n\n"
-
-        if self.config.get("movement_sub_goal", True):
-            movement_sub_goal = self._generate_movement_sub_goal()
-            observation_message += f"# Movement Sub-Goal\n{movement_sub_goal}\n\n"
-
-        if self.config.get("attribute_summary", True):
-            attribute_summary = self._generate_attribute_summary(shadow)
-            observation_message += f"# Attribute Summary\n{attribute_summary}\n\n"
-
-        if self.config.get("pathfinding_information", True):
-            pathfinding_information = self._generate_pathfinding_information()
-            observation_message += f"# Pathfinding Information\n{pathfinding_information}\n\n"
-
-        if self.config.get("cognitive_insights", True):
-            cognitive_insights = self._generate_cognitive_insights(shadow)
-            observation_message += f"# Cognitive Insights\n{cognitive_insights}\n"
-
-        return observation_message
+    def generate(self, shape: Union[Shadow, Rectangle, Radius]) -> str:
+        observation_message = ""
+        observation_message += self._generate_character_summary(self.character_id, shape)
+        observation_message += self._generate_visibility_matrix(shape, self.character_id)
+        observation_message += self._generate_movement_matrix(shape, self.character_id)
+        path_matrix_content, paths = self._generate_path_matrix(shape, self.character_id)
+        observation_message += path_matrix_content
+        observation_message += self._generate_immediate_neighbors(shape, self.character_id)
+        observation_message += self._generate_node_equivalence_classes(shape)
+        observation_message += self._generate_living_entities(shape, self.character_id)
+        observation_message += self._generate_attribute_summary(shape)
+        observation_message += self._generate_pathfinding_information(paths)
+        return observation_message.strip()
 
     @staticmethod
-    def _generate_introduction(config: Dict[str, bool]) -> str:
-        introduction = "# Introduction\n"
-        introduction += "This observation represents the current state of the game world from the character's perspective. It includes the following sections:\n\n"
-
-        for method_name, enabled in config.items():
-            if enabled:
-                method = getattr(ObservationState, f"_generate_{method_name}")
-                description = method.__doc__.strip() if method.__doc__ else "No description available."
-                introduction += f"- {method_name.replace('_', ' ').title()}: {description}\n"
-
-        return introduction
-
-    @staticmethod
-    def _generate_character_summary(character_id: str) -> str:
-        """
-        Provides an overview of the character's position and key attributes.
-        """
+    def _generate_character_summary(character_id: str, shape: Union[Shadow, Rectangle, Radius]) -> str:
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found."
-
         position = character.position.value
         attack_power = character.get_attr("attack_power")
         health = character.get_attr("health")
         max_health = character.get_attr("max_health")
         can_act = character.get_attr("can_act")
-
-        summary = f"Position: {position}\n"
-        summary += f"Key Attributes:\n"
-        summary += f"  - AttackPower: {attack_power}\n"
-        summary += f"  - Health: {health}\n"
-        summary += f"  - MaxHealth: {max_health}\n"
-        summary += f"  - CanAct: {can_act}\n"
-
-        return summary
+        header = "# Character Summary\n"
+        content = f"Position: {position}\n"
+        content += f"Key Attributes:\n"
+        content += f"  - AttackPower: {attack_power}\n"
+        content += f"  - Health: {health}\n"
+        content += f"  - MaxHealth: {max_health}\n"
+        content += f"  - CanAct: {can_act}\n"
+        return f"{header}{content}\n"
 
     @staticmethod
-    def _generate_visibility_matrix(shadow: Shadow, character_id: str) -> str:
-        """
-        Generates a matrix representing whether know allows raypath to cross them or not.
-        """
+    def _generate_visibility_matrix(shape: Union[Shadow, Rectangle, Radius], character_id: str) -> str:
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found."
-
         character_node = character.node
         if character_node is None:
             return "Character is not in a node."
-
-        grid_map = GridMap.get_instance(shadow.nodes[0].gridmap_id)
+        grid_map = GridMap.get_instance(character_node.gridmap_id)
         if grid_map is None:
             return "Grid map not found."
-
-        min_x = max(0, character_node.position.value[0] - shadow.max_radius)
-        max_x = min(grid_map.width - 1, character_node.position.value[0] + shadow.max_radius)
-        min_y = max(0, character_node.position.value[1] - shadow.max_radius)
-        max_y = min(grid_map.height - 1, character_node.position.value[1] + shadow.max_radius)
-
+        nodes = shape.nodes if isinstance(shape, (Shadow, Radius)) else grid_map.get_nodes_in_rect(shape)
+        min_x = min(node.position.value[0] for node in nodes)
+        max_x = max(node.position.value[0] for node in nodes)
+        min_y = min(node.position.value[1] for node in nodes)
+        max_y = max(node.position.value[1] for node in nodes)
         visibility_matrix = [["?" for _ in range(max_x - min_x + 1)] for _ in range(max_y - min_y + 1)]
         character_x, character_y = character_node.position.value
         visibility_matrix[character_y - min_y][character_x - min_x] = "c"
-
-        for node in shadow.nodes:
+        for node in nodes:
             x = node.position.value[0] - min_x
             y = node.position.value[1] - min_y
             visibility_matrix[y][x] = "v" if not node.blocks_light.value else "x"
         visibility_matrix[character_y - min_y][character_x - min_x] = "c"
         visibility_matrix_str = "\n".join([" ".join(row) for row in visibility_matrix])
-        return visibility_matrix_str, (max_y - min_y + 1, max_x - min_x + 1)
+        header = f"# Nodes Allowing Light Matrix ({max_y - min_y + 1}x{max_x - min_x + 1} Grid)\n"
+        content = visibility_matrix_str
+        return f"{header}{content}\n\n"
 
     @staticmethod
-    def _generate_movement_matrix(shadow: Shadow, character_id: str) -> str:
-        """
-        Generates a matrix representing whether the node is walkable.
-        """
+    def _generate_movement_matrix(shape: Union[Shadow, Rectangle, Radius], character_id: str) -> str:
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found."
-
         character_node = character.node
         if character_node is None:
             return "Character is not in a node."
-
-        grid_map = GridMap.get_instance(shadow.nodes[0].gridmap_id)
+        grid_map = GridMap.get_instance(character_node.gridmap_id)
         if grid_map is None:
             return "Grid map not found."
-
-        min_x = max(0, character_node.position.value[0] - shadow.max_radius)
-        max_x = min(grid_map.width - 1, character_node.position.value[0] + shadow.max_radius)
-        min_y = max(0, character_node.position.value[1] - shadow.max_radius)
-        max_y = min(grid_map.height - 1, character_node.position.value[1] + shadow.max_radius)
-
+        nodes = shape.nodes if isinstance(shape, (Shadow, Radius)) else grid_map.get_nodes_in_rect(shape)
+        min_x = min(node.position.value[0] for node in nodes)
+        max_x = max(node.position.value[0] for node in nodes)
+        min_y = min(node.position.value[1] for node in nodes)
+        max_y = max(node.position.value[1] for node in nodes)
         movement_matrix = [["?" for _ in range(max_x - min_x + 1)] for _ in range(max_y - min_y + 1)]
         character_x, character_y = character_node.position.value
         movement_matrix[character_y - min_y][character_x - min_x] = "c"
-
-        for node in shadow.nodes:
+        for node in nodes:
             x = node.position.value[0] - min_x
             y = node.position.value[1] - min_y
             movement_matrix[y][x] = "v" if not node.blocks_movement.value else "x"
         movement_matrix[character_y - min_y][character_x - min_x] = "c"
         movement_matrix_str = "\n".join([" ".join(row) for row in movement_matrix])
-        return movement_matrix_str, (max_y - min_y + 1, max_x - min_x + 1)
+        header = f"# Nodes Allowing Movement Matrix ({max_y - min_y + 1}x{max_x - min_x + 1} Grid)\n"
+        content = movement_matrix_str
+        return f"{header}{content}\n\n"
 
     @staticmethod
-    def _generate_path_matrix(shadow: Shadow, character_id: str) -> str:
-        """
-        Generates a matrix indicating the presence and length of paths from the character's position to each node in the shadow.
-        """
+    def _generate_path_matrix(shape: Union[Shadow, Rectangle, Radius], character_id: str) -> str:
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found."
-
         character_node = character.node
         if character_node is None:
             return "Character is not in a node."
-
-        grid_map = GridMap.get_instance(shadow.nodes[0].gridmap_id)
+        grid_map = GridMap.get_instance(character_node.gridmap_id)
         if grid_map is None:
             return "Grid map not found."
-
-        min_x = max(0, character_node.position.value[0] - shadow.max_radius)
-        max_x = min(grid_map.width - 1, character_node.position.value[0] + shadow.max_radius)
-        min_y = max(0, character_node.position.value[1] - shadow.max_radius)
-        max_y = min(grid_map.height - 1, character_node.position.value[1] + shadow.max_radius)
-
+        nodes = shape.nodes if isinstance(shape, (Shadow, Radius)) else grid_map.get_nodes_in_rect(shape)
+        min_x = min(node.position.value[0] for node in nodes)
+        max_x = max(node.position.value[0] for node in nodes)
+        min_y = min(node.position.value[1] for node in nodes)
+        max_y = max(node.position.value[1] for node in nodes)
         path_matrix = [["?" for _ in range(max_x - min_x + 1)] for _ in range(max_y - min_y + 1)]
         character_x, character_y = character_node.position.value
         path_matrix[character_y - min_y][character_x - min_x] = "c"
-
         paths = {}
-        for node in shadow.nodes:
+        for node in nodes:
             x = node.position.value[0] - min_x
             y = node.position.value[1] - min_y
             path = grid_map.get_path(character_node, node)
@@ -2874,29 +3006,34 @@ class ObservationState:
                 path_matrix[y][x] = "x"
         path_matrix[character_y - min_y][character_x - min_x] = "c"
         path_matrix_str = "\n".join([" ".join(row) for row in path_matrix])
-        return path_matrix_str, (max_y - min_y + 1, max_x - min_x + 1), paths
+        header = f"# Path Matrix ({max_y - min_y + 1}x{max_x - min_x + 1} Grid)\n"
+        content = path_matrix_str
+        return f"{header}{content}\n\n", paths
 
-
+    def _generate_pathfinding_information(self, paths: Dict[Tuple[int, int], Path]) -> str:
+        header = "# Pathfinding Information\n"
+        content = ""
+        for position, path in paths.items():
+            if len(path.nodes) > 2:
+                content += f"- Path to {position}: {' -> '.join(str(node.position.value) for node in path.nodes)}\n"
+        if not content:
+            content = "No paths with length greater than 1 found."
+        return f"{header}{content}\n\n"
 
     @staticmethod
-    def _generate_immediate_neighbors(shadow: Shadow, character_id: str) -> str:
-        """
-        Describes the 3x3 grid surrounding the character, including the node status and the entities present in each cell.
-        """
+    def _generate_immediate_neighbors(shape: Union[Shadow, Rectangle, Radius], character_id: str) -> str:
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found."
-
         character_node = character.node
         if character_node is None:
             return "Character is not in a node."
-
         neighbors = character_node.neighbors()
-        immediate_neighbors_str = ""
-
-        directions = ["NW", "N", "NE", "W", "C", "E", "SW", "S", "SE"]
+        header = "# Immediate Neighbors (3x3 Grid)\n"
+        content = ""
+        directions = ["NorthWest", "North", "NorthEast", "West", "Center", "East", "SouthWest", "South", "SouthEast"]
         for direction in directions:
-            if direction == "C":
+            if direction == "Center":
                 x, y = character_node.position.value
                 node_status = "Node (Passable)"
                 entities = [entity.__class__.__name__ for entity in character_node.entities]
@@ -2920,35 +3057,29 @@ class ObservationState:
                     if door is not None:
                         entities.remove("Door")
                         entities.append(f"Door (Open: {door.open.value}, Locked: {door.is_locked.value}, Required Key: {door.required_key.value})")
-
-            immediate_neighbors_str += f"- {direction} ({x}, {y}): {node_status}, Entities: {entities}\n"
-
-        return immediate_neighbors_str
+            content += f"- {direction} ({x}, {y}): {node_status}, Entities: {entities}\n"
+        return f"{header}{content}\n"
 
     @staticmethod
     def _get_direction_offset(direction: str) -> Tuple[int, int]:
-        """
-        Returns the offset in x and y coordinates for a given direction.
-        """
-        offsets = {
-            "NW": (-1, -1),
-            "N": (0, -1),
-            "NE": (1, -1),
-            "W": (-1, 0),
-            "E": (1, 0),
-            "SW": (-1, 1),
-            "S": (0, 1),
-            "SE": (1, 1)
+        direction_map = {
+            "North": (0, -1),
+            "South": (0, 1),
+            "East": (1, 0),
+            "West": (-1, 0),
+            "NorthEast": (1, -1),
+            "NorthWest": (-1, -1),
+            "SouthEast": (1, 1),
+            "SouthWest": (-1, 1)
         }
-        return offsets[direction]
+
+        return direction_map[direction]
 
     @staticmethod
-    def _generate_node_equivalence_classes(shadow: Shadow) -> str:
-        """
-        Groups similar nodes into equivalence classes based on the combination of entities they contain and their attributes, excluding living entities.
-        """
+    def _generate_node_equivalence_classes(shape: Union[Shadow, Rectangle, Radius]) -> str:
+        nodes = shape.nodes if isinstance(shape, (Shadow, Radius)) else GridMap.get_instance(shape.nodes[0].gridmap_id).get_nodes_in_rect(shape)
         equivalence_classes = {}
-        for node in shadow.nodes:
+        for node in nodes:
             entity_types = tuple(sorted(type(entity).__name__ for entity in node.entities if not isinstance(entity, Character)))
             entity_attributes = {}
             for entity in node.entities:
@@ -2958,61 +3089,55 @@ class ObservationState:
             if key not in equivalence_classes:
                 equivalence_classes[key] = []
             equivalence_classes[key].append(node)
-
-        equivalence_classes_str = ""
+        header = "# Node Equivalence Classes\n"
+        content = ""
         for (entity_types, entity_attributes), nodes in equivalence_classes.items():
-            equivalence_classes_str += f"- {', '.join(entity_types)}:\n"
-            equivalence_classes_str += f"  - Positions: {[node.position.value for node in nodes]}\n"
+            content += f"- {', '.join(entity_types)}:\n"
+            content += f"  - Positions: {[node.position.value for node in nodes]}\n"
             for entity_type, attributes in entity_attributes:
-                equivalence_classes_str += f"  - {entity_type} Attributes:\n"
+                content += f"  - {entity_type} Attributes:\n"
                 for attr_name, attr_value in attributes:
-                    equivalence_classes_str += f"    - {attr_name}: {attr_value}\n"
-
-        return equivalence_classes_str
+                    content += f"    - {attr_name}: {attr_value}\n"
+        return f"{header}{content}\n"
 
     @staticmethod
-    def _generate_living_entities(shadow: Shadow) -> str:
-        """
-        Provides information about the living entities in the visible area, excluding the character.
-        """
-        living_entities = [entity for node in shadow.nodes for entity in node.entities if isinstance(entity, Character) and entity.id != shadow.source.id]
+    def _generate_living_entities(shape: Union[Shadow, Rectangle, Radius], character_id: str) -> str:
+        if isinstance(shape, (Shadow, Radius)):
+            nodes = shape.nodes
+            source_id = shape.source.id
+        else:  # Rectangle
+            nodes = shape.nodes
+            source_id = GameEntity.get_instance(character_id).id
 
+        living_entities = [entity for node in nodes for entity in node.entities if isinstance(entity, Character) and entity.id != source_id]
         if not living_entities:
             return "No living entities in the visible area, excluding the character."
-
-        living_entities_str = ""
+        header = "# Living Entities\n"
+        content = ""
         for entity in living_entities:
-            living_entities_str += f"- {entity.name} (ID: {entity.id}, Position: {entity.position.value})\n"
-            living_entities_str += f"  - Attributes:\n"
+            content += f"- {entity.name} (ID: {entity.id}, Position: {entity.position.value})\n"
+            content += f"  - Attributes:\n"
             for attr_name, attr_value in entity.all_attributes().items():
-                living_entities_str += f"    - {attr_name}: {attr_value.value}\n"
-
-        return living_entities_str
+                content += f"    - {attr_name}: {attr_value.value}\n"
+        return f"{header}{content}\n"
 
     @staticmethod
     def _generate_movement_sub_goal() -> str:
-        """
-        Specifies the character's current movement sub-goal, including the target position and a brief description.
-        """
-        # TODO: Implement movement sub-goal generation based on the character's current goal or objective
-        return "Movement Sub-Goal: Not implemented yet."
-
+        header = "# Movement Sub-Goal\n"
+        content = "Movement Sub-Goal: Not implemented yet."
+        return f"{header}{content}\n\n"
     @staticmethod
-    def _generate_attribute_summary(shadow: Shadow) -> str:
-        """
-        Summarizes the blocking properties of nodes in the visible area and their corresponding equivalence classes, ignoring living entities.
-        """
+    def _generate_attribute_summary(shape: Union[Shadow, Rectangle, Radius]) -> str:
+        nodes = shape.nodes if isinstance(shape, (Shadow, Radius)) else GridMap.get_instance(shape.nodes[0].gridmap_id).get_nodes_in_rect(shape)
         attribute_groups = {
             "Walkable and Visible": [],
             "Walkable and Not Visible": [],
             "Not Walkable and Visible": [],
             "Not Walkable and Not Visible": []
         }
-
-        for node in shadow.nodes:
+        for node in nodes:
             walkable = not node.blocks_movement.value
             visible = not node.blocks_light.value
-
             if walkable and visible:
                 group = "Walkable and Visible"
             elif walkable and not visible:
@@ -3021,51 +3146,34 @@ class ObservationState:
                 group = "Not Walkable and Visible"
             else:
                 group = "Not Walkable and Not Visible"
-
             entity_types_and_attributes = []
             for entity in node.entities:
                 if not isinstance(entity, Character):
                     entity_type = type(entity).__name__
                     entity_attributes = {attr.name: attr.value for attr in entity.all_attributes().values() if not isinstance(attr, (BlocksMovement, BlocksLight))}
                     entity_types_and_attributes.append((entity_type, tuple(sorted(entity_attributes.items()))))
-
             if tuple(entity_types_and_attributes) not in attribute_groups[group]:
                 attribute_groups[group].append(tuple(entity_types_and_attributes))
-
-        attribute_summary = "# Nodes Spatial Attributes Summary (Ignoring Living Entities)\n"
+        header = "# Nodes Spatial Attributes Summary (Ignoring Living Entities)\n"
+        content = ""
         for group, equivalence_classes in attribute_groups.items():
-            node_count = sum(1 for node in shadow.nodes if node.blocks_movement.value == (group.startswith("Not Walkable")) and node.blocks_light.value == (group.endswith("Not Visible")))
-            attribute_summary += f"- {group}: {node_count} nodes\n"
+            node_count = sum(1 for node in nodes if node.blocks_movement.value == (group.startswith("Not Walkable")) and node.blocks_light.value == (group.endswith("Not Visible")))
+            content += f"- {group}: {node_count} nodes\n"
             if equivalence_classes:
                 for eq_class in equivalence_classes:
                     entities_str = ", ".join([f"{entity_type} ({', '.join([f'{attr_name}: {attr_value}' for attr_name, attr_value in attributes])})" for entity_type, attributes in eq_class])
-                    attribute_summary += f"  - Equivalence Class: [{entities_str}]\n"
+                    content += f"  - Equivalence Class: [{entities_str}]\n"
             else:
-                attribute_summary += f"  - Equivalence Classes: None\n"
+                content += f"  - Equivalence Classes: None\n"
+        return f"{header}{content}\n"
 
-        return attribute_summary
 
-    def _generate_pathfinding_information(self) -> str:
-        """
-        Generates pathfinding information for paths with length greater than 1.
-        """
-        pathfinding_info = ""
-        for position, path in self.paths.items():
-            if len(path.nodes) > 2:
-                pathfinding_info += f"- Path to {position}: {' -> '.join(str(node.position.value) for node in path.nodes)}\n"
-        if not pathfinding_info:
-            pathfinding_info = "No paths with length greater than 1 found."
-        return pathfinding_info
 
     @staticmethod
-    def _generate_cognitive_insights(shadow: Shadow) -> str:
-        """
-        Offers high-level observations and insights about the game world and the character's current situation.
-        """
-        # TODO: Implement cognitive insights generation based on the current game state and character's situation
-        return "Cognitive Insights: Not implemented yet."
-    
-
+    def _generate_cognitive_insights(shape: Union[Shadow, Rectangle, Radius]) -> str:
+        header = "# Cognitive Insights\n"
+        content = "Cognitive Insights: Not implemented yet."
+        return f"{header}{content}\n"
 
 class ActionState:
     def __init__(self, action_result: ActionResult):
@@ -3192,6 +3300,8 @@ class ActionState:
         entity_type = entity.__class__.__name__
         position = entity_state.get("position", (0, 0))
         return f"{entity_type} '{entity.name}'"
+    
+   
 
 class StrActionConverter:
     def __init__(self, grid_map: GridMap):
@@ -3235,7 +3345,8 @@ class StrActionConverter:
             "NorthEast": (1, -1),
             "NorthWest": (-1, -1),
             "SouthEast": (1, 1),
-            "SouthWest": (-1, 1)
+            "SouthWest": (-1, 1),
+            "Center": (0, 0),
         }
 
         offset = direction_map.get(direction)
@@ -4011,7 +4122,7 @@ def generate_dungeon(grid_map, num_rooms, min_room_size, max_room_size):
 from typing import List, Optional, Set, Dict, Any
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
-from abstractions.goap.nodes import Node
+from abstractions.goap.nodes import Node, GameEntity
 
 class BaseShape(BaseModel):
     """
@@ -4118,6 +4229,22 @@ def validate_path(node: Node, values: Dict[str, Any]) -> Node:
     if node.blocks_movement.value:
         raise ValueError(f"Node {node} is not walkable")
     return node
+
+class BlockedRaycast(BaseShape):
+    """
+    Represents a blocked line of sight between a source node and a target node.
+    Attributes:
+        source (Node): The source node of the raycast.
+        target (Node): The target node of the raycast.
+        nodes (List[Node]): The list of nodes along the raycast path up to the blocking node.
+        blocking_node (Node): The node where the raycast is blocked.
+        blocking_entity (Optional[GameEntity]): The entity in the blocking node that blocks light.
+    """
+    source: Node = Field(description="The source node of the raycast")
+    target: Node = Field(description="The target node of the raycast")
+    nodes: List[Node] = Field(description="The list of nodes along the raycast path up to the blocking node")
+    blocking_node: Node = Field(description="The node where the raycast is blocked")
+    blocking_entity: GameEntity = Field(description="The entity in the blocking node that blocks light")
 
 class Path(BaseShape):
     """
@@ -4315,10 +4442,11 @@ def line_of_sight(start: Tuple[int, int], end: Tuple[int, int], visibility_graph
     for point in line_points[1:]:
         x, y = point
         if not visibility_graph.visibility_matrix[y][x]:
-            return False, visible_points
+            blocking_point = point
+            return False, visible_points, blocking_point
         else:
             visible_points.append(point)
-    return True, visible_points
+    return True, visible_points, None
 
 ---
 

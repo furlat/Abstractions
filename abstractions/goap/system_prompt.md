@@ -348,7 +348,7 @@ Current State of the Project:
 
 2. Inventory System: We have developed an inventory system that allows entities to store and retrieve other entities. The GameEntity class now includes methods like add_to_inventory, remove_from_inventory, and set_stored_in to handle inventory management consistently and maintain the integrity of the stored_in and inventory attributes.
 
-3. Interactions Module: We have created an interactions.py module that encapsulates all the necessary methods, actions, and payload definitions for easy importing and usage. This module includes classes like Character, TestItem, and Floor, as well as actions like MoveStep, PickupAction, and DropAction, which enable meaningful interactions between entities.
+3. Interactions Module: We have created an interactions.py module that encapsulates all the necessary methods, actions, and payload definitions for easy importing and usage. This module includes classes like Character, TestItem, and Floor, as well as actions like Move, Pickup, and Drop, which enable meaningful interactions between entities.
 
 4. Error Resolution: Throughout the development process, we encountered various errors and challenges related to attribute updates, entity removal from inventories, and entity addition to nodes. By carefully analyzing the issues and collaborating closely with the user, we were able to identify the root causes and implement effective solutions to ensure the correct behavior of the engine.
 
@@ -400,11 +400,11 @@ Current State of the Project:
 
 2. Inventory System: We have developed an inventory system that allows entities to store and retrieve other entities. The GameEntity class now includes methods like add_to_inventory, remove_from_inventory, and set_stored_in to handle inventory management consistently and maintain the integrity of the stored_in and inventory attributes.
 
-3. Interactions Module: We have created an interactions.py module that encapsulates all the necessary methods, actions, and payload definitions for easy importing and usage. This module includes classes like Character, TestItem, and Floor, as well as actions like MoveStep, PickupAction, and DropAction, which enable meaningful interactions between entities.
+3. Interactions Module: We have created an interactions.py module that encapsulates all the necessary methods, actions, and payload definitions for easy importing and usage. This module includes classes like Character, TestItem, and Floor, as well as actions like Move, Pickup, and Drop, which enable meaningful interactions between entities.
 
 4. Error Resolution: Throughout the development process, we encountered various errors and challenges related to attribute updates, entity removal from inventories, and entity addition to nodes. By carefully analyzing the issues and collaborating closely with the user, we were able to identify the root causes and implement effective solutions to ensure the correct behavior of the engine.
 
-5. Debugging and Problem-Solving: During our recent collaboration, we encountered a challenging issue where the picked-up item was still being visualized on the game grid, even though it was supposed to be in the player's inventory. Through a systematic debugging process, we identified that the issue was related to how the node's entity list was updated when an entity was picked up. We explored various approaches, such as modifying the Consequences class and the GameEntity class, but ultimately found that the most effective solution was to handle the removal of the target entity from its current node within the specific actions that required it, such as the PickupAction and DropAction. This experience highlighted the importance of careful analysis, iterative problem-solving, and a deep understanding of the engine's architecture and component interactions.
+5. Debugging and Problem-Solving: During our recent collaboration, we encountered a challenging issue where the picked-up item was still being visualized on the game grid, even though it was supposed to be in the player's inventory. Through a systematic debugging process, we identified that the issue was related to how the node's entity list was updated when an entity was picked up. We explored various approaches, such as modifying the Consequences class and the GameEntity class, but ultimately found that the most effective solution was to handle the removal of the target entity from its current node within the specific actions that required it, such as the Pickup and Drop. This experience highlighted the importance of careful analysis, iterative problem-solving, and a deep understanding of the engine's architecture and component interactions.
 
 Upcoming Tasks and Enhancements:
 1. Comprehensive Action Set: Expand the set of available actions to enable a wider range of interactions between entities, such as using items, attacking, trading, or performing complex behaviors. Consider implementing a flexible and extensible action system that allows for easy addition and customization of actions.
@@ -458,7 +458,7 @@ As you embark on the next phase of development, I want to share with you the cur
 Current State of the Project:
 1. Core Engine: We have successfully implemented and refined the core classes and functionality of the engine, including the RegistryHolder, Attribute, Entity, Statement, Position, BlocksMovement, BlocksLight, GameEntity, Path, Node, and GridMap. These components form the robust foundation of the simulation engine, enabling seamless integration and extensibility.
 
-2. Action System: We have developed a flexible action system with prerequisites and consequences, allowing entities to interact and modify the simulation state. Various actions like MoveStep, PickupAction, DropAction, UnlockAction, OpenAction, CloseAction, and HealAction have been implemented to enable rich interactions between entities.
+2. Action System: We have developed a flexible action system with prerequisites and consequences, allowing entities to interact and modify the simulation state. Various actions like Move, Pickup, Drop, Unlock, Open, Close, and HealAction have been implemented to enable rich interactions between entities.
 
 3. Dungeon Generation: We have created a dungeon generation system that procedurally generates rooms, corridors, and floor tiles, providing an exciting environment for entities to navigate and interact with.
 
@@ -605,7 +605,7 @@ Design Choices and Components:
 
 3. Interactions (`interactions.py`):
    - Defines specific entity types like Character, Door, Key, Treasure, and Floor.
-   - Implements actions like MoveStep, PickupAction, and DropAction.
+   - Implements actions like Move, Pickup, and Drop.
    - Handles the logic for entity interactions and state changes.
 
 4. InputHandler (`input_handler.py`):
