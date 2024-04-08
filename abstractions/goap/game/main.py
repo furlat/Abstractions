@@ -82,7 +82,7 @@ def is_door(entity: GameEntity, target: Optional[GameEntity] = None) -> bool:
 def main():
     # Initialize Pygame
     pygame.init()
-    screen_width, screen_height = 1400, 800
+    screen_width, screen_height = 2400, 1400
     screen = pygame.display.set_mode((screen_width, screen_height))
     
     pygame.display.set_caption("Dungeon Experiment")
@@ -171,7 +171,7 @@ def main():
     goals = [reach_treasure_goal, treasure_in_neighborhood_goal, key_in_inventory_goal, door_unlocked_goal]
 
     # Create the game manager
-    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(400, 300), controlled_entity_id=character.id, goals=goals)
+    game_manager = GameManager(screen, grid_map, sprite_mappings, widget_size=(420, 420), controlled_entity_id=character.id, goals=goals)
     
     # Run the game
     game_manager.run()

@@ -61,14 +61,14 @@ class GameManager:
         container= self.notepad_window)
         #Initialize the texstate Window
         # the textstate window can be uptad by calling textstate_box.set_text("text")
-        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 790), window_display_title="Action Logger")
+        self.actionlog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 790), window_display_title="Action Logger")
         self.actionlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.actionlog_window.get_container().get_size()),
         html_text="",
         container=self.actionlog_window)
         self.action_logs = []
         #Initialize the ObsLogger Window
-        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title="Observation Logger")
+        self.observationlog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, screen.get_height()), window_display_title="Observation Logger")
         self.observationlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.observationlog_window.get_container().get_size()),
         html_text="",
@@ -76,19 +76,19 @@ class GameManager:
         self.observation_logs = []
         #initalize the goalLogger window
         # Initalize the background
-        self.vertical_background = pygame.Surface((1000, 800))
-        self.horizontal_background = pygame.Surface((1200, 800))
+        self.vertical_background = pygame.Surface((screen.get_width()-self.widget_size[0], screen.get_height()))
+        self.horizontal_background = pygame.Surface((screen.get_width(), screen.get_height()))
     
     def setup_goal_widgets(self,screen: pygame.Surface):
         if not self.split_goals:
-            self.goallog_window = UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title="Goal Logger")
+            self.goallog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 500), window_display_title="Goal Logger")
             self.goallog_box = UITextBox(
             relative_rect=pygame.Rect((0, 0), self.goallog_window.get_container().get_size()),
             html_text="",
             container=self.goallog_window)
             self.goal_logs = []
         else:
-            self.goallog_windows = [UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title=f"Goal Logger {i}") for i in range(len(self.goal_states))]
+            self.goallog_windows = [UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 500), window_display_title=f"Goal Logger {i}") for i in range(len(self.goal_states))]
             self.goallog_boxes = [UITextBox(
             relative_rect=pygame.Rect((0, 0), self.goallog_windows[i].get_container().get_size()),
             html_text="",
@@ -167,8 +167,8 @@ class GameManager:
             print(f"Invalid action payload: {e}")
             
     def run(self):
-        self.screen.blit(self.vertical_background, (400, 0))
-        self.screen.blit(self.horizontal_background, (0, 300))
+        self.screen.blit(self.vertical_background, (self.widget_size[0], 0))
+        self.screen.blit(self.horizontal_background, (0, self.widget_size[1]))
         running = True
         clock = pygame.time.Clock()
         target_node = self.get_target_node()
@@ -280,8 +280,8 @@ class GameManager:
             # Display FPS and other text
             
             self.ui_manager.update(time_delta)
-            self.screen.blit(self.vertical_background, (400, 0))
-            self.screen.blit(self.horizontal_background, (0, 300))
+            self.screen.blit(self.vertical_background, (self.widget_size[0], 0))
+            self.screen.blit(self.horizontal_background, (0, self.widget_size[1]))
             self.display_text(clock)
             self.ui_manager.draw_ui(self.screen)
             pygame.display.update()
