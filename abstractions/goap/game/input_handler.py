@@ -1,6 +1,9 @@
 from typing import Optional, Tuple, List, Union
-from abstractions.goap.spatial import GameEntity, Node, GridMap, ActionsPayload, ActionInstance, Path
-from abstractions.goap.interactions import Character, MoveStep, PickupAction, DropAction, TestItem, Door, LockAction, UnlockAction, OpenAction, CloseAction
+from abstractions.goap.nodes import GameEntity, Node
+from abstractions.goap.gridmap import GridMap
+from abstractions.goap.payloads import ActionsPayload, ActionInstance
+from abstractions.goap.shapes import Path
+from abstractions.goap.interactions import Character, Move, Pickup, Drop, TestItem, Door, Lock, Unlock, Open, Close
 from abstractions.goap.actions import Action
 from abstractions.goap.game.renderer import CameraControl
 from abstractions.goap.game.payloadgen import SpriteMapping
@@ -9,7 +12,7 @@ from abstractions.goap.game.gui_widgets import InventoryWidget
 import pygame
 import pygame_gui
 from pygame_gui import UIManager, UI_TEXT_ENTRY_CHANGED
-from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
+from pygame_gui.elements import UIWindow, UITextEntryBox
 
 
 class ActiveEntities(BaseModel):
@@ -40,7 +43,8 @@ class ActiveEntities(BaseModel):
         return v
 
 class InputHandler:
-    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager, grid_map_widget_size: Tuple[int, int],inventory_widget: InventoryWidget, text_entry_box: UITextEntryBox):
+    def __init__(self, grid_map: GridMap, sprite_mappings: List[SpriteMapping], ui_manager: pygame_gui.UIManager,
+                 grid_map_widget_size: Tuple[int, int], inventory_widget: InventoryWidget, text_entry_box: UITextEntryBox):
         self.grid_map = grid_map
         self.active_entities = ActiveEntities()
         self.mouse_highlighted_node: Optional[Node] = None
@@ -49,7 +53,7 @@ class InputHandler:
         self.available_actions: List[str] = []
         self.sprite_mappings = sprite_mappings
         self.active_widget: Optional[str] = None
-        self.grid_map_widget_size = grid_map_widget_size 
+        self.grid_map_widget_size = grid_map_widget_size
         self.ui_manager = ui_manager
         self.inventory_widget = inventory_widget
         self.inventory_widget.setup_input_handler(self)
@@ -148,15 +152,15 @@ class InputHandler:
                         self.available_actions = self.get_available_actions(player, target_entity)
                         if clicked_node == player.node or clicked_node in player.node.neighbors():
                             if hasattr(target_entity, 'is_pickupable') and target_entity.is_pickupable.value:
-                                pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=PickupAction())
+                                pickup_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Pickup())
                                 self.actions_payload.actions.append(pickup_action)
-                                print(f"PickupAction generated: {pickup_action}")  # Debug print statement
+                                print(f"Pickup generated: {pickup_action}")  # Debug print statement
                             elif isinstance(target_entity, Door):
                                 if target_entity.open.value:
-                                    close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=CloseAction())
+                                    close_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Close())
                                     self.actions_payload.actions.append(close_action)
                                 else:
-                                    open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=OpenAction())
+                                    open_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Open())
                                     self.actions_payload.actions.append(open_action)
                     else:
                         self.available_actions = []
@@ -202,7 +206,6 @@ class InputHandler:
         # Convert screen coordinates to grid coordinates
         grid_x = camera_pos[0] + pos[0] // cell_size
         grid_y = camera_pos[1] + pos[1] // cell_size
-
         # Check if the grid coordinates are within the grid map bounds
         if 0 <= grid_x < self.grid_map.width and 0 <= grid_y < self.grid_map.height:
             return self.grid_map.get_node((grid_x, grid_y))
@@ -228,7 +231,7 @@ class InputHandler:
         if target_entity_id:
             target_entity = GameEntity.get_instance(target_entity_id)
             if target_entity in player.inventory:
-                drop_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=DropAction())
+                drop_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Drop())
                 self.actions_payload.actions.append(drop_action)
             
     def generate_lock_unlock_action(self):
@@ -239,10 +242,10 @@ class InputHandler:
             target_entity = GameEntity.get_instance(target_entity_id)
             if isinstance(target_entity, Door):
                 if target_entity.is_locked.value:
-                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=UnlockAction())
+                    unlock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Unlock())
                     self.actions_payload.actions.append(unlock_action)
                 else:
-                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=LockAction())
+                    lock_action = ActionInstance(source_id=player_id, target_id=target_entity_id, action=Lock())
                     self.actions_payload.actions.append(lock_action)
 
     def generate_move_step(self, direction):
@@ -278,7 +281,7 @@ class ActionPayloadGenerator:
                     floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
                     if floor_entities:
                         target_id = floor_entities[0].id
-                        move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=MoveStep())
+                        move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=Move())
                         return ActionsPayload(actions=[move_action])
         return None
 
@@ -287,7 +290,7 @@ class ActionPayloadGenerator:
         if controlled_entity_id:
             controlled_entity = GameEntity.get_instance(controlled_entity_id)
             start_node = controlled_entity.node
-            path = grid_map.a_star(start_node, target_node)
+            path = grid_map.get_path(start_node, target_node)
             if path:
                 move_actions = ActionPayloadGenerator.generate_move_actions(controlled_entity_id, path)
                 return ActionsPayload(actions=move_actions)
@@ -302,6 +305,6 @@ class ActionPayloadGenerator:
             floor_entities = [entity for entity in target_node.entities if entity.name.startswith("Floor")]
             if floor_entities:
                 target_id = floor_entities[0].id
-                move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=MoveStep())
+                move_action = ActionInstance(source_id=controlled_entity_id, target_id=target_id, action=Move())
                 move_actions.append(move_action)
         return move_actions

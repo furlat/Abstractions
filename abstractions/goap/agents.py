@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from pydantic import BaseModel, Field, conlist
 from abstractions.goap.entity import Statement
 from abstractions.goap.spatial import GridMap, Node, GameEntity, ActionResult, ActionsPayload, SummarizedActionPayload, SummarizedEgoActionPayload
-from abstractions.goap.interactions import MoveStep, PickupAction, DropAction, OpenAction, CloseAction, UnlockAction, LockAction
+from abstractions.goap.interactions import Move, Pickup, Drop, Open, Close, Unlock, Lock
 from abstractions.goap.game.main import generate_dungeon
 import outlines
 from outlines import models, generate
@@ -168,7 +168,7 @@ class FakeLLM(AbcAgent):
                 if self.use_egocentric:
                     if self.use_outlines:
                         move_action = OutlinesEgoActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=[0, 0],
                             target_entity_type="Floor",
@@ -176,7 +176,7 @@ class FakeLLM(AbcAgent):
                         )
                     else:
                         move_action = SummarizedEgoActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=(0, 0),
                             target_entity_type="Floor",
@@ -185,7 +185,7 @@ class FakeLLM(AbcAgent):
                 else:
                     if self.use_outlines:
                         move_action = OutlinesActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=list(current_position),
                             target_entity_type="Floor",
@@ -193,7 +193,7 @@ class FakeLLM(AbcAgent):
                         )
                     else:
                         move_action = SummarizedActionPayload(
-                            action_name="MoveStep",
+                            action_name="Move",
                             source_entity_type="Character",
                             source_entity_position=current_position,
                             target_entity_type="Floor",

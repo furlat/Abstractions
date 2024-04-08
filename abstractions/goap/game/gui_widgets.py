@@ -2,7 +2,7 @@ import pygame
 import pygame_gui
 from typing import List, Optional
 from pydantic import BaseModel
-from abstractions.goap.interactions import GameEntity
+from abstractions.goap.nodes import GameEntity
 from abstractions.goap.game.payloadgen import SpriteMapping
 import typing
 

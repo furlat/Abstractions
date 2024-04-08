@@ -1,6 +1,6 @@
 from abstractions.goap.actions import Action, Prerequisites, Consequences
 from abstractions.goap.entity import Attribute, Statement, Entity
-from abstractions.goap.spatial import GameEntity, Node, BlocksMovement, BlocksLight
+from abstractions.goap.nodes import GameEntity, Node, BlocksMovement, BlocksLight
 from typing import Callable, Dict, Tuple, Optional, List, Union
 from pydantic import Field
 
@@ -110,13 +110,14 @@ def set_stored_in(source: GameEntity, target: GameEntity) -> GameEntity:
 
 def source_node_comparison(source: Node, target: Node) -> bool:
     """Check if the source node is the same as or a neighbor of the target node."""
-    return source in target.neighbors() or source.id == target.id
+    return target in source.neighbors() or source.id == target.id
 
 def source_node_comparison_and_walkable(source: Node, target: Node) -> bool:
     """Check if the source node is the same as or a neighbor of the target node and the target node is walkable."""
-    if target.blocks_movement:
+    if target.blocks_movement.value:
         return False
-    return source in target.neighbors() or source.id == target.id
+
+    return target in source.neighbors() or source.id == target.id
 
 def target_walkable_comparison(source: GameEntity, target: GameEntity) -> bool:
     """Check if the target entity does not block movement."""
@@ -130,7 +131,7 @@ def move_to_target_node(source: GameEntity, target: GameEntity) -> Node:
 
 MoveToTargetNode: Callable[[GameEntity, GameEntity], Node] = move_to_target_node
 
-class MoveStep(Action):
+class Move(Action):
     """Represents a single step movement action."""
     name: str = "Move Step"
     prerequisites: Prerequisites = Prerequisites(
@@ -166,7 +167,7 @@ AddToInventory: Callable[[GameEntity, GameEntity], None] = add_to_inventory
 RemoveFromInventory: Callable[[GameEntity, GameEntity], None] = remove_from_inventory
 
 
-class PickupAction(Action):
+class Pickup(Action):
     """Represents the action of picking up an entity."""
     name: str = "Pickup"
     prerequisites: Prerequisites = Prerequisites(
@@ -262,7 +263,7 @@ def clear_stored_in(source: GameEntity, target: GameEntity) -> None:
 
 ClearStoredIn: Callable[[GameEntity, GameEntity], None] = clear_stored_in
 
-class DropAction(Action):
+class Drop(Action):
     """Represents the action of dropping an entity."""
     name: str = "Drop"
     prerequisites: Prerequisites = Prerequisites(
@@ -277,7 +278,7 @@ class DropAction(Action):
 
 
 
-class OpenAction(Action):
+class Open(Action):
     """Represents the action of opening a Entity."""
     name: str = "Open"
     prerequisites: Prerequisites = Prerequisites(
@@ -301,7 +302,7 @@ class OpenAction(Action):
         updated_target.node.update_blocking_properties()
 
         return updated_source, updated_target
-class CloseAction(Action):
+class Close(Action):
     """Represents the action of closing a Entity."""
     name: str = "Close"
     prerequisites: Prerequisites = Prerequisites(
@@ -330,7 +331,7 @@ class CloseAction(Action):
 def has_required_key(source: GameEntity, target: Door) -> bool:
     return any(item.key_name.value == target.required_key.value for item in source.inventory)
 
-class UnlockAction(Action):
+class Unlock(Action):
     """Represents the action of unlocking a Entity."""
     name: str = "Unlock"
     prerequisites: Prerequisites = Prerequisites(
@@ -348,7 +349,7 @@ class UnlockAction(Action):
         target_transformations={"is_locked": False}
     )
 
-class LockAction(Action):
+class Lock(Action):
     """ Represents the action of locking a Entity."""
     name: str = "Lock"
     prerequisites: Prerequisites = Prerequisites(

@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Tuple, Callable, Any
 from pydantic import BaseModel, Field
 from abstractions.goap.entity import Entity, Statement, Attribute
-from abstractions.goap.spatial import GameEntity, ActionInstance, Node
+from abstractions.goap.nodes import GameEntity, Node
 
 class Prerequisites(BaseModel):
     source_statements: List[Statement] = Field(default_factory=list, description="Statements involving only the source entity")
@@ -76,6 +76,7 @@ class Consequences(BaseModel):
             updated_target = target
 
         return updated_source, updated_target
+    
 class Action(BaseModel):
     name: str = Field("", description="The name of the action")
     prerequisites: Prerequisites = Field(default_factory=Prerequisites, description="The prerequisite conditions for the action")
@@ -111,4 +112,14 @@ class Action(BaseModel):
     def propagate_inventory_consequences(self, source: Entity, target: Entity) -> None:
         # Implement inventory consequence propagation logic here
         pass
-ActionInstance.model_rebuild()
+    
+class Goal(BaseModel):
+    name: str
+    source_entity_id: str
+    target_entity_id: Optional[str] = None
+    prerequisites: Prerequisites
+
+    def is_achieved(self) -> bool:
+        source_entity = GameEntity.get_instance(self.source_entity_id)
+        target_entity = GameEntity.get_instance(self.target_entity_id) if self.target_entity_id else None
+        return self.prerequisites.is_satisfied(source_entity, target_entity)

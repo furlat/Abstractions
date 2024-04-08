@@ -1,8 +1,10 @@
 import pygame
 import pygame_gui
-
-from typing import List, Tuple, Set, Optional
-from abstractions.goap.spatial import GridMap, Path, Shadow, RayCast, Radius, Node, GameEntity, ActionsResults,ActionResult,ActionsPayload,SummarizedActionPayload
+from typing import List, Tuple, Set, Optional, Union
+from abstractions.goap.gridmap import GridMap
+from abstractions.goap.shapes import Path, Shadow, RayCast, Radius, Rectangle
+from abstractions.goap.nodes import Node, GameEntity
+from abstractions.goap.payloads import ActionsResults, ActionResult, ActionsPayload, SummarizedActionPayload
 from abstractions.goap.game.renderer import Renderer, GridMapVisual, NodeVisual, EntityVisual
 from abstractions.goap.game.input_handler import InputHandler
 from abstractions.goap.game.payloadgen import PayloadGenerator, SpriteMapping
@@ -10,10 +12,12 @@ from abstractions.goap.interactions import Character
 from pydantic import ValidationError
 from abstractions.goap.game.gui_widgets import InventoryWidget
 from pygame_gui.elements import UIWindow, UITextEntryBox, UITextBox
+from abstractions.goap.language_state import ObservationState,ActionState,GoalState, StrActionConverter
+from abstractions.goap.actions import Goal
 
 class GameManager:
     def __init__(self, screen: pygame.Surface, grid_map: GridMap, sprite_mappings: List[SpriteMapping],
-                 widget_size: Tuple[int, int], controlled_entity_id: str):
+                 widget_size: Tuple[int, int], controlled_entity_id: str, goals: List[Goal] = [], split_goals:bool=True):
         self.screen = screen
         self.grid_map = grid_map
         self.sprite_mappings = sprite_mappings
@@ -31,6 +35,17 @@ class GameManager:
 
         self.bind_controlled_entity(self.controlled_entity_id)
         self.prev_visible_positions: Set[Tuple[int, int]] = set()
+
+        self.obs_state = ObservationState(character_id=self.controlled_entity_id)
+        self.action_state = ActionState()
+        self.split_goals = split_goals
+        if not split_goals:
+            self.goal_state = GoalState(character_id=self.controlled_entity_id,goals=goals)
+        else:
+            goal_states = [GoalState(character_id=self.controlled_entity_id,goals=[goal]) for goal in goals]
+            self.goal_states = goal_states
+        self.setup_goal_widgets(screen)
+        self.str_action_converter = StrActionConverter(grid_map=self.grid_map)
         
 
         
@@ -46,22 +61,41 @@ class GameManager:
         container= self.notepad_window)
         #Initialize the texstate Window
         # the textstate window can be uptad by calling textstate_box.set_text("text")
-        self.actionlog_window = UIWindow(pygame.Rect(400, 20, 600, 790), window_display_title="Action Logger")
+        self.actionlog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 790), window_display_title="Action Logger")
         self.actionlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.actionlog_window.get_container().get_size()),
         html_text="",
         container=self.actionlog_window)
         self.action_logs = []
         #Initialize the ObsLogger Window
-        self.observationlog_window = UIWindow(pygame.Rect(400, 20, 600, 500), window_display_title="Observation Logger")
+        self.observationlog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, screen.get_height()), window_display_title="Observation Logger")
         self.observationlog_box = UITextBox(
         relative_rect=pygame.Rect((0, 0), self.observationlog_window.get_container().get_size()),
         html_text="",
         container=self.observationlog_window)
         self.observation_logs = []
+        #initalize the goalLogger window
         # Initalize the background
-        self.vertical_background = pygame.Surface((1000, 800))
-        self.horizontal_background = pygame.Surface((1200, 800))
+        self.vertical_background = pygame.Surface((screen.get_width()-self.widget_size[0], screen.get_height()))
+        self.horizontal_background = pygame.Surface((screen.get_width(), screen.get_height()))
+    
+    def setup_goal_widgets(self,screen: pygame.Surface):
+        if not self.split_goals:
+            self.goallog_window = UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 500), window_display_title="Goal Logger")
+            self.goallog_box = UITextBox(
+            relative_rect=pygame.Rect((0, 0), self.goallog_window.get_container().get_size()),
+            html_text="",
+            container=self.goallog_window)
+            self.goal_logs = []
+        else:
+            self.goallog_windows = [UIWindow(pygame.Rect(self.widget_size[0], 20, 600, 500), window_display_title=f"Goal Logger {i}") for i in range(len(self.goal_states))]
+            self.goallog_boxes = [UITextBox(
+            relative_rect=pygame.Rect((0, 0), self.goallog_windows[i].get_container().get_size()),
+            html_text="",
+            container=self.goallog_windows[i]) for i in range(len(self.goal_states))]
+            self.goal_logs = {i:[] for i in range(len(self.goal_states))}
+
+
        
     def bind_controlled_entity(self, controlled_entity_id: str):
         self.controlled_entity_id = controlled_entity_id
@@ -86,74 +120,45 @@ class GameManager:
         radius, shadow, raycast, path = self.compute_shapes(controlled_entity.node, target_node)
         return controlled_entity, inventory, radius, shadow, raycast, path
     
-    def compute_shapes(self,source_node:Node, target_node: Optional[Node] = None):
+    def compute_shapes(self, source_node: Node, target_node: Optional[Node] = None):
         radius = self.grid_map.get_radius(source_node, max_radius=10)
         shadow = self.grid_map.get_shadow(source_node, max_radius=10)
-       
+
         try:
             raycast = self.grid_map.get_raycast(source_node, target_node) if target_node else None
         except ValidationError as e:
             print(f"Error: {e}")
             raycast = None
-        path = self.grid_map.a_star(source_node, target_node) if target_node else None
+        path = self.grid_map.get_path(source_node, target_node) if target_node else None
         return radius, shadow, raycast, path
 
-    def update_action_logs(self, action_results: ActionsResults, only_changes: bool = True):
+    def update_action_logs(self, action_results: ActionsResults):
         for result in action_results.results:
-            action_name = result.action_instance.action.name
-            source_name = GameEntity.get_instance(result.action_instance.source_id).name
-            target_name = GameEntity.get_instance(result.action_instance.target_id).name
-
-            log_entry = f"Action: {action_name}\n"
-            log_entry += f"Source: {source_name}\n"
-            log_entry += f"Target: {target_name}\n"
-            log_entry += f"Result: {'Success' if result.success else 'Failure'}\n"
-
-            if not result.success:
-                log_entry += f"Reason: {result.error}\n"
-
-            if only_changes:
-                state_before = {k: v for k, v in result.state_before.items() if k in result.state_after and v != result.state_after[k]}
-                state_after = {k: v for k, v in result.state_after.items() if k in result.state_before and v != result.state_before[k]}
-            else:
-                state_before = result.state_before
-                state_after = result.state_after
-
-            log_entry += "State Before:\n"
-            for entity, state in state_before.items():
-                log_entry += f"  {entity.capitalize()}:\n"
-                for attr, value in state.items():
-                    log_entry += f"    {attr}: {value}\n"
-
-            if result.success:
-                log_entry += "State After:\n"
-                for entity, state in state_after.items():
-                    log_entry += f"  {entity.capitalize()}:\n"
-                    for attr, value in state.items():
-                        log_entry += f"    {attr}: {value}\n"
-
+            log_entry = self.action_state.generate(result)
             self.action_logs.append(log_entry)
-
-        inverted_list_action = self.action_logs[::-1]
-        self.actionlog_box.set_text(log_entry)
+        if log_entry:
+            self.actionlog_box.set_text(log_entry)
     
-    def update_observation_logs(self,observation:Shadow,mode:str,use_egoncentric:bool =False, only_salient:bool = True,include_attributes:bool=False):
-        sprite_mappings=self.sprite_mappings
-        if mode == "groups":
-            self.observation_logs.append(observation.to_entity_groups(use_egocentric=use_egoncentric))
-        
-        elif mode == "list":
-            obs = observation.to_list( use_egocentric=use_egoncentric,include_attributes=include_attributes)
-            self.observation_logs.append(obs)
-
-        
-        print("diocane",self.observation_logs[-1])
+    def update_observation_logs(self, observation: Union[Shadow,Rectangle,Radius]):
+        log_entry = self.obs_state.generate(observation)
+        self.observation_logs.append(log_entry)
         self.observationlog_box.set_text(self.observation_logs[-1])
-    
+        
+    def update_goal_logs(self, observation: Union[Shadow,Rectangle,Radius]):
+        if not self.split_goals:
+            log_entry = self.goal_state.generate(observation)
+            self.goal_logs.append(log_entry)
+            self.goallog_box.set_text(self.goal_logs[-1])
+        else:
+            for i,goal_state in enumerate(self.goal_states):
+                log_entry = goal_state.generate(observation)
+                self.goal_logs[i].append(log_entry)
+                self.goallog_boxes[i].set_text(self.goal_logs[i][-1])
+            
     def handle_action_payload_submission(self, action_payload_json:str):
         try:
-            summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
-            actions_payload = self.grid_map.convert_summarized_payload(summarized_payload)
+            # summarized_payload = SummarizedActionPayload.model_validate_json(action_payload_json)
+            actions_payload = self.str_action_converter.convert_action_string(action_payload_json,self.controlled_entity_id)
             if isinstance(actions_payload, ActionsPayload):
                 self.input_handler.actions_payload.actions.extend(actions_payload.actions)
             else:
@@ -162,13 +167,14 @@ class GameManager:
             print(f"Invalid action payload: {e}")
             
     def run(self):
-        self.screen.blit(self.vertical_background, (400, 0))
-        self.screen.blit(self.horizontal_background, (0, 300))
+        self.screen.blit(self.vertical_background, (self.widget_size[0], 0))
+        self.screen.blit(self.horizontal_background, (0, self.widget_size[1]))
         running = True
         clock = pygame.time.Clock()
         target_node = self.get_target_node()
         controlled_entity, inventory, radius, shadow, raycast, path = self.controlled_entity_preprocess(clock, target_node)
-        
+        self.update_observation_logs(shadow)
+        self.update_goal_logs(shadow)
 
         while running:
             # Handle events
@@ -208,7 +214,7 @@ class GameManager:
             # Apply the action payload to the grid map
             actions_results = self.grid_map.apply_actions_payload(self.input_handler.actions_payload)
             if len(actions_results.results) > 0:
-                self.update_action_logs(actions_results, only_changes=True)
+                self.update_action_logs(actions_results)
 
             # Check if there are any successful actions
             successful_actions = any(result.success for result in actions_results.results)
@@ -216,7 +222,8 @@ class GameManager:
             # we will use the action name to get the action description from the action class, then combine it with the source name and target name
             # we will also add the position of the source and target node. 
             if successful_actions:
-                self.update_observation_logs(shadow,mode="groups",use_egoncentric=False)
+                self.update_observation_logs(shadow)
+                self.update_goal_logs(shadow)
                 
 
             
@@ -229,7 +236,16 @@ class GameManager:
             # Generate the payload based on the camera position and FOV
             camera_pos = self.renderer.grid_map_widget.camera_pos
             fov = shadow if self.renderer.grid_map_widget.show_fov else None
-            visible_nodes = [node for node in fov.nodes] if fov else self.grid_map.get_nodes_in_rect(camera_pos, self.renderer.grid_map_widget.rect.size)
+
+            if fov:
+                visible_nodes = [node for node in fov.nodes]
+            else:
+                rect_top_left = camera_pos
+                rect_width = self.renderer.grid_map_widget.rect.width // self.renderer.grid_map_widget.cell_size
+                rect_height = self.renderer.grid_map_widget.rect.height // self.renderer.grid_map_widget.cell_size
+                rect = Rectangle(top_left=rect_top_left, width=rect_width, height=rect_height, nodes=[])
+                visible_nodes = self.grid_map.get_nodes_in_rect(rect)
+
             visible_positions = {node.position.value for node in visible_nodes}
 
             # Update the grid map visual with the new payload
@@ -264,8 +280,8 @@ class GameManager:
             # Display FPS and other text
             
             self.ui_manager.update(time_delta)
-            self.screen.blit(self.vertical_background, (400, 0))
-            self.screen.blit(self.horizontal_background, (0, 300))
+            self.screen.blit(self.vertical_background, (self.widget_size[0], 0))
+            self.screen.blit(self.horizontal_background, (0, self.widget_size[1]))
             self.display_text(clock)
             self.ui_manager.draw_ui(self.screen)
             pygame.display.update()

@@ -2,7 +2,8 @@ import pygame
 from pygame.sprite import Group, RenderUpdates
 from typing import Dict, List, Type, Tuple, Optional
 from pydantic import BaseModel
-from abstractions.goap.spatial import Node, Path, Shadow, RayCast, Radius
+from abstractions.goap.nodes import Node
+from abstractions.goap.shapes import Path, Shadow, RayCast, Radius
 
 class CameraControl(BaseModel):
     move: Tuple[int, int] = (0, 0)
@@ -43,7 +44,6 @@ class Widget(pygame.sprite.Sprite):
 class GridMapWidget(Widget):
     def __init__(self, pos: Tuple[int, int], size: Tuple[int, int], grid_map_visual: GridMapVisual):
         super().__init__(pos, size)
-        
         self.grid_map_visual = grid_map_visual
         self.cell_size = 32
         self.camera_pos = [0, 0]  # Camera position in grid coordinates
@@ -99,12 +99,24 @@ class GridMapWidget(Widget):
             start_y = max(0, self.camera_pos[1])
             end_x = min(self.grid_map_visual.width, start_x + self.rect.width // self.cell_size)
             end_y = min(self.grid_map_visual.height, start_y + self.rect.height // self.cell_size)
-
             for x in range(start_x, end_x):
                 for y in range(start_y, end_y):
                     position = (x, y)
                     if position in self.grid_map_visual.node_visuals:
                         self.draw_node(position, self.grid_map_visual.node_visuals[position])
+
+    def draw_shape_effect(self, path: Optional[Path] = None, shadow: Optional[Shadow] = None,
+                          raycast: Optional[RayCast] = None, radius: Optional[Radius] = None,
+                          fog_of_war: Optional[Shadow] = None):
+        # Draw effects (in the following order: shadow, radius, raycast, path)
+        if self.show_shadow and shadow:
+            self.draw_effect(self.image, shadow.nodes, (255, 255, 0))
+        if self.show_radius and radius:
+            self.draw_effect(self.image, radius.nodes, (0, 0, 255))
+        if self.show_raycast and raycast:
+            self.draw_effect(self.image, raycast.nodes, (255, 0, 0))
+        if self.show_path and path:
+            self.draw_effect(self.image, path.nodes, (0, 255, 0))
 
     def draw_shape_effect(self,path: Optional[Path] = None, shadow: Optional[Shadow] = None,
              raycast: Optional[RayCast] = None, radius: Optional[Radius] = None, fog_of_war: Optional[Shadow] = None):
@@ -191,16 +203,14 @@ class Renderer:
         # Clear the area occupied by each widget
         for widget in self.widgets.values():
             self.screen.fill((0, 0, 0), widget.rect)
-
         # Draw the grid map widget
         self.grid_map_widget.draw(self.screen, path, shadow, raycast, radius, fog_of_war)
-
         # Draw other widgets
         for widget in self.widgets.values():
             if widget != self.grid_map_widget:
                 widget.draw(self.screen)
-
         pygame.display.flip()
+
     def handle_camera_control(self, camera_control: CameraControl):
         self.camera_control = camera_control
 
