@@ -45,8 +45,8 @@ class GameManager:
             goal_states = [GoalState(character_id=self.controlled_entity_id,goals=[goal]) for goal in goals]
             self.goal_states = goal_states
         self.setup_goal_widgets(screen)
-        self.str_action_converter = StrActionConverter(grid_map=self.grid_map)
-        
+        # self.str_action_converter = StrActionConverter(grid_map=self.grid_map)
+        self.str_action_converter = StrActionConverter(actions=grid_map.actions,entity_type_map=grid_map.entity_type_map)
 
         
     def setup_gui_widgets(self, screen: pygame.Surface, sprite_mappings: List[SpriteMapping]):

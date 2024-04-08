@@ -127,6 +127,10 @@ def move_to_target_node(source: GameEntity, target: GameEntity) -> Node:
     """Move the source entity to the target entity's node."""
     return target.node
 
+def is_target_in_source_inventory(source: GameEntity, target: GameEntity) -> bool:
+    """Check if the target entity is in the source entity's inventory."""
+    return target in source.inventory
+
 
 
 MoveToTargetNode: Callable[[GameEntity, GameEntity], Node] = move_to_target_node
@@ -269,7 +273,7 @@ class Drop(Action):
     prerequisites: Prerequisites = Prerequisites(
         source_statements=[Statement(conditions={"can_act": True})],
         target_statements=[],
-        source_target_statements=[]
+        source_target_statements=[Statement(callables=[is_target_in_source_inventory])]
     )
     consequences: Consequences = Consequences(
         source_transformations={},

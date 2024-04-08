@@ -421,6 +421,7 @@ class Node(BaseModel, RegistryHolder):
         Returns:
             Optional[Union[GameEntity, AmbiguousEntityError]]: The found entity, an AmbiguousEntityError if multiple entities match the criteria, or None if no entity is found.
         """
+        print(f"inside trhe find_entity method searchinf gfor {entity_type} with id {entity_id} and name {entity_name} and attributes {attributes}")
         matching_entities = []
         for entity in self.entities:
             if isinstance(entity, entity_type):
@@ -437,13 +438,14 @@ class Node(BaseModel, RegistryHolder):
         if len(matching_entities) == 1:
             return matching_entities[0]
         elif len(matching_entities) > 1:
+            types_of_matching_entities = [type(entity) for entity in matching_entities]
             missing_attributes = []
             if entity_id is None:
                 missing_attributes.append("entity_id")
             if entity_name is None:
                 missing_attributes.append("entity_name")
             if attributes is None:
-                missing_attributes.extend(attr.name for attr in matching_entities[0].all_attributes())
+                missing_attributes.extend(matching_entities[0].name)
             return AmbiguousEntityError(
                 entity_type=entity_type,
                 entity_id=entity_id,

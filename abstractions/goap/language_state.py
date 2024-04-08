@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, List, Dict, Any, Union
+from typing import Optional, Tuple, List, Dict, Any, Union, Type
 from abstractions.goap.entity import Entity, Statement, Attribute
 from abstractions.goap.shapes import Shadow, Path, Radius,Rectangle, RayCast, BlockedRaycast
 from abstractions.goap.gridmap import GridMap
@@ -7,7 +7,8 @@ from abstractions.goap.spatial import WalkableGraph
 from abstractions.goap.interactions import Character, Door, Key, Treasure, Floor, Wall, InanimateEntity, IsPickupable, TestItem, Open, Close, Unlock, Lock, Pickup, Drop, Move
 from abstractions.goap.payloads import ActionsPayload, ActionInstance, ActionResult
 from pydantic import BaseModel
-from abstractions.goap.actions import Prerequisites, Consequences, Goal
+from abstractions.goap.actions import Prerequisites, Consequences, Goal, Action
+from abstractions.goap.errors import ActionConversionError, AmbiguousEntityError
 
 class GoalState:
     def __init__(self, character_id: str, goals: Optional[List[Goal]] = []):
@@ -474,31 +475,36 @@ class ActionState:
     def generate(self, action_result: Optional[ActionResult]) -> str:
         if action_result:
             self.update_state(action_result)
+
+        if self.action_result is None:
+            return "No action result available."
+
         if self.action_result.success:
             return self._generate_success_analysis()
         else:
             return self._generate_failure_analysis()
 
-    def _generate_success_analysis(self,) -> str:
+    def _generate_success_analysis(self) -> str:
         if not self.action_result:
             raise ValueError("Action result not set")
+
         action_name = self.action_result.action_instance.action.__class__.__name__
-        source_before = self.action_result.state_before["source"]
-        source_after = self.action_result.state_after["source"]
-        target_before = self.action_result.state_before["target"]
-        target_after = self.action_result.state_after["target"]
+        source_before = self.action_result.state_before.get("source", {})
+        source_after = self.action_result.state_after.get("source", {})
+        target_before = self.action_result.state_before.get("target", {})
+        target_after = self.action_result.state_after.get("target", {})
 
         source_entity_before = GameEntity.get_instance(self.action_result.action_instance.source_id)
         source_entity_after = GameEntity.get_instance(self.action_result.action_instance.source_id)
-        target_entity_before = GameEntity.get_instance(self.action_result.action_instance.target_id)
-        target_entity_after = GameEntity.get_instance(self.action_result.action_instance.target_id)
+        target_entity_before = GameEntity.get_instance(self.action_result.action_instance.target_id) if self.action_result.action_instance.target_id else None
+        target_entity_after = GameEntity.get_instance(self.action_result.action_instance.target_id) if self.action_result.action_instance.target_id else None
 
         analysis = "# Action Result Analysis\n"
         analysis += f"## Action: {action_name}\n"
         analysis += "### Result: Success\n"
         analysis += "### Before:\n"
         analysis += f"- Source: {self._format_entity_state(source_before, source_entity_before)}\n"
-        analysis += f"- Target: {self._format_entity_state(target_before, target_entity_before)}\n"
+        analysis += f"- Target: {self._format_entity_state(target_before, target_entity_before) if target_entity_before else 'N/A'}\n"
         analysis += "### Changes:\n"
 
         source_changes = []
@@ -534,101 +540,111 @@ class ActionState:
 
     def _generate_failure_analysis(self) -> str:
         action_name = self.action_result.action_instance.action.__class__.__name__
-        source_state = self.action_result.state_before["source"]
-        target_state = self.action_result.state_before["target"]
+        source_state = self.action_result.state_before.get("source", {})
+        target_state = self.action_result.state_before.get("target", {})
+
         source_entity = GameEntity.get_instance(self.action_result.action_instance.source_id)
-        target_entity = GameEntity.get_instance(self.action_result.action_instance.target_id)
+        target_entity = GameEntity.get_instance(self.action_result.action_instance.target_id) if self.action_result.action_instance.target_id else None
 
         analysis = "# Action Result Analysis\n"
         analysis += f"## Action: {action_name}\n"
         analysis += "### Result: Failure\n"
-        analysis += "### Reason: Prerequisites not met\n"
-        analysis += "### Prerequisites:\n"
 
-        prerequisites = self.action_result.action_instance.action.prerequisites
-        failed_prerequisites = self.action_result.failed_prerequisites
+        if self.action_result.error:
+            analysis += f"### Error: {self.action_result.error}\n"
+        else:
+            analysis += "### Reason: Prerequisites not met\n"
+            analysis += "### Prerequisites:\n"
 
-        for statement_type in ["source_statements", "target_statements", "source_target_statements"]:
-            statements = getattr(prerequisites, statement_type)
-            for statement in statements:
-                is_failed = any(statement.id in prerequisite for prerequisite in failed_prerequisites)
-                status = "Failed" if is_failed else "Passed"
-                analysis += f"- {statement_type.capitalize().replace('_', ' ')}:\n"
-                analysis += f"  - Status: {status}\n"
+            prerequisites = self.action_result.action_instance.action.prerequisites
+            failed_prerequisites = self.action_result.failed_prerequisites
 
-                if statement.conditions:
-                    analysis += "  - Conditions:\n"
-                    for attr_name, desired_value in statement.conditions.items():
-                        actual_value = source_state[attr_name] if statement_type == "source_statements" else target_state[attr_name]
-                        condition_met = actual_value == desired_value
-                        analysis += f"    - {attr_name}: {'Met' if condition_met else 'Not Met'} (Desired: {desired_value}, Actual: {actual_value})\n"
+            for statement_type in ["source_statements", "target_statements", "source_target_statements"]:
+                statements = getattr(prerequisites, statement_type)
+                for statement in statements:
+                    is_failed = any(statement.id in prerequisite for prerequisite in failed_prerequisites)
+                    status = "Failed" if is_failed else "Passed"
+                    analysis += f"- {statement_type.capitalize().replace('_', ' ')}:\n"
+                    analysis += f"  - Status: {status}\n"
 
-                if statement.comparisons:
-                    analysis += "  - Comparisons:\n"
-                    for comparison_name, (source_attr, target_attr, comparison_func) in statement.comparisons.items():
-                        comparison_description = comparison_func.__doc__.strip() if comparison_func.__doc__ else "No description available"
-                        source_value = source_state[source_attr] if source_attr in source_state else getattr(source_entity, source_attr)
-                        target_value = target_state[target_attr] if target_attr in target_state else getattr(target_entity, target_attr)
-                        comparison_met = comparison_func(source_value, target_value)
-                        analysis += f"    - {comparison_name.capitalize()}:\n"
-                        analysis += f"      - Source Attribute: {source_attr}\n"
-                        analysis += f"      - Target Attribute: {target_attr}\n"
-                        analysis += f"      - Comparison: {'Met' if comparison_met and status == 'Passed' else 'Not Met'}\n"
-                        analysis += f"      - Description: {comparison_description}\n"
+                    if statement.conditions:
+                        analysis += "  - Conditions:\n"
+                        for attr_name, desired_value in statement.conditions.items():
+                            actual_value = source_state.get(attr_name) if statement_type == "source_statements" else target_state.get(attr_name)
+                            condition_met = actual_value == desired_value
+                            analysis += f"    - {attr_name}: {'Met' if condition_met else 'Not Met'} (Desired: {desired_value}, Actual: {actual_value})\n"
 
-                if statement.callables:
-                    analysis += "  - Callables:\n"
-                    for callable_func in statement.callables:
-                        callable_description = callable_func.__doc__.strip() if callable_func.__doc__ else "No description available"
-                        callable_met = callable_func(source_entity, target_entity)
-                        analysis += f"    - {'Met' if callable_met and status == 'Passed' else 'Not Met'}\n"
-                        analysis += f"      - Description: {callable_description}\n"
+                    if statement.comparisons:
+                        analysis += "  - Comparisons:\n"
+                        for comparison_name, (source_attr, target_attr, comparison_func) in statement.comparisons.items():
+                            comparison_description = comparison_func.__doc__.strip() if comparison_func.__doc__ else "No description available"
+                            source_value = source_state.get(source_attr) if source_attr in source_state else getattr(source_entity, source_attr, None)
+                            target_value = target_state.get(target_attr) if target_attr in target_state else getattr(target_entity, target_attr, None)
+                            comparison_met = comparison_func(source_value, target_value) if source_value is not None and target_value is not None else False
+                            analysis += f"    - {comparison_name.capitalize()}:\n"
+                            analysis += f"      - Source Attribute: {source_attr}\n"
+                            analysis += f"      - Target Attribute: {target_attr}\n"
+                            analysis += f"      - Comparison: {'Met' if comparison_met and status == 'Passed' else 'Not Met'}\n"
+                            analysis += f"      - Description: {comparison_description}\n"
+
+                    if statement.callables:
+                        analysis += "  - Callables:\n"
+                        for callable_func in statement.callables:
+                            callable_description = callable_func.__doc__.strip() if callable_func.__doc__ else "No description available"
+                            callable_met = callable_func(source_entity, target_entity) if source_entity and target_entity else False
+                            analysis += f"    - {'Met' if callable_met and status == 'Passed' else 'Not Met'}\n"
+                            analysis += f"      - Description: {callable_description}\n"
 
         return analysis
-        
-    def _format_entity_state(self, entity_state: Dict[str, Any], entity: GameEntity) -> str:
+
+    def _format_entity_state(self, entity_state: Dict[str, Any], entity: Optional[GameEntity]) -> str:
+        if entity is None:
+            return "N/A"
+
         entity_type = entity.__class__.__name__
         position = entity_state.get("position", (0, 0))
         attributes = ", ".join(f"{attr_name}: {attr_value}" for attr_name, attr_value in entity_state.items() if attr_name not in ["position"])
         return f"{entity_type} '{entity.name}' ({position[0]}, {position[1]}) [{attributes}]"
 
-    def _format_entity_brief(self, entity_state: Dict[str, Any], entity: GameEntity) -> str:
+    def _format_entity_brief(self, entity_state: Dict[str, Any], entity: Optional[GameEntity]) -> str:
+        if entity is None:
+            return "N/A"
+
         entity_type = entity.__class__.__name__
         position = entity_state.get("position", (0, 0))
         return f"{entity_type} '{entity.name}'"
     
-   
-
 class StrActionConverter:
-    def __init__(self, grid_map: GridMap):
-        self.grid_map = grid_map
+    def __init__(self, actions: Dict[str, Action], entity_type_map: Dict[str, Type[GameEntity]]):
+        self.actions = actions
+        self.entity_type_map = entity_type_map
 
-    def convert_action_string(self, action_string: str, character_id: str) -> Union[ActionsPayload, str]:
+    def convert_action_string(self, action_string: str, character_id: str) -> Union[str, ActionsPayload]:
         parts = action_string.split(" ")
         if len(parts) != 3:
             return "Invalid action string format. Expected: 'direction action_name target_type'"
-
         direction, action_name, target_type = parts
         character = GameEntity.get_instance(character_id)
         if character is None:
             return "Character not found"
-
         character_node = character.node
         if character_node is None:
             return "Character is not in a node"
-
         target_node = self._get_target_node(character_node, direction)
         if target_node is None:
             return "Invalid direction"
-
-        target_entity = self._find_target_entity(target_node, target_type)
+        target_entity_type = self.entity_type_map.get(target_type)
+        if target_entity_type is None:
+            return f"Target entity type '{target_type}' not found"
+        print(f"Attemping to find entity of type {target_entity_type} in node {target_node} starting from action string {action_string}")
+        target_entity = target_node.find_entity(entity_type=target_entity_type)
+        if isinstance(target_entity, AmbiguousEntityError):
+            return f"Ambiguous target entity: {target_entity.get_error_message()}"
         if target_entity is None:
             return f"Target entity of type '{target_type}' not found in the target node"
-
-        action_class = self.grid_map.actions.get(action_name)
+        action_class = self.actions.get(action_name)
         if action_class is None:
             return f"Action '{action_name}' not found"
-
         action_instance = ActionInstance(source_id=character_id, target_id=target_entity.id, action=action_class())
         return ActionsPayload(actions=[action_instance])
 
@@ -644,17 +660,72 @@ class StrActionConverter:
             "SouthWest": (-1, 1),
             "Center": (0, 0),
         }
-
         offset = direction_map.get(direction)
         if offset is None:
             return None
-
         target_position = (character_node.position.x + offset[0], character_node.position.y + offset[1])
-        return self.grid_map.get_node(target_position)
+        grid_map = GridMap.get_instance(character_node.gridmap_id)
+        if grid_map:
+            return grid_map.get_node(target_position)
+        return None
+   
 
-    def _find_target_entity(self, target_node: Node, target_type: str) -> Optional[GameEntity]:
-        entity_type = self.grid_map.entity_type_map.get(target_type)
-        if entity_type is None:
-            return None
+# class StrActionConverter:
+#     def __init__(self, grid_map: GridMap):
+#         self.grid_map = grid_map
 
-        return target_node.find_entity(entity_type)
+#     def convert_action_string(self, action_string: str, character_id: str) -> Union[ActionsPayload, str]:
+#         parts = action_string.split(" ")
+#         if len(parts) != 3:
+#             return "Invalid action string format. Expected: 'direction action_name target_type'"
+
+#         direction, action_name, target_type = parts
+#         character = GameEntity.get_instance(character_id)
+#         if character is None:
+#             return "Character not found"
+
+#         character_node = character.node
+#         if character_node is None:
+#             return "Character is not in a node"
+
+#         target_node = self._get_target_node(character_node, direction)
+#         if target_node is None:
+#             return "Invalid direction"
+
+#         target_entity = self._find_target_entity(target_node, target_type)
+#         if target_entity is None:
+#             return f"Target entity of type '{target_type}' not found in the target node"
+
+#         action_class = self.grid_map.actions.get(action_name)
+#         if action_class is None:
+#             return f"Action '{action_name}' not found"
+
+#         action_instance = ActionInstance(source_id=character_id, target_id=target_entity.id, action=action_class())
+#         return ActionsPayload(actions=[action_instance])
+
+#     def _get_target_node(self, character_node: Node, direction: str) -> Optional[Node]:
+#         direction_map = {
+#             "North": (0, -1),
+#             "South": (0, 1),
+#             "East": (1, 0),
+#             "West": (-1, 0),
+#             "NorthEast": (1, -1),
+#             "NorthWest": (-1, -1),
+#             "SouthEast": (1, 1),
+#             "SouthWest": (-1, 1),
+#             "Center": (0, 0),
+#         }
+
+#         offset = direction_map.get(direction)
+#         if offset is None:
+#             return None
+
+#         target_position = (character_node.position.x + offset[0], character_node.position.y + offset[1])
+#         return self.grid_map.get_node(target_position)
+
+#     def _find_target_entity(self, target_node: Node, target_type: str) -> Optional[GameEntity]:
+#         entity_type = self.grid_map.entity_type_map.get(target_type)
+#         if entity_type is None:
+#             return None
+
+#         return target_node.find_entity(entity_type)
