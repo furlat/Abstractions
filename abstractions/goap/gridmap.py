@@ -182,6 +182,7 @@ class GridMap(BaseModel, RegistryHolder):
             node_actions = self.get_appplicable_actions_entities_for_node(source,node,return_payload= return_payload)
             if len(node_actions) > 0:
                 node_tuples.append((node,node_actions))
+        return node_tuples
             
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
