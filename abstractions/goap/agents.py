@@ -10,8 +10,9 @@ from abstractions.goap.errors import AmbiguousEntityError
 import random
 import typing
 import outlines
-from outlines import models, generate
+from outlines import models, generate, samplers
 from outlines.generate.api import SequenceGenerator
+
 
 
 class Agent:
@@ -23,6 +24,7 @@ class Agent:
         self.llm = llm
         self.obs_state = ObservationState(character_id=character_id)
         self.action_state = ActionState()
+        self.action_log = []
         self.goal_state = GoalState(character_id=character_id, goals=goals)
         self.history = []
         self.system_prompt = self.setup_system_prompt()
@@ -98,7 +100,7 @@ class Agent:
             self.generator_sampler = outlines.generate.strings(self.llm, action_strings)
 
     def generate_action_prompt(self, obs_state_text: str, action_state_text: str, goal_state_text: str) -> str:
-        prompt = f"{self.system_prompt}\n<|im_start|>user\nObservation:\n{obs_state_text}\n\nAction:\n{action_state_text}\n\nGoal:\n{goal_state_text} <|im_end|>\n <|im_start|> After reviewing carefully the observation state, the result of the previous action and the current goal state I decided to take the action:" 
+        prompt = f"{self.system_prompt}\n<|im_start|>user\nObservation:\n{obs_state_text}\n\nAction(s) before:\n{action_state_text}\n\nGoal:\n{goal_state_text} <|im_end|>\n <|im_start|> After reviewing carefully the observation state, the result of the previous action and the current goal state I decided to take the action:" 
         return prompt
 
     def generate_random_action(self) -> Optional[str]:
@@ -194,7 +196,7 @@ class Agent:
 
             if self.generator_dict.get(tuple(allowed_strings)) is None:
                 print(f"Generating generator for {allowed_strings}")
-                self.generator_dict[tuple(allowed_strings)] = generate.choice(self.llm, allowed_strings)
+                self.generator_dict[tuple(allowed_strings)] = generate.choice(self.llm, allowed_strings,sampler=samplers.multinomial(top_k=1))
             return self.generator_dict[tuple(allowed_strings)]
     
     def run(self, grid_map: GridMap, max_steps: Optional[int] = None, mdp: bool = True) -> None:
@@ -214,6 +216,7 @@ class Agent:
             obs_state_text = self.obs_state.generate(shape)
             action_state_text = self.action_state.generate(action_result) if action_result else ""
             goal_state_text = self.goal_state.generate(shape)
+            self.action_log.append(action_state_text)
 
             allowed_action_strings = self.derive_allowed_strings(grid_map)
             if self.allowed_strings_count.get(tuple(allowed_action_strings)) is None:
@@ -221,7 +224,8 @@ class Agent:
             self.allowed_strings_count[tuple(allowed_action_strings)] += 1
             if self.llm:
                 generator_from_allowed_strings = self.generator_from_allowed_strings(allowed_action_strings)
-                prompt = self.generate_action_prompt(obs_state_text, action_state_text, goal_state_text)
+                joined_action_log = "\n".join(self.action_log)
+                prompt = self.generate_action_prompt(obs_state_text, joined_action_log, goal_state_text)
                 action_string = generator_from_allowed_strings(prompt)
             else:
                 action_string = random.choice(allowed_action_strings)
