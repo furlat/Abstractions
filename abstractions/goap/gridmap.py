@@ -155,6 +155,34 @@ class GridMap(BaseModel, RegistryHolder):
                     if entity_type_name not in self.entity_type_map:
                         self.entity_type_map[entity_type_name] = entity_type
 
+    def get_applicable_actions_for_entity(self, source:GameEntity, target:GameEntity ,return_payload = False) -> List[Union[Action,ActionsPayload]]:
+        available_actions = []
+        for action_class in self.actions.values():
+            action = action_class()
+            if action.is_applicable(source, target):
+                if not return_payload:
+                    available_actions.append(action)
+                else:
+                    action_payload = ActionsPayload(actions=[ActionInstance(source_id=source.id, target_id=target.id, action=action)])
+                    available_actions.append(action_payload)
+        return available_actions
+    
+    def get_appplicable_actions_entities_for_node(self, source:GameEntity, target_node:Node,return_payload = False) -> List[Tuple[GameEntity,List[Union[Action,ActionsPayload]]]]:
+        available_actions = []
+        for entity in target_node.entities:
+            entiy_actions = self.get_applicable_actions_for_entity(source,entity,return_payload= return_payload)
+            if len(entiy_actions) > 0:
+                available_actions.append((entity,entiy_actions))
+        return available_actions
+    
+    def get_applicable_actions_in_neighborhood(self, source:GameEntity, radius:int,return_payload = False) -> List[Tuple[Node,List[Tuple[GameEntity,List[Union[Action,ActionsPayload]]]]]]:
+        neighborhood = self.get_radius(source.node, radius)
+        node_tuples = []
+        for node in neighborhood.nodes:
+            node_actions = self.get_appplicable_actions_entities_for_node(source,node,return_payload= return_payload)
+            if len(node_actions) > 0:
+                node_tuples.append((node,node_actions))
+            
     def apply_actions_payload(self, payload: ActionsPayload) -> ActionsResults:
         results = []
         if len(payload.actions) > 0:
