@@ -9,6 +9,10 @@ from abstractions.goap.language_state import StrActionConverter
 from abstractions.goap.errors import AmbiguousEntityError
 import random
 import typing
+import outlines
+from outlines import models, generate
+from outlines.generate.api import SequenceGenerator
+
 
 class Agent:
     def __init__(self, goals: List[Goal], character_id: str, actions: Dict[str, Action], entity_type_map: Dict[str, Type[GameEntity]], llm:Optional[str]=None):
@@ -26,8 +30,7 @@ class Agent:
         self.action_strings = self.generate_action_strings()
         self.allowed_strings_count = {}
         if self.llm is not None:
-            from outlines import models, generate
-            from outlines.generate.api import SequenceGenerator
+            
             self.llm = models.llamacpp(llm, model_kwargs={"seed": 1337, "n_ctx": 30000, "n_gpu_layers": -1, "verbose": True})
             self.generator_dict = {Tuple[str,str,str]:SequenceGenerator}
             # self.generator_sampler =  generate.choice(self.llm, self.action_strings)
@@ -188,11 +191,10 @@ class Agent:
     def generator_from_allowed_strings(self,allowed_strings: List[str]) -> str:
         """ return the generator object for the allowed strings, it uses a dictionary as cache to avoid recompiling generators for the same subsets of allowed strings"""
         if self.llm is not None:
-            if typing.TYPE_CHECKING:
-                import outlines.generate
+
             if self.generator_dict.get(tuple(allowed_strings)) is None:
                 print(f"Generating generator for {allowed_strings}")
-                self.generator_dict[tuple(allowed_strings)] = outlines.generate.choice(self.llm, allowed_strings)
+                self.generator_dict[tuple(allowed_strings)] = generate.choice(self.llm, allowed_strings)
             return self.generator_dict[tuple(allowed_strings)]
     
     def run(self, grid_map: GridMap, max_steps: Optional[int] = None, mdp: bool = True) -> None:
@@ -255,7 +257,7 @@ class Agent:
             self.update_history(action_result, shape, action_string)
 
             if self.check_goals_reached():
-                print("\nAll goals reached!")
+                print(f"\nAll goals reached! in {step} steps.")
                 break
 
             step += 1

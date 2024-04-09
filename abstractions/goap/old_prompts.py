@@ -102,7 +102,7 @@ def system_prompt(registered_actions, use_egocentric, use_outlines, outlines_ego
     - If the action is valid and successfully executed, you will receive an ActionResult object with the updated game state.
     - If the action is invalid or cannot be executed, you will receive an ActionConversionError object with details about the error.
 
-    Remember to carefully consider your observations, goals, and the available actions when making decisions. Good luck!<|im_end|>
+    Remember to carefully consider your observations, goals, and the available actions when making decisions. Good luck!<|im_start|>system
     """
 
 @outlines.prompt
