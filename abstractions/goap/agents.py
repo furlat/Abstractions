@@ -13,27 +13,28 @@ import random
 import typing
 
 class Agent:
-    def __init__(self, goals: List[Goal], character_id: str, actions: Dict[str, Action], entity_type_map: Dict[str, Type[GameEntity]], llm=None, generator_sampler=None):
+    def __init__(self, goals: List[Goal], character_id: str, actions: Dict[str, Action], entity_type_map: Dict[str, Type[GameEntity]], llm:Optional[str]=None):
         self.goals = goals
         self.character_id = character_id
         self.actions = actions
         self.entity_type_map = entity_type_map
         self.llm = llm
-        self.generator_sampler = generator_sampler
         self.obs_state = ObservationState(character_id=character_id)
         self.action_state = ActionState()
         self.goal_state = GoalState(character_id=character_id, goals=goals)
         self.history = []
         self.system_prompt = self.setup_system_prompt()
         self.str_action_converter = StrActionConverter(actions=self.actions, entity_type_map=self.entity_type_map)
-
-        if self.llm is not None and self.generator_sampler is not None:
+        self.action_strings = self.generate_action_strings()
+        if self.llm is not None:
             from outlines import models, generate
-            self.llm = models.llama()  # Replace with the appropriate LLM model
-            self.generator_sampler = generate.strings  # Replace with the appropriate generator sampler
+            self.llm = models.llamacpp(llm, model_kwargs={"seed": 1337, "n_ctx": 30000, "n_gpu_layers": -1, "verbose": True})
+            self.generator_sampler =  generate.choice(self.llm, self.action_strings)
+        
 
     def setup_system_prompt(self) -> str:
         system_prompt = f"""
+        <|im_start|>system
         You are an agent controlling a character in a grid-based game environment.
         Your goal is to navigate the environment, interact with objects, and achieve the specified goals.
 
@@ -49,19 +50,31 @@ class Agent:
         {', '.join(self.entity_type_map.keys())}
 
         You should generate your actions based on the current observation, previous actions, and goals.
-        The actions you generate should be in the format of "direction action target_type", for example: "North Move Floor" or "South Pickup Key".
+        The actions you generate should be in the format of "direction action target_type".
         The action should be a valid combination of direction, action name, and target entity type based on your current state and surroundings.
 
-        Remember to consider your goals and prioritize actions that help you achieve them.
-        Good luck!
+        Remember to consider your goals and prioritize actions that help you achieve them. Remember that you can only perform actions that are valid based on the current state of the game.
+        You can Move to Floor
+        You can Pickup Key
+        You can Open Door
+        You can Unlock Door
+        You can Pickup Treasure
+        If a entity is not in your 3x3 neighborhood, you can't interact with it. and you will wast an action.
+        Good luck!<|im_start|>system
         """
         return system_prompt
 
-    def receive_results_and_shape(self, actions_results: ActionsResults, shape: Union[Shadow, Radius, Rectangle]):
-        self.obs_state.generate(shape)
-        for result in actions_results.results:
-            self.action_state.update_state(result)
-        self.goal_state.generate(shape)
+    def generate_text(self, shape: Union[Shadow, Radius, Rectangle],actions_results: Optional[ActionsResults] = None):
+        obs_state_text = self.obs_state.generate(shape)
+        act_obs = []
+        act_state_text = None
+        if actions_results:
+            for result in actions_results.results:
+                act_obs.append(self.action_state.update_state(result))
+            act_state_text = "\n".join(act_obs)
+        goal_state_text= self.goal_state.generate(shape)
+        return obs_state_text, act_state_text, goal_state_text
+
     def generate_action_strings(self) -> List[str]:
         directions = ["North", "South", "East", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest", "Center"]
         action_strings = []
@@ -85,7 +98,7 @@ class Agent:
         if self.llm is None or self.generator_sampler is None:
             return self.generate_random_action()
 
-        prompt = f"{self.system_prompt}\n\nObservation:\n{obs_state_text}\n\nAction:\n{action_state_text}\n\nGoal:\n{goal_state_text}\n\nNext Action:"
+        prompt = f"{self.system_prompt}\n<|im_start|>user\nObservation:\n{obs_state_text}\n\nAction:\n{action_state_text}\n\nGoal:\n{goal_state_text} <|im_end|> <|im_start|>assistant Next Action:"
         
         action_string = self.generator_sampler(prompt)
         

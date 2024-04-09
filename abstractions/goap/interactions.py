@@ -333,6 +333,8 @@ class Close(Action):
 
 
 def has_required_key(source: GameEntity, target: Door) -> bool:
+    if not hasattr(target, "required_key"):
+        return False
     return any(item.key_name.value == target.required_key.value for item in source.inventory)
 
 class Unlock(Action):

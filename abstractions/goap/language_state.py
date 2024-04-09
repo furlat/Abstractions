@@ -183,7 +183,7 @@ class ObservationState:
         observation_message += self._generate_node_equivalence_classes(shape)
         observation_message += self._generate_living_entities(shape, self.character_id)
         observation_message += self._generate_attribute_summary(shape)
-        observation_message += self._generate_pathfinding_information(paths)
+        # observation_message += self._generate_pathfinding_information(paths)
         return observation_message.strip()
 
     @staticmethod
