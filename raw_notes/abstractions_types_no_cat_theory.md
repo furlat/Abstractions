@@ -120,13 +120,12 @@ By organizing the transformations in a table, we can easily reason about their p
 
 To illustrate these ideas, let us consider a simple example of a transformation table for a text processing pipeline that performs tokenization, part-of-speech tagging, and named entity recognition on a given document. The table might look something like this:
 
-```
-| Transformation | Input Type | Output Type | Invertible | Composable | Parallelizable | Stateful | Stochastic |
-|----------------|------------|-------------|------------|------------|----------------|----------|------------|
-| Tokenize       | Document   | List[Token] | Yes        | Yes        | Yes            | No       | No         |
-| POSTag         | List[Token]| List[Token] | No         | Yes        | Yes            | Yes      | Yes        |
-| NERTag         | List[Token]| List[Token] | No         | Yes        | Yes            | Yes      | Yes        |
-```
+| Transformation | Input Type  | Output Type  | Invertible | Composable | Parallelizable | Stateful | Stochastic |
+|----------------|-------------|--------------|------------|------------|----------------|----------|------------|
+| Tokenize       | Document    | List[Token]  | Yes        | Yes        | Yes            | No       | No         |
+| POSTag         | List[Token] | List[Token]  | No         | Yes        | Yes            | Yes      | Yes        |
+| NERTag         | List[Token] | List[Token]  | No         | Yes        | Yes            | Yes      | Yes        |
+
 
 In this table, each row represents a specific transformation in the pipeline, and the columns capture its key properties and attributes. For example, the Tokenize transformation takes a Document object as input and produces a list of Token objects as output, and is invertible, composable, and parallelizable, but not stateful or stochastic. The POSTag transformation takes a list of Token objects as input and produces a new list of Token objects with part-of-speech tags, and is composable, parallelizable, stateful, and stochastic, but not invertible. Similarly, the NERTag transformation takes a list of Token objects as input and produces a new list of Token objects with named entity tags, and has the same attributes as the POSTag transformation. 🔍📊
 
