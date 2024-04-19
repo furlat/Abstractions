@@ -1,10 +1,3 @@
-# Abstractions
- A Collection of Pydantic Models to Abstract language processing tasks and the realities analyzed therein. 
-
-
-python -m pip install -e pathto/Abstractions
-
-
 ## 🌿💡✨ The Need for a Unified Framework for Text Processing 📚🔍
 
 In the era of big data and artificial intelligence, the ability to effectively process, analyze, and generate text data has become increasingly crucial across a wide range of domains, from natural language processing and computational linguistics to digital humanities and software engineering. However, despite the proliferation of tools and techniques for working with text data, there remains a lack of a unified and principled framework for representing and manipulating the rich structure and semantics of textual information. 🌐💻
@@ -47,7 +40,7 @@ We believe that our framework represents an important step towards a more princi
 
 In the following sections, we will present the details of our framework and its application to narrative text processing, starting with a brief overview of the relevant background and related work, and then diving into the technical details of our approach. We will also provide concrete examples and illustrations to help clarify the key concepts and techniques, and discuss the results and implications of our experiments and case studies. 🔍📊
 
-Background and Related Work 📚🔍
+## Background and Related Work 📚🔍
 
 Our framework builds on a rich tradition of research in natural language processing, computational linguistics, and category theory, and draws inspiration from a wide range of existing approaches and techniques for text processing and analysis. 🌿💡
 

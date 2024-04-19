@@ -230,3 +230,126 @@ scored_expectations = [
         "total_score": 17.5
     }
 ]
+```
+
+
+```
+Assistant: Great, thanks for clarifying the location preference. One popular downtown restaurant I would recommend for a nice dinner is Bistro Bella. It has a cozy atmosphere, excellent Italian cuisine, and great reviews. Would you like me to check if they have any reservations available for tonight?
+
+User: Italian sounds great! I do have a bit of a tight budget though. Is Bistro Bella on the pricier side, or do they have some more affordable options as well?
+
+parsed_utterance = {
+    "text": "Italian sounds great! I do have a bit of a tight budget though. Is Bistro Bella on the pricier side, or do they have some more affordable options as well?",
+    "speech_act": "affirm+request",
+    "sentiment": "positive+concern",
+    "entities": ["Italian", "Bistro Bella", "budget", "affordable"]
+}
+
+updated_context = {
+    "user_utterances": [
+        "I'm looking for a good restaurant for dinner tonight.",
+        "I'm flexible on location, but I'd prefer something in the downtown area if possible.",
+        "Italian sounds great! I do have a bit of a tight budget though. Is Bistro Bella on the pricier side, or do they have some more affordable options as well?"
+    ],
+    "assistant_utterances": [
+        "Sure, I can help you find a good restaurant for dinner tonight. What area or neighborhood are you looking in?",
+        "Great, thanks for clarifying the location preference. One popular downtown restaurant I would recommend for a nice dinner is Bistro Bella. It has a cozy atmosphere, excellent Italian cuisine, and great reviews. Would you like me to check if they have any reservations available for tonight?"
+    ],
+    "inferred_goal": {
+        "type": "find_restaurant",
+        "constraints": {
+            "quality": "good",
+            "meal": "dinner",
+            "time": "tonight",
+            "location": "downtown",
+            "cuisine": "Italian",
+            "budget": "affordable"
+        }
+    }
+}
+
+generated_expectations = [
+    {
+        "type": "provide_price_info",
+        "text": "Bistro Bella is actually quite reasonably priced for the quality of food and service they provide. They have a range of entrees starting at around $15, with most in the $20-25 range. They also have some great appetizers and salads if you want to keep things on the lighter side. Let me know if you'd like me to check on availability for tonight!"
+    },
+    {
+        "type": "suggest_alternate_restaurant",
+        "text": "I understand wanting to stick to a budget. While Bistro Bella is fairly priced, if you're looking for something a bit more affordable, another great Italian option downtown is Pizzeria Uno. They have delicious pizzas, pastas, and sandwiches, with most items under $15. Would you like me to see if they have any tables free for tonight?"
+    }
+]
+
+scored_expectations = [
+    {
+        "type": "provide_price_info",
+        "text": "Bistro Bella is actually quite reasonably priced for the quality of food and service they provide. They have a range of entrees starting at around $15, with most in the $20-25 range. They also have some great appetizers and salads if you want to keep things on the lighter side. Let me know if you'd like me to check on availability for tonight!",
+        "relevance_score": 4.8,
+        "clarity_score": 4.9,
+        "politeness_score": 4.8,
+        "empathy_score": 4.7,
+        "total_score": 19.2
+    },
+    {
+        "type": "suggest_alternate_restaurant",
+        "text": "I understand wanting to stick to a budget. While Bistro Bella is fairly priced, if you're looking for something a bit more affordable, another great Italian option downtown is Pizzeria Uno. They have delicious pizzas, pastas, and sandwiches, with most items under $15. Would you like me to see if they have any tables free for tonight?",
+        "relevance_score": 4.6,
+        "clarity_score": 4.7,
+        "politeness_score": 4.9,
+        "empathy_score": 4.8,
+        "total_score": 19.0
+    }
+]
+```
+
+```
+DialogueModel
+|-- Context
+|   |-- UserUtterances: List[str]
+|   |-- AssistantUtterances: List[str]
+|   |-- InferredGoal: Goal
+|
+|-- Utterance
+|   |-- Text: str
+|   |-- Speaker: Enum(User, Assistant)
+|   |-- Timestamp: datetime
+|
+|-- ParsedUtterance
+|   |-- Text: str
+|   |-- SpeechAct: Enum(Request, Affirm, Deny, Greet, Thank, Bye, ...)
+|   |-- Sentiment: Enum(Positive, Negative, Neutral)
+|   |-- Entities: List[str]
+|
+|-- Goal
+|   |-- Type: str
+|   |-- Constraints: Dict[str, str]
+|
+|-- Expectation
+|   |-- Type: str
+|   |-- Text: str
+|
+|-- ScoredExpectation
+|   |-- Type: str
+|   |-- Text: str
+|   |-- RelevanceScore: float
+|   |-- ClarityScore: float
+|   |-- PolitenessScore: float
+|   |-- EmpathyScore: float
+|   |-- TotalScore: float
+|
+|-- Evaluation
+|   |-- RelevanceScore: float
+|   |-- ClarityScore: float
+|   |-- PolitenessScore: float
+|   |-- EmpathyScore: float
+|   |-- TaskCompletionScore: float
+|
+|-- Transformation
+|   |-- ParseUtterance(Utterance) -> ParsedUtterance
+|   |-- InferGoal(ParsedUtterance, Context) -> Goal
+|   |-- GenerateExpectation(Goal, Context) -> List[Expectation]
+|   |-- EvaluateRelevance(Utterance, Expectation) -> float
+|   |-- EvaluateClarity(Utterance) -> float
+|   |-- EvaluatePoliteness(Utterance) -> float
+|   |-- EvaluateEmpathy(Utterance, Context) -> float
+|   |-- EvaluateTaskCompletion(Context) -> float
+```
