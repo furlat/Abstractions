@@ -5,7 +5,7 @@
 python -m pip install -e pathto/Abstractions
 
 
-## 🌿💡✨ Introduction: The Need for a Unified Framework for Text Processing 📚🔍
+## 🌿💡✨ The Need for a Unified Framework for Text Processing 📚🔍
 
 In the era of big data and artificial intelligence, the ability to effectively process, analyze, and generate text data has become increasingly crucial across a wide range of domains, from natural language processing and computational linguistics to digital humanities and software engineering. However, despite the proliferation of tools and techniques for working with text data, there remains a lack of a unified and principled framework for representing and manipulating the rich structure and semantics of textual information. 🌐💻
 
