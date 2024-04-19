@@ -597,33 +597,32 @@ The `Citation` object represents a citation to a paper, with the following attri
 
 With these core typed objects defined, we can now specify the various transformations that can be applied to scientific papers, in order to parse, manipulate, and generate them. These transformations will be organized into a transformation table, similar to the ones we used for narrative text and Python code, but with some additional columns and rows specific to scientific papers. 📊🔄
 
-```
-| Transformation      | Input Type(s)    | Output Type(s)   | Deterministic | Parallelizable | Incremental | Stateful | Metadata |
-|---------------------|------------------|------------------|---------------|----------------|-------------|----------|----------|
-| ParsePaper          | RawText          | Paper            | No            | Yes            | No          | No       | None     |
-| ParseSection        | RawText          | Section          | No            | Yes            | No          | No       | None     |
-| ParseReference      | RawText          | Reference        | No            | Yes            | No          | No       | None     |
-| ParseCitation       | RawText          | Citation         | No            | Yes            | No          | No       | None     |
-| ExtractSections     | Paper            | List[Section]    | Yes           | Yes            | No          | No       | None     |
-| ExtractReferences   | Paper, Section   | List[Reference]  | Yes           | Yes            | No          | No       | None     |
-| ExtractCitations    | Paper            | List[Citation]   | Yes           | Yes            | No          | No       | None     |
-| ExtractFigures      | Section          | List[Figure]     | Yes           | Yes            | No          | No       | None     |
-| ExtractTables       | Section          | List[Table]      | Yes           | Yes            | No          | No       | None     |
-| ExtractEquations    | Section          | List[Equation]   | Yes           | Yes            | No          | No       | None     |
-| ExtractTheorems     | Section          | List[Theorem]    | Yes           | Yes            | No          | No       | None     |
-| ExtractAlgorithms   | Section          | List[Algorithm]  | Yes           | Yes            | No          | No       | None     |
-| LinkReferences      | Paper, List[Reference] | Paper     | No            | No             | Yes         | Yes      | None     |
-| LinkCitations       | Paper, List[Citation] | Paper       | No            | No             | Yes         | Yes      | None     |
-| SummarizePaper      | Paper            | str              | No            | No             | No          | Yes      | None     |
-| SummarizeSection    | Section          | str              | No            | No             | No          | Yes      | None     |
-| GenerateTitle       | Paper            | str              | No            | No             | No          | Yes      | None     |
-| GenerateAbstract    | Paper            | str              | No            | No             | No          | Yes      | None     |
-| GenerateConclusion  | Paper            | str              | No            | No             | No          | Yes      | None     |
-| GeneratePaper       | Metadata         | Paper            | No            | No             | No          | Yes      | Template |
-| DetectPlagiarism    | Paper, List[Paper] | List[Tuple[Paper, float]] | No | Yes            | No          | No       | None     |
-| ClusterPapers       | List[Paper]      | List[List[Paper]]| No            | Yes            | No          | No       | Embeddings |
-| VisualizeCitations  | Paper            | Graph            | No            | No             | No          | No       | None     |
-```
+| Transformation       | Input Type(s)               | Output Type(s)                      | Deterministic | Parallelizable | Incremental | Stateful | Metadata   |
+|----------------------|-----------------------------|-------------------------------------|---------------|----------------|-------------|----------|------------|
+| ParsePaper           | RawText                     | Paper                               | No            | Yes            | No          | No       | None       |
+| ParseSection         | RawText                     | Section                             | No            | Yes            | No          | No       | None       |
+| ParseReference       | RawText                     | Reference                           | No            | Yes            | No          | No       | None       |
+| ParseCitation        | RawText                     | Citation                            | No            | Yes            | No          | No       | None       |
+| ExtractSections      | Paper                       | List[Section]                       | Yes           | Yes            | No          | No       | None       |
+| ExtractReferences    | Paper, Section              | List[Reference]                     | Yes           | Yes            | No          | No       | None       |
+| ExtractCitations     | Paper                       | List[Citation]                      | Yes           | Yes            | No          | No       | None       |
+| ExtractFigures       | Section                     | List[Figure]                        | Yes           | Yes            | No          | No       | None       |
+| ExtractTables        | Section                     | List[Table]                         | Yes           | Yes            | No          | No       | None       |
+| ExtractEquations     | Section                     | List[Equation]                      | Yes           | Yes            | No          | No       | None       |
+| ExtractTheorems      | Section                     | List[Theorem]                       | Yes           | Yes            | No          | No       | None       |
+| ExtractAlgorithms    | Section                     | List[Algorithm]                     | Yes           | Yes            | No          | No       | None       |
+| LinkReferences       | Paper, List[Reference]      | Paper                               | No            | No             | Yes         | Yes      | None       |
+| LinkCitations        | Paper, List[Citation]       | Paper                               | No            | No             | Yes         | Yes      | None       |
+| SummarizePaper       | Paper                       | str                                 | No            | No             | No          | Yes      | None       |
+| SummarizeSection     | Section                     | str                                 | No            | No             | No          | Yes      | None       |
+| GenerateTitle        | Paper                       | str                                 | No            | No             | No          | Yes      | None       |
+| GenerateAbstract     | Paper                       | str                                 | No            | No             | No          | Yes      | None       |
+| GenerateConclusion   | Paper                       | str                                 | No            | No             | No          | Yes      | None       |
+| GeneratePaper        | Metadata                    | Paper                               | No            | No             | No          | Yes      | Template   |
+| DetectPlagiarism     | Paper, List[Paper]          | List[Tuple[Paper, float]]           | No            | Yes            | No          | No       | None       |
+| ClusterPapers        | List[Paper]                 | List[List[Paper]]                   | No            | Yes            | No          | No       | Embeddings |
+| VisualizeCitations   | Paper                       | Graph                               | No            | No             | No          | No       | None       |
+
 
 In this table, each row represents a specific transformation that can be applied to scientific papers, and each column represents a key property or attribute of the transformation. The `Input Type(s)` and `Output Type(s)` columns specify the types of the objects that the transformation consumes and produces, respectively, using the typed objects we defined earlier. 📥📤
 
