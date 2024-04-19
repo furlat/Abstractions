@@ -229,6 +229,14 @@ However, in many real-world scenarios, the transformations in our pipeline may h
 
 To address these challenges, we can leverage the rich and expressive abstractions provided by category theory and type theory, which allow us to specify and reason about the properties and relationships of our transformations in a more general and rigorous way. In particular, we can use the concepts of functors, natural transformations, and monads to define and compose our transformations in a way that preserves their essential structure and behavior, while abstracting away the details and variations of their implementation. 🔢🔍
 
+
+
+Formally, we can define a category Text, where the objects are the types of our text objects, such as Token, Sentence, and Document, and the morphisms are the transformations between these types, such as Tokenize, POSTag, and NERTag. We can then define functors between this category and other categories, such as List, Maybe, and IO, which capture the common patterns and abstractions of our transformations, such as lists, optional values, and side effects. 🌿⚙️
+
+For example, we can define a functor Map, which maps each type T to the type List[T], and each transformation f: A -> B to the transformation map(f): List[A] -> List[B], which applies the transformation f to each element of the input list and returns the output list. This functor captures the common pattern of applying a transformation to a collection of objects, and allows us to compose and parallelize our transformations in a generic and type-safe way. 🧩🔀
+
+Similarly, we can define a functor Maybe, which maps each type T to the type Maybe[T], which represents an optional value of type T, and each transformation f: A -> B to the transformation map(f): Maybe[A] -> Maybe[B], which applies the transformation f to the input value if it exists, or returns None otherwise. This functor captures the common pattern of handling missing or invalid input values, and allows us to compose and chain our transformations in a way that propagates and handles errors gracefully. 🌿💡
+
 ```mermaid
 classDiagram
     class Functor {
@@ -257,12 +265,6 @@ classDiagram
     Monad <|-- Maybe
     Monad <|-- IO
 ```
-
-Formally, we can define a category Text, where the objects are the types of our text objects, such as Token, Sentence, and Document, and the morphisms are the transformations between these types, such as Tokenize, POSTag, and NERTag. We can then define functors between this category and other categories, such as List, Maybe, and IO, which capture the common patterns and abstractions of our transformations, such as lists, optional values, and side effects. 🌿⚙️
-
-For example, we can define a functor Map, which maps each type T to the type List[T], and each transformation f: A -> B to the transformation map(f): List[A] -> List[B], which applies the transformation f to each element of the input list and returns the output list. This functor captures the common pattern of applying a transformation to a collection of objects, and allows us to compose and parallelize our transformations in a generic and type-safe way. 🧩🔀
-
-Similarly, we can define a functor Maybe, which maps each type T to the type Maybe[T], which represents an optional value of type T, and each transformation f: A -> B to the transformation map(f): Maybe[A] -> Maybe[B], which applies the transformation f to the input value if it exists, or returns None otherwise. This functor captures the common pattern of handling missing or invalid input values, and allows us to compose and chain our transformations in a way that propagates and handles errors gracefully. 🌿💡
 
 Finally, we can define a monad IO, which maps each type T to the type IO[T], which represents a computation that may perform side effects and return a value of type T, and each transformation f: A -> B to the transformation flatMap(f): IO[A] -> IO[B], which composes the input computation with the transformation f and returns the output computation. This monad captures the common pattern of performing stateful or non-deterministic computations, such as reading from or writing to external resources, or sampling from probability distributions, and allows us to compose and sequence our transformations in a way that manages the side effects and dependencies explicitly. 🚀💻
 
@@ -372,7 +374,61 @@ The `Theme` object represents a single theme in a story, with the following attr
 - examples: The list of examples or instances of the theme in the story, as a list of strings.
 ```
 
-With these core typed objects defined, we can now specify the various transformations that can be applied to narrative text, in order to parse, manipulate, and generate them. These transformations will be organized into a transformation table, similar to the one we used for general text processing, but with some additional columns and rows specific to narrative text. 📊🔄
+With these core typed objects defined, we can now specify the various transformations that can be applied to narrative text, in order to parse, manipulate, and generate them.
+```mermaid
+classDiagram
+    class Story {
+        +title: str
+        +author: str
+        +chapters: List[Chapter]
+        +characters: List[Character]
+        +events: List[Event]
+        +settings: List[Setting]
+        +themes: List[Theme]
+    }
+    class Chapter {
+        +title: str
+        +text: str
+        +paragraphs: List[Paragraph]
+        +scenes: List[Scene]
+    }
+    class Character {
+        +name: str
+        +aliases: List[str]
+        +description: str
+        +attributes: List[str]
+        +relations: List[Relation]
+    }
+    class Event {
+        +type: str
+        +description: str
+        +characters: List[Character]
+        +setting: Setting
+        +causes: List[Event]
+        +effects: List[Event]
+    }
+    class Setting {
+        +name: str
+        +description: str
+        +attributes: List[str]
+    }
+    class Theme {
+        +name: str
+        +description: str
+        +examples: List[str]
+    }
+    Story *-- Chapter
+    Story *-- Character
+    Story *-- Event
+    Story *-- Setting
+    Story *-- Theme
+    Chapter *-- Paragraph
+    Chapter *-- Scene
+    Event *-- Character
+    Event *-- Setting
+    Character *-- Relation
+```
+ These transformations will be organized into a transformation table, similar to the one we used for general text processing, but with some additional columns and rows specific to narrative text. 📊🔄
 
 | Transformation | Input Type | Output Type | Invertible | Composable | Parallelizable | Stateful | Stochastic |
 |----------------|------------|-------------|------------|------------|----------------|----------|------------|
@@ -457,6 +513,58 @@ By applying the `parse_module` function from `libcst` to a `RawCode` object, we 
 
 From the `Module` object, we can extract a set of `Class` and `Function` objects, which represent the classes and functions defined in the module, respectively. These objects contain information about the name, docstring, decorators, and body of the corresponding class or function, as well as references to any nested objects, such as methods or inner functions. 📦🔍
 
+```mermaid
+classDiagram
+    class Module {
+        +name: str
+        +imports: List[Import]
+        +classes: List[Class]
+        +functions: List[Function]
+    }
+    class Import {
+        +name: str
+        +alias: str
+    }
+    class Class {
+        +name: str
+        +bases: List[str]
+        +methods: List[Function]
+        +attributes: List[Attribute]
+    }
+    class Function {
+        +name: str
+        +parameters: List[Parameter]
+        +return_type: str
+        +body: List[Statement]
+    }
+    class Attribute {
+        +name: str
+        +type: str
+        +value: Expression
+    }
+    class Parameter {
+        +name: str
+        +type: str
+        +default: Expression
+    }
+    class Statement {
+        +type: str
+        +content: str
+    }
+    class Expression {
+        +type: str
+        +content: str
+    }
+    Module *-- Import
+    Module *-- Class
+    Module *-- Function
+    Class *-- Function
+    Class *-- Attribute
+    Function *-- Parameter
+    Function *-- Statement
+    Attribute *-- Expression
+    Parameter *-- Expression
+```
 To manipulate and transform these objects, we can define a set of typed transformations, similar to the ones we used for narrative text processing, but with some additional constraints and extensions specific to Python code. For example, we can define transformations for adding or removing classes and functions, modifying their docstrings or type hints, or refactoring their implementation and structure. 🔧💡
 
 One key difference between Python code processing and narrative text processing is the deterministic nature of the parsing and generation process. While narrative text often requires complex and probabilistic models to extract and resolve the various elements and relations, Python code has a well-defined and unambiguous grammar, which can be parsed and generated using deterministic algorithms and rules. This means that we can leverage the `libcst` library to perform many of the low-level transformations and validations automatically, without the need for additional heuristics or models. 🔍✅
@@ -717,7 +825,83 @@ The `Citation` object represents a citation to a paper, with the following attri
 - reference: The `Reference` object representing the citation.
 ```
 
-With these core typed objects defined, we can now specify the various transformations that can be applied to scientific papers, in order to parse, manipulate, and generate them. These transformations will be organized into a transformation table, similar to the ones we used for narrative text and Python code, but with some additional columns and rows specific to scientific papers. 📊🔄
+With these core typed objects defined, we can now specify the various transformations that can be applied to scientific papers, in order to parse, manipulate, and generate them.
+
+```mermaid
+classDiagram
+    class Paper {
+        +title: str
+        +authors: List[Author]
+        +abstract: str
+        +sections: List[Section]
+        +references: List[Reference]
+        +citations: List[Citation]
+        +doi: str
+        +url: str
+        +venue: str
+        +year: int
+    }
+    class Author {
+        +name: str
+        +email: str
+        +affiliation: str
+        +orcid: str
+    }
+    class Section {
+        +title: str
+        +text: str
+        +subsections: List[Section]
+        +figures: List[Figure]
+        +tables: List[Table]
+        +equations: List[Equation]
+        +theorems: List[Theorem]
+        +algorithms: List[Algorithm]
+    }
+    class Reference {
+        +text: str
+        +paper: Paper
+        +doi: str
+        +url: str
+    }
+    class Citation {
+        +text: str
+        +paper: Paper
+        +reference: Reference
+    }
+    class Figure {
+        +caption: str
+        +image: str
+    }
+    class Table {
+        +caption: str
+        +data: List[List[str]]
+    }
+    class Equation {
+        +text: str
+        +label: str
+    }
+    class Theorem {
+        +text: str
+        +label: str
+    }
+    class Algorithm {
+        +text: str
+        +label: str
+    }
+    Paper *-- Author
+    Paper *-- Section
+    Paper *-- Reference
+    Paper *-- Citation
+    Section *-- Section
+    Section *-- Figure
+    Section *-- Table
+    Section *-- Equation
+    Section *-- Theorem
+    Section *-- Algorithm
+    Citation *-- Reference
+```
+
+ These transformations will be organized into a transformation table, similar to the ones we used for narrative text and Python code, but with some additional columns and rows specific to scientific papers. 📊🔄
 
 | Transformation       | Input Type(s)               | Output Type(s)                      | Deterministic | Parallelizable | Incremental | Stateful | Metadata   |
 |----------------------|-----------------------------|-------------------------------------|---------------|----------------|-------------|----------|------------|
