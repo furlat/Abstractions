@@ -63,15 +63,67 @@ In the following sections, we will present the details of our framework and its 
 ## Typed Objects and Transformations 🧩🔀
 At the core of our framework is the idea of representing text data as a hierarchy of typed objects, each of which captures a specific level of linguistic structure and meaning. These objects are organized into a type system, where the relationships and constraints between different types are expressed using expressive type signatures and algebraic data types. 🌿💡
 
+
+```mermaid
+classDiagram
+    class Token {
+        +text: str
+        +pos: str
+        +ner: str
+        +lemma: str
+    }
+    class Sentence {
+        +text: str
+        +tokens: List[Token]
+    }
+    class Paragraph {
+        +text: str
+        +sentences: List[Sentence]
+    }
+    class Document {
+        +title: str
+        +author: str
+        +paragraphs: List[Paragraph]
+    }
+    Document *-- Paragraph
+    Paragraph *-- Sentence
+    Sentence *-- Token
+```
+
 Formally, we define a set of base types, such as Token, Sentence, and Document, which represent the fundamental units of text data at different levels of granularity. We then define a set of type constructors, such as List, Tree, and Graph, which allow us to compose and structure these base types into more complex and structured objects, such as sequences, hierarchies, and networks of text elements. 🔢🔍
 
 For example, we can define a type Paragraph as a List of Sentence objects, which represents a coherent and contiguous unit of text that consists of a sequence of related sentences. Similarly, we can define a type Section as a Tree of Paragraph objects, which represents a hierarchical and recursive structure of text that consists of nested paragraphs and subsections. 🌳📝
+
+```mermaid
+graph LR
+    A[Document] --> B[Tokenize]
+    B --> C[POS-tag]
+    C --> D[NER-tag]
+    D --> E[Tagged Document]
+```
 
 To manipulate and transform these objects, we define a set of typed functions, or transformations, which map between different types of text objects in a way that preserves their essential structure and meaning. These transformations are designed to be composable, meaning that they can be combined and chained together to form more complex and expressive operations, and invertible, meaning that they can be run both forwards and backwards to ensure their correctness and consistency. 🧩🔀
 
 For example, we can define a transformation Tokenize, which maps a Sentence object to a List of Token objects, by splitting the sentence into its constituent words and punctuation marks. We can also define an inverse transformation Detokenize, which maps a List of Token objects back to a Sentence object, by concatenating the tokens and reconstructing the original sentence structure. 🔄💨
 
 Similarly, we can define transformations for other common NLP tasks, such as part-of-speech tagging, dependency parsing, named entity recognition, and coreference resolution, each of which maps between different types of text objects and preserves the relevant linguistic structure and meaning. We can also define higher-order transformations, which take other transformations as arguments and return new transformations, allowing us to compose and parameterize our operations in a flexible and reusable way. 🌉🔮
+
+```mermaid
+graph TD
+    A[Document] --> B{Is English?}
+    B -->|Yes| C[Tokenize]
+    B -->|No| D[Translate]
+    D --> C
+    C --> E{Is Formal?}
+    E -->|Yes| F[POS-tag]
+    E -->|No| G[Lemmatize]
+    F --> H[NER-tag]
+    G --> H
+    H --> I{Summarize?}
+    I -->|Yes| J[Summarize]
+    I -->|No| K[Tagged Document]
+    J --> K
+```
 
 To ensure the type safety and correctness of these transformations, we use advanced type systems and programming techniques, such as dependent types, refinement types, and linear types. These techniques allow us to express and verify complex constraints and invariants on our text objects and transformations, such as the well-formedness of a syntax tree, the consistency of a coreference graph, or the invertibility of a parsing function. 🛡️🔧
 
@@ -111,6 +163,8 @@ By combining these ideas and techniques, we aim to create a principled and unifi
  ## 🌿💡✨ Transformation Tables and Categorical Abstractions 📊🔍
 At the heart of our framework for text processing is the idea of a transformation table, which provides a structured and systematic way of organizing the various mappings and relationships between the typed objects in our hierarchy. The transformation table is essentially a blueprint for the processing pipeline, which specifies the input and output types of each transformation, along with its key properties and dependencies. 🧩🔀
 
+
+
 Formally, we define a transformation table as a data structure that maps each transformation to a tuple of attributes, which capture the essential characteristics and constraints of the transformation. These attributes include:
 
 ```
@@ -125,6 +179,28 @@ Formally, we define a transformation table as a data structure that maps each tr
 
 By organizing the transformations in a table, we can easily reason about their properties and dependencies, and create modular and reusable components that can be composed and extended to form complex pipelines. For example, we can use the invertible and composable attributes to define a set of bidirectional and chainable transformations, such as tokenization, normalization, and lemmatization, which can be used for both analysis and generation tasks. Similarly, we can use the parallelizable and stateful attributes to define a set of scalable and context-aware transformations, such as named entity recognition, coreference resolution, and semantic role labeling, which can be applied efficiently to large and diverse datasets. 🚀💡
 
+```mermaid
+classDiagram
+    class Transformation {
+        +name: str
+        +input_type: Type
+        +output_type: Type
+        +is_deterministic: bool
+        +is_parallelizable: bool
+        +is_incremental: bool
+        +is_invertible: bool
+        +is_composable: bool
+    }
+    class TransformationTable {
+        +transformations: List[Transformation]
+        +add_transformation(t: Transformation)
+        +remove_transformation(name: str)
+        +get_transformation(name: str) -> Transformation
+        +compose_transformations(names: List[str]) -> Transformation
+    }
+    TransformationTable o-- Transformation
+```
+
 To illustrate these ideas, let us consider a simple example of a transformation table for a text processing pipeline that performs tokenization, part-of-speech tagging, and named entity recognition on a given document. The table might look something like this:
 
 | Transformation | Input Type  | Output Type  | Invertible | Composable | Parallelizable | Stateful | Stochastic |
@@ -138,15 +214,64 @@ In this table, each row represents a specific transformation in the pipeline, an
 
 By reasoning about the properties and dependencies of these transformations, we can create an efficient and modular pipeline that minimizes redundant computation and maximizes parallelism. For example, we can see that the Tokenize transformation can be safely composed with the POSTag and NERTag transformations, since it is invertible and composable, and that the POSTag and NERTag transformations can be applied in parallel, since they are parallelizable and do not depend on each other's output. 🚀⚡
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant TransformationTable
+    participant Tokenize
+    participant POSTag
+    participant NERTag
+    User->>TransformationTable: compose_transformations(["Tokenize", "POSTag", "NERTag"])
+    TransformationTable->>Tokenize: get_transformation("Tokenize")
+    Tokenize-->>TransformationTable: Tokenize
+    TransformationTable->>POSTag: get_transformation("POSTag")
+    POSTag-->>TransformationTable: POSTag
+    TransformationTable->>NERTag: get_transformation("NERTag")
+    NERTag-->>TransformationTable: NERTag
+    TransformationTable->>TransformationTable: compose(Tokenize, POSTag, NERTag)
+    TransformationTable-->>User: Composed Transformation
+```
+
 However, in many real-world scenarios, the transformations in our pipeline may have more complex dependencies and trade-offs, which require more sophisticated techniques and abstractions to handle. For example, some transformations may be only partially invertible or composable, meaning that they can recover or combine only some aspects of the input or output objects, while losing or altering others. Similarly, some transformations may have dynamic or conditional dependencies, meaning that their input or output types may depend on the values of the objects themselves, or on some external factors or context. 🌐💡
 
 To address these challenges, we can leverage the rich and expressive abstractions provided by category theory and type theory, which allow us to specify and reason about the properties and relationships of our transformations in a more general and rigorous way. In particular, we can use the concepts of functors, natural transformations, and monads to define and compose our transformations in a way that preserves their essential structure and behavior, while abstracting away the details and variations of their implementation. 🔢🔍
+
+
 
 Formally, we can define a category Text, where the objects are the types of our text objects, such as Token, Sentence, and Document, and the morphisms are the transformations between these types, such as Tokenize, POSTag, and NERTag. We can then define functors between this category and other categories, such as List, Maybe, and IO, which capture the common patterns and abstractions of our transformations, such as lists, optional values, and side effects. 🌿⚙️
 
 For example, we can define a functor Map, which maps each type T to the type List[T], and each transformation f: A -> B to the transformation map(f): List[A] -> List[B], which applies the transformation f to each element of the input list and returns the output list. This functor captures the common pattern of applying a transformation to a collection of objects, and allows us to compose and parallelize our transformations in a generic and type-safe way. 🧩🔀
 
 Similarly, we can define a functor Maybe, which maps each type T to the type Maybe[T], which represents an optional value of type T, and each transformation f: A -> B to the transformation map(f): Maybe[A] -> Maybe[B], which applies the transformation f to the input value if it exists, or returns None otherwise. This functor captures the common pattern of handling missing or invalid input values, and allows us to compose and chain our transformations in a way that propagates and handles errors gracefully. 🌿💡
+
+```mermaid
+classDiagram
+    class Functor {
+        +map(f: A -> B) -> Functor[B]
+    }
+    class Monad {
+        +unit(a: A) -> Monad[A]
+        +bind(f: A -> Monad[B]) -> Monad[B]
+    }
+    class List~T~ {
+        +map(f: T -> U) -> List[U]
+        +flatMap(f: T -> List[U]) -> List[U]
+    }
+    class Maybe~T~ {
+        +map(f: T -> U) -> Maybe[U]
+        +flatMap(f: T -> Maybe[U]) -> Maybe[U]
+    }
+    class IO~T~ {
+        +map(f: T -> U) -> IO[U]
+        +flatMap(f: T -> IO[U]) -> IO[U]
+    }
+    Functor <|-- List
+    Functor <|-- Maybe
+    Functor <|-- IO
+    Monad <|-- List
+    Monad <|-- Maybe
+    Monad <|-- IO
+```
 
 Finally, we can define a monad IO, which maps each type T to the type IO[T], which represents a computation that may perform side effects and return a value of type T, and each transformation f: A -> B to the transformation flatMap(f): IO[A] -> IO[B], which composes the input computation with the transformation f and returns the output computation. This monad captures the common pattern of performing stateful or non-deterministic computations, such as reading from or writing to external resources, or sampling from probability distributions, and allows us to compose and sequence our transformations in a way that manages the side effects and dependencies explicitly. 🚀💻
 
@@ -256,7 +381,61 @@ The `Theme` object represents a single theme in a story, with the following attr
 - examples: The list of examples or instances of the theme in the story, as a list of strings.
 ```
 
-With these core typed objects defined, we can now specify the various transformations that can be applied to narrative text, in order to parse, manipulate, and generate them. These transformations will be organized into a transformation table, similar to the one we used for general text processing, but with some additional columns and rows specific to narrative text. 📊🔄
+With these core typed objects defined, we can now specify the various transformations that can be applied to narrative text, in order to parse, manipulate, and generate them.
+```mermaid
+classDiagram
+    class Story {
+        +title: str
+        +author: str
+        +chapters: List[Chapter]
+        +characters: List[Character]
+        +events: List[Event]
+        +settings: List[Setting]
+        +themes: List[Theme]
+    }
+    class Chapter {
+        +title: str
+        +text: str
+        +paragraphs: List[Paragraph]
+        +scenes: List[Scene]
+    }
+    class Character {
+        +name: str
+        +aliases: List[str]
+        +description: str
+        +attributes: List[str]
+        +relations: List[Relation]
+    }
+    class Event {
+        +type: str
+        +description: str
+        +characters: List[Character]
+        +setting: Setting
+        +causes: List[Event]
+        +effects: List[Event]
+    }
+    class Setting {
+        +name: str
+        +description: str
+        +attributes: List[str]
+    }
+    class Theme {
+        +name: str
+        +description: str
+        +examples: List[str]
+    }
+    Story *-- Chapter
+    Story *-- Character
+    Story *-- Event
+    Story *-- Setting
+    Story *-- Theme
+    Chapter *-- Paragraph
+    Chapter *-- Scene
+    Event *-- Character
+    Event *-- Setting
+    Character *-- Relation
+```
+ These transformations will be organized into a transformation table, similar to the one we used for general text processing, but with some additional columns and rows specific to narrative text. 📊🔄
 
 | Transformation | Input Type | Output Type | Invertible | Composable | Parallelizable | Stateful | Stochastic |
 |----------------|------------|-------------|------------|------------|----------------|----------|------------|
@@ -341,6 +520,58 @@ By applying the `parse_module` function from `libcst` to a `RawCode` object, we 
 
 From the `Module` object, we can extract a set of `Class` and `Function` objects, which represent the classes and functions defined in the module, respectively. These objects contain information about the name, docstring, decorators, and body of the corresponding class or function, as well as references to any nested objects, such as methods or inner functions. 📦🔍
 
+```mermaid
+classDiagram
+    class Module {
+        +name: str
+        +imports: List[Import]
+        +classes: List[Class]
+        +functions: List[Function]
+    }
+    class Import {
+        +name: str
+        +alias: str
+    }
+    class Class {
+        +name: str
+        +bases: List[str]
+        +methods: List[Function]
+        +attributes: List[Attribute]
+    }
+    class Function {
+        +name: str
+        +parameters: List[Parameter]
+        +return_type: str
+        +body: List[Statement]
+    }
+    class Attribute {
+        +name: str
+        +type: str
+        +value: Expression
+    }
+    class Parameter {
+        +name: str
+        +type: str
+        +default: Expression
+    }
+    class Statement {
+        +type: str
+        +content: str
+    }
+    class Expression {
+        +type: str
+        +content: str
+    }
+    Module *-- Import
+    Module *-- Class
+    Module *-- Function
+    Class *-- Function
+    Class *-- Attribute
+    Function *-- Parameter
+    Function *-- Statement
+    Attribute *-- Expression
+    Parameter *-- Expression
+```
 To manipulate and transform these objects, we can define a set of typed transformations, similar to the ones we used for narrative text processing, but with some additional constraints and extensions specific to Python code. For example, we can define transformations for adding or removing classes and functions, modifying their docstrings or type hints, or refactoring their implementation and structure. 🔧💡
 
 One key difference between Python code processing and narrative text processing is the deterministic nature of the parsing and generation process. While narrative text often requires complex and probabilistic models to extract and resolve the various elements and relations, Python code has a well-defined and unambiguous grammar, which can be parsed and generated using deterministic algorithms and rules. This means that we can leverage the `libcst` library to perform many of the low-level transformations and validations automatically, without the need for additional heuristics or models. 🔍✅
@@ -601,7 +832,83 @@ The `Citation` object represents a citation to a paper, with the following attri
 - reference: The `Reference` object representing the citation.
 ```
 
-With these core typed objects defined, we can now specify the various transformations that can be applied to scientific papers, in order to parse, manipulate, and generate them. These transformations will be organized into a transformation table, similar to the ones we used for narrative text and Python code, but with some additional columns and rows specific to scientific papers. 📊🔄
+With these core typed objects defined, we can now specify the various transformations that can be applied to scientific papers, in order to parse, manipulate, and generate them.
+
+```mermaid
+classDiagram
+    class Paper {
+        +title: str
+        +authors: List[Author]
+        +abstract: str
+        +sections: List[Section]
+        +references: List[Reference]
+        +citations: List[Citation]
+        +doi: str
+        +url: str
+        +venue: str
+        +year: int
+    }
+    class Author {
+        +name: str
+        +email: str
+        +affiliation: str
+        +orcid: str
+    }
+    class Section {
+        +title: str
+        +text: str
+        +subsections: List[Section]
+        +figures: List[Figure]
+        +tables: List[Table]
+        +equations: List[Equation]
+        +theorems: List[Theorem]
+        +algorithms: List[Algorithm]
+    }
+    class Reference {
+        +text: str
+        +paper: Paper
+        +doi: str
+        +url: str
+    }
+    class Citation {
+        +text: str
+        +paper: Paper
+        +reference: Reference
+    }
+    class Figure {
+        +caption: str
+        +image: str
+    }
+    class Table {
+        +caption: str
+        +data: List[List[str]]
+    }
+    class Equation {
+        +text: str
+        +label: str
+    }
+    class Theorem {
+        +text: str
+        +label: str
+    }
+    class Algorithm {
+        +text: str
+        +label: str
+    }
+    Paper *-- Author
+    Paper *-- Section
+    Paper *-- Reference
+    Paper *-- Citation
+    Section *-- Section
+    Section *-- Figure
+    Section *-- Table
+    Section *-- Equation
+    Section *-- Theorem
+    Section *-- Algorithm
+    Citation *-- Reference
+```
+
+ These transformations will be organized into a transformation table, similar to the ones we used for narrative text and Python code, but with some additional columns and rows specific to scientific papers. 📊🔄
 
 | Transformation       | Input Type(s)               | Output Type(s)                      | Deterministic | Parallelizable | Incremental | Stateful | Metadata   |
 |----------------------|-----------------------------|-------------------------------------|---------------|----------------|-------------|----------|------------|
@@ -734,3 +1041,19 @@ def generate_survey_paper(query: str, num_papers: int, num_sections: int) -> Pap
 ```
 
 In this example, we first use the `search_pubs` function from the `scholarly` library to retrieve a list of relevant papers based on the input query, along with their citation
+
+## Conclusion
+
+In this document, we have presented a novel framework for text processing that combines ideas from type theory and functional programming to provide a principled and flexible way of representing and manipulating text data at different levels of abstraction. Through a series of case studies and examples, we have demonstrated the potential of this framework to enable a wide range of applications and insights across various domains, from narrative text processing and Python code analysis to scientific paper summarization and generation.
+
+However, it is important to note that the framework presented here is still largely conceptual and has not yet been fully implemented or evaluated in practice. The ideas and techniques described in this document are intended to serve as a starting point and inspiration for further research and development, rather than a complete and final solution.
+
+Realizing the full potential of this framework will require a significant amount of additional work and collaboration, both in terms of refining and extending the theoretical foundations, and in terms of building and testing concrete implementations and applications. It will also require a deep engagement with the broader community of researchers and practitioners in natural language processing, programming languages, and knowledge representation, to ensure that the framework is aligned with the needs and priorities of these fields.
+
+Nevertheless, we believe that the vision and principles outlined in this document have the potential to make a meaningful and lasting contribution to the way we approach and solve problems in text processing and artificial intelligence. By providing a unified and principled foundation for representing and manipulating text data, and by enabling the integration and extension of state-of-the-art techniques from machine learning, formal methods, and software engineering, this framework offers a promising path forward for advancing the state of the art and unlocking new possibilities for intelligent and adaptive text processing systems.
+
+We would like to thank you, the reader, for taking the time to engage with these ideas and to consider their potential implications and applications. We hope that this document has sparked your curiosity and imagination, and that it will inspire you to join us in the ongoing quest to push the boundaries of what is possible with language and computation.
+
+Cynde & Zephyr Luminos
+
+🌿💡🔍📚🧩🔀🌳📝🔢🔍🌐💻🤖🌉🎨💾📝🔍🚀💻🌟🔧💡🚧🌍💻
