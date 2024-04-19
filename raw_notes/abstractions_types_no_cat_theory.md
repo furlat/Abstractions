@@ -56,15 +56,67 @@ In the following sections, we will present the details of our framework and its 
 ## Typed Objects and Transformations 🧩🔀
 At the core of our framework is the idea of representing text data as a hierarchy of typed objects, each of which captures a specific level of linguistic structure and meaning. These objects are organized into a type system, where the relationships and constraints between different types are expressed using expressive type signatures and algebraic data types. 🌿💡
 
+
+```mermaid
+classDiagram
+    class Token {
+        +text: str
+        +pos: str
+        +ner: str
+        +lemma: str
+    }
+    class Sentence {
+        +text: str
+        +tokens: List[Token]
+    }
+    class Paragraph {
+        +text: str
+        +sentences: List[Sentence]
+    }
+    class Document {
+        +title: str
+        +author: str
+        +paragraphs: List[Paragraph]
+    }
+    Document *-- Paragraph
+    Paragraph *-- Sentence
+    Sentence *-- Token
+```
+
 Formally, we define a set of base types, such as Token, Sentence, and Document, which represent the fundamental units of text data at different levels of granularity. We then define a set of type constructors, such as List, Tree, and Graph, which allow us to compose and structure these base types into more complex and structured objects, such as sequences, hierarchies, and networks of text elements. 🔢🔍
 
 For example, we can define a type Paragraph as a List of Sentence objects, which represents a coherent and contiguous unit of text that consists of a sequence of related sentences. Similarly, we can define a type Section as a Tree of Paragraph objects, which represents a hierarchical and recursive structure of text that consists of nested paragraphs and subsections. 🌳📝
+
+```mermaid
+graph LR
+    A[Document] --> B[Tokenize]
+    B --> C[POS-tag]
+    C --> D[NER-tag]
+    D --> E[Tagged Document]
+```
 
 To manipulate and transform these objects, we define a set of typed functions, or transformations, which map between different types of text objects in a way that preserves their essential structure and meaning. These transformations are designed to be composable, meaning that they can be combined and chained together to form more complex and expressive operations, and invertible, meaning that they can be run both forwards and backwards to ensure their correctness and consistency. 🧩🔀
 
 For example, we can define a transformation Tokenize, which maps a Sentence object to a List of Token objects, by splitting the sentence into its constituent words and punctuation marks. We can also define an inverse transformation Detokenize, which maps a List of Token objects back to a Sentence object, by concatenating the tokens and reconstructing the original sentence structure. 🔄💨
 
 Similarly, we can define transformations for other common NLP tasks, such as part-of-speech tagging, dependency parsing, named entity recognition, and coreference resolution, each of which maps between different types of text objects and preserves the relevant linguistic structure and meaning. We can also define higher-order transformations, which take other transformations as arguments and return new transformations, allowing us to compose and parameterize our operations in a flexible and reusable way. 🌉🔮
+
+```mermaid
+graph TD
+    A[Document] --> B{Is English?}
+    B -->|Yes| C[Tokenize]
+    B -->|No| D[Translate]
+    D --> C
+    C --> E{Is Formal?}
+    E -->|Yes| F[POS-tag]
+    E -->|No| G[Lemmatize]
+    F --> H[NER-tag]
+    G --> H
+    H --> I{Summarize?}
+    I -->|Yes| J[Summarize]
+    I -->|No| K[Tagged Document]
+    J --> K
+```
 
 To ensure the type safety and correctness of these transformations, we use advanced type systems and programming techniques, such as dependent types, refinement types, and linear types. These techniques allow us to express and verify complex constraints and invariants on our text objects and transformations, such as the well-formedness of a syntax tree, the consistency of a coreference graph, or the invertibility of a parsing function. 🛡️🔧
 
