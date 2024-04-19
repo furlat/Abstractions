@@ -69,7 +69,7 @@ Finally, our framework is motivated by the need for more principled and transpar
 
 In the following sections, we will present the details of our framework and its application to narrative text processing, starting with a formal definition of our typed objects and transformations, and then presenting our modular pipeline architecture and transformation table. We will also discuss the techniques we use for generating synthetic data, optimizing performance, and evaluating our approach, and highlight some of the key results and insights from our experiments and case studies. 🔍📊
 
-Typed Objects and Transformations 🧩🔀
+## Typed Objects and Transformations 🧩🔀
 
 At the core of our framework is the idea of representing text data as a hierarchy of typed objects, each of which captures a specific level of linguistic structure and meaning. These objects are organized into a category, where the morphisms between objects represent the possible transformations and mappings between different levels of abstraction. 🌿💡
 
@@ -95,7 +95,7 @@ Finally, we use monadic abstractions to handle the side effects and dependencies
 
 In the following sections, we will present a detailed case study of how our framework can be applied to the domain of narrative text processing, and show how our typed objects and transformations can be used to create a modular and interpretable pipeline for analyzing and generating stories and novels. We will also discuss the techniques we use for data generation, optimization, and evaluation, and highlight some of the key insights and results from our experiments. 📚🔍
 
-🌿💡✨ Transformation Tables and Categorical Abstractions 📊🔍
+## 🌿💡✨ Transformation Tables and Categorical Abstractions 📊🔍
 
 At the heart of our framework for text processing is the idea of a transformation table, which provides a structured and systematic way of organizing the various mappings and relationships between the typed objects in our category. The transformation table is essentially a blueprint for the processing pipeline, which specifies the input and output types of each transformation, along with its key properties and dependencies. 🧩🔀
 
@@ -353,6 +353,78 @@ The ResolveCharacters, ResolveEvents, ResolveSettings, and ResolveThemes transfo
 
 Finally, the ConstructBook transformation would take the resolved lists of Chapter, Character, Event, Setting, and Theme objects, and produce a ProcessedBook object that represents the final structured and annotated representation of the book's narrative content. This object would contain all the relevant information and metadata about the book, such as its title, author, chapters, characters, events, settings, and themes, as well as any additional annotations or analyses that were performed by the pipeline. 📚🎉
 
+```
+                   +-----------------------+
+                   |    NarrativeModel     |
+                   +-----------------------+
+                              |
+                              |
+                   +-----------------------+
+                   |       RawBook         |
+                   +-----------------------+
+                              |
+                              |
+          +------------------+------------------+
+          |                                     |
++---------+----------+              +-----------+---------+
+|      Tokenize      |              |    SplitChapters    |
+|                    |              |                     |
+|  Input:            |              |  Input:             |
+|  - RawBook         |              |  - List[Token]      |
+|                    |              |                     |
+|  Output:           |              |  Output:            |
+|  - List[Token]     |              |  - List[Chapter]    |
++--------------------+              +---------------------+
+                                                |
+                                                |
+                                     +----------+----------+
+                                     |   SplitParagraphs   |
+                                     |                     |
+                                     |  Input:             |
+                                     |  - Chapter          |
+                                     |                     |
+                                     |  Output:            |
+                                     |  - List[Paragraph]  |
+                                     +---------------------+
+                                                |
+                                                |
+          +------------------+------------------+-----------------+
+          |                  |                  |                 |
++---------+----------+       |       +---------+--------+         |
+| ExtractCharacters  |       |       |  ExtractEvents   |         |
+|                    |       |       |                  |         |
+|  Input:            |       |       |  Input:          |         |
+|  - Paragraph       |       |       |  - Paragraph     |         |
+|  - List[Character] |       |       |  - List[Character]         |
+|                    |       |       |  - List[Setting] |         |
+|  Output:           |       |       |                  |         |
+|  - List[Character] |       |       |  Output:         |         |
+|                    |       |       |  - List[Event]   |         |
++--------------------+       |       +------------------+         |
+                             |                                    |
+                    +--------+----------+                         |
+                    |  ExtractSettings  |                         |
+                    |                   |                         |
+                    |  Input:           |                         |
+                    |  - Paragraph      |                         |
+                    |  - List[Setting]  |                         |
+                    |                   |                         |
+                    |  Output:          |                         |
+                    |  - List[Setting]  |                         |
+                    +-------------------+                         |
+                                                                  |
+                                                       +----------+---------+
+                                                       |   ExtractThemes    |
+                                                       |                    |
+                                                       |  Input:            |
+                                                       |  - Paragraph       |
+                                                       |  - List[Theme]     |
+                                                       |                    |
+                                                       |  Output:           |
+                                                       |  - List[Theme]     |
+                                                       +--------------------+
+
+```
 By walking through this example, we can see how our transformation pipeline can effectively capture and manipulate the rich structure and meaning of narrative text, using a modular and interpretable set of typed objects and categorical abstractions. Moreover, we can see how the pipeline can leverage the efficiency and scalability of parallel and incremental processing, while also integrating domain-specific knowledge and constraints into the analysis. 🌟🔧
 
 Of course, this is just a simple and illustrative example, and there are many more challenges and opportunities in applying our framework to real-world narrative data. For example, we would need to handle more complex and ambiguous cases, such as characters with multiple names or aliases, events with implicit or uncertain participants, settings with vague or metaphorical descriptions, and themes with subtle or conflicting attributes. We would also need to integrate more advanced techniques and models from natural language processing, such as coreference resolution, semantic role labeling, and sentiment analysis, to improve the accuracy and richness of the extracted objects and relations. 🌐💻
@@ -432,7 +504,7 @@ Despite these challenges, we believe that our framework provides a powerful and 
 
 In the following sections, we will dive deeper into the technical details and implementation of our Python code processing pipeline, and showcase some concrete examples and case studies of how it can be used to solve real-world problems and challenges. We will also discuss the future directions and opportunities for extending and improving our framework, and highlight the potential impact and implications of our approach for the broader field of software engineering and programming language research. 🚀🔮
 
-Technical Details and Implementation 🛠️💻
+### Technical Details and Implementation 🛠️💻
 
 Now that we have introduced the high-level concepts and components of our Python code processing pipeline, let us dive into the technical details and implementation of our framework. In this section, we will provide a more in-depth look at the typed objects and transformations used in our pipeline, and explain how they can be implemented using the `libcst` library and other tools and libraries in the Python ecosystem. 🐍🔧
 
@@ -581,10 +653,90 @@ trace.get_tracer_provider().shutdown()
 Here, we first create a `TracerProvider` object with a `Resource` that specifies the service name, and then create a `JaegerExporter` object with the host and port of the Jaeger agent. We then add a `BatchSpanProcessor` to the tracer provider, which will batch and export the spans to Jaeger in the background. Finally, we run the instrumented code, and call `shutdown` on the tracer provider to flush and close the exporter. 🌐💻
 
 With these traces collected and exported, we can then use various tools and libraries, such as Jaeger UI, Prometheus, or Grafana, to visualize and analyze the performance and behavior of our code, and identify any bottlenecks, anomalies, or errors. For example, we can use the Jaeger UI to view the trace timeline, the span details, and the service dependencies, and drill down into specific requests or errors. We can also use Prometheus and Grafana to create dashboards and alerts based on the trace metrics, such as the request rate, the error rate, and the latency percentiles. 📊🔍
+```
+                   +-----------------------+
+                   |   PythonCodeModel     |
+                   +-----------------------+
+                              |
+                              |
+                   +-----------------------+
+                   |       RawCode         |
+                   +-----------------------+
+                              |
+                              |
+                   +-----------------------+
+                   |      ParseCode        |
+                   |                       |
+                   |  Input:               |
+                   |  - RawCode            |
+                   |                       |
+                   |  Output:              |
+                   |  - ParsedCode         |
+                   +-----------------------+
+                              |
+                              |
+          +------------------+------------------+
+          |                                     |
++---------+----------+              +-----------+---------+
+|   ExtractClasses   |              |  ExtractFunctions   |
+|                    |              |                     |
+|  Input:            |              |  Input:             |
+|  - ParsedCode      |              |  - ParsedCode       |
+|                    |              |                     |
+|  Output:           |              |  Output:            |
+|  - List[Class]     |              |  - List[Function]   |
++--------------------+              +---------------------+
+          |                                     |
+          |                                     |
++---------+----------+              +-----------+---------+
+| InstrumentClasses  |              | InstrumentFunctions |
+|                    |              |                     |
+|  Input:            |              |  Input:             |
+|  - List[Class]     |              |  - List[Function]   |
+|                    |              |                     |
+|  Output:           |              |  Output:            |
+|  - List[Class]     |              |  - List[Function]   |
++--------------------+              +---------------------+
+                                                |
+                                                |
+                                     +----------+----------+
+                                     |    CollectTraces    |
+                                     |                     |
+                                     |  Input:             |
+                                     |  - List[Trace]      |
+                                     |                     |
+                                     |  Output:            |
+                                     |  - ExecutionContext |
+                                     +---------------------+
+                                                |
+                                                |
+          +------------------+------------------+
+          |                  |                  |
++---------+----------+       |       +---------+--------+
+| AnalyzePerformance |       |       |   DetectAnomaly  |
+|                    |       |       |                  |
+|  Input:            |       |       |  Input:          |
+|- ExecutionContext  |       |       |- ExecutionContext|
+|                    |       |       |                  |
+|  Output:           |       |       |  Output:         |
+|- PerformanceReport |       |       |- List[Anomaly]   |
++--------------------+       |       +------------------+
+                             |
+                             |
+                    +--------+---------------+
+                    |  GenerateDocumentation |
+                    |                        |
+                    |  Input:                |
+                    |  - ParsedCode          |
+                    |                        |
+                    |  Output:               |
+                    |  - Documentation       |
+                    +------------------------+
+```
 
 By combining these runtime instrumentation and tracing techniques with the static analysis and transformation capabilities provided by `libcst`, we can create a powerful and comprehensive framework for processing and analyzing Python code, which can help us improve the reliability, performance, and maintainability of our software. Of course, there are still many challenges and opportunities for further research and development, such as integrating with other tools and frameworks in the Python ecosystem, supporting more advanced language features and constructs, and scaling to larger and more complex codebases. 💪🔮
 
-🌿💡✨ A Detailed Example of Scientific Paper Processing 📜🔬
+## 🌿💡✨ A Detailed Example of Scientific Paper Processing 📜🔬
 
 Now that we have explored the application of our framework to Python code processing, let us turn our attention to another domain where the principles of typed objects and categorical abstractions can be fruitfully applied: the processing and analysis of scientific papers. In this section, we will walk through a detailed example of how our transformation pipeline can be used to parse, manipulate, and generate scientific papers, using a rich set of typed objects and transformations that capture the various elements and relations of scholarly communication. 📚🎓
 
@@ -737,6 +889,84 @@ In this example, we first use the `ParsePaper` transformation to parse a seed pa
 
 Next, we use the `GeneratePaper` transformation to generate a synthetic survey paper on the topic, by specifying the desired sections and number of references, and using the `Summarize` transformation to generate the text of each section based on the selected references. We can also use additional transformations, such as `Explain` and `Visualize`, to enrich the generated text with explanations, figures, and tables, and to improve its clarity and coherence. 📜🎨
 
+```
+                   +-----------------------+
+                   | ScientificPaperModel  |
+                   +-----------------------+
+                              |
+                              |
+                   +-----------------------+
+                   |       RawPaper        |
+                   +-----------------------+
+                              |
+                              |
+                   +-----------------------+
+                   |      ParsePaper       |
+                   |                       |
+                   |  Input:               |
+                   |  - RawPaper           |
+                   |                       |
+                   |  Output:              |
+                   |  - ProcessedPaper     |
+                   +-----------------------+
+                             |
+                             |
+          +------------------+------------------+
+          |                  |                  |
++---------+----------+       |       +---------+--------+
+|  ExtractSections   |       |       | ExtractReferences|
+|                    |       |       |                  |
+|  Input:            |       |       |  Input:          |
+|  - ProcessedPaper  |       |       |  - ProcessedPaper|
+|                    |       |       |                  |
+|  Output:           |       |       |  Output:         |
+|  - List[Section]   |       |       |  - List[Reference]|
++--------------------+       |       +------------------+
+          |                  |                  |
+          |       +----------+----------+       |
+          |       |   ExtractCitations  |       |
+          |       |                     |       |
+          |       |  Input:             |       |
+          |       |  - ProcessedPaper   |       |
+          |       |                     |       |
+          |       |  Output:            |       |
+          |       |  - List[Citation]   |       |
+          |       +---------------------+       |
+          |                                     |
++---------+----------+              +-----------+---------+
+|   ExtractFigures   |              |   ExtractTables    |
+|                    |              |                    |
+|  Input:            |              |  Input:            |
+|  - Section         |              |  - Section         |
+|                    |              |                    |
+|  Output:           |              |  Output:           |
+|  - List[Figure]    |              |  - List[Table]     |
++--------------------+              +--------------------+
+          |
+          |
++---------+----------+
+|  ExtractEquations  |
+|                    |
+|  Input:            |
+|  - Section         |
+|                    |
+|  Output:           |
+|  - List[Equation]  |
++--------------------+
+                              |
+                              |
+          +------------------+------------------+
+          |                                     |
++---------+----------+              +-----------+---------+
+|     Summarize      |              |   GenerateReview    |
+|                    |              |                     |
+|  Input:            |              |  Input:             |
+|  - ProcessedPaper  |              |  - ProcessedPaper   |
+|                    |              |                     |
+|  Output:           |              |  Output:            |
+|  - Summary         |              |  - Review           |
++--------------------+              +---------------------+
+```
 Of course, this is just one example of the many possible pipelines and applications that can be built using our framework for scientific paper processing. By leveraging the rich set of typed objects and transformations, and the powerful techniques and tools from natural language processing and machine learning, we can create a flexible and expressive framework for representing, manipulating, and generating scholarly knowledge, that can accelerate and democratize the process of scientific discovery and communication. 🚀📜
 
 
