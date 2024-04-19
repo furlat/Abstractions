@@ -156,6 +156,8 @@ By combining these ideas and techniques, we aim to create a principled and unifi
  ## 🌿💡✨ Transformation Tables and Categorical Abstractions 📊🔍
 At the heart of our framework for text processing is the idea of a transformation table, which provides a structured and systematic way of organizing the various mappings and relationships between the typed objects in our hierarchy. The transformation table is essentially a blueprint for the processing pipeline, which specifies the input and output types of each transformation, along with its key properties and dependencies. 🧩🔀
 
+
+
 Formally, we define a transformation table as a data structure that maps each transformation to a tuple of attributes, which capture the essential characteristics and constraints of the transformation. These attributes include:
 
 ```
@@ -170,6 +172,28 @@ Formally, we define a transformation table as a data structure that maps each tr
 
 By organizing the transformations in a table, we can easily reason about their properties and dependencies, and create modular and reusable components that can be composed and extended to form complex pipelines. For example, we can use the invertible and composable attributes to define a set of bidirectional and chainable transformations, such as tokenization, normalization, and lemmatization, which can be used for both analysis and generation tasks. Similarly, we can use the parallelizable and stateful attributes to define a set of scalable and context-aware transformations, such as named entity recognition, coreference resolution, and semantic role labeling, which can be applied efficiently to large and diverse datasets. 🚀💡
 
+```mermaid
+classDiagram
+    class Transformation {
+        +name: str
+        +input_type: Type
+        +output_type: Type
+        +is_deterministic: bool
+        +is_parallelizable: bool
+        +is_incremental: bool
+        +is_invertible: bool
+        +is_composable: bool
+    }
+    class TransformationTable {
+        +transformations: List[Transformation]
+        +add_transformation(t: Transformation)
+        +remove_transformation(name: str)
+        +get_transformation(name: str) -> Transformation
+        +compose_transformations(names: List[str]) -> Transformation
+    }
+    TransformationTable o-- Transformation
+```
+
 To illustrate these ideas, let us consider a simple example of a transformation table for a text processing pipeline that performs tokenization, part-of-speech tagging, and named entity recognition on a given document. The table might look something like this:
 
 | Transformation | Input Type  | Output Type  | Invertible | Composable | Parallelizable | Stateful | Stochastic |
@@ -183,9 +207,56 @@ In this table, each row represents a specific transformation in the pipeline, an
 
 By reasoning about the properties and dependencies of these transformations, we can create an efficient and modular pipeline that minimizes redundant computation and maximizes parallelism. For example, we can see that the Tokenize transformation can be safely composed with the POSTag and NERTag transformations, since it is invertible and composable, and that the POSTag and NERTag transformations can be applied in parallel, since they are parallelizable and do not depend on each other's output. 🚀⚡
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant TransformationTable
+    participant Tokenize
+    participant POSTag
+    participant NERTag
+    User->>TransformationTable: compose_transformations(["Tokenize", "POSTag", "NERTag"])
+    TransformationTable->>Tokenize: get_transformation("Tokenize")
+    Tokenize-->>TransformationTable: Tokenize
+    TransformationTable->>POSTag: get_transformation("POSTag")
+    POSTag-->>TransformationTable: POSTag
+    TransformationTable->>NERTag: get_transformation("NERTag")
+    NERTag-->>TransformationTable: NERTag
+    TransformationTable->>TransformationTable: compose(Tokenize, POSTag, NERTag)
+    TransformationTable-->>User: Composed Transformation
+```
+
 However, in many real-world scenarios, the transformations in our pipeline may have more complex dependencies and trade-offs, which require more sophisticated techniques and abstractions to handle. For example, some transformations may be only partially invertible or composable, meaning that they can recover or combine only some aspects of the input or output objects, while losing or altering others. Similarly, some transformations may have dynamic or conditional dependencies, meaning that their input or output types may depend on the values of the objects themselves, or on some external factors or context. 🌐💡
 
 To address these challenges, we can leverage the rich and expressive abstractions provided by category theory and type theory, which allow us to specify and reason about the properties and relationships of our transformations in a more general and rigorous way. In particular, we can use the concepts of functors, natural transformations, and monads to define and compose our transformations in a way that preserves their essential structure and behavior, while abstracting away the details and variations of their implementation. 🔢🔍
+
+```mermaid
+classDiagram
+    class Functor {
+        +map(f: A -> B) -> Functor[B]
+    }
+    class Monad {
+        +unit(a: A) -> Monad[A]
+        +bind(f: A -> Monad[B]) -> Monad[B]
+    }
+    class List~T~ {
+        +map(f: T -> U) -> List[U]
+        +flatMap(f: T -> List[U]) -> List[U]
+    }
+    class Maybe~T~ {
+        +map(f: T -> U) -> Maybe[U]
+        +flatMap(f: T -> Maybe[U]) -> Maybe[U]
+    }
+    class IO~T~ {
+        +map(f: T -> U) -> IO[U]
+        +flatMap(f: T -> IO[U]) -> IO[U]
+    }
+    Functor <|-- List
+    Functor <|-- Maybe
+    Functor <|-- IO
+    Monad <|-- List
+    Monad <|-- Maybe
+    Monad <|-- IO
+```
 
 Formally, we can define a category Text, where the objects are the types of our text objects, such as Token, Sentence, and Document, and the morphisms are the transformations between these types, such as Tokenize, POSTag, and NERTag. We can then define functors between this category and other categories, such as List, Maybe, and IO, which capture the common patterns and abstractions of our transformations, such as lists, optional values, and side effects. 🌿⚙️
 
