@@ -365,6 +365,32 @@ By combining these techniques with the modular and composable architecture of ou
 
 For example, we can use the `GenerateCode` transformation to automatically generate new and diverse implementations of a given function or class, by sampling from the learned distribution of the LLM, and by constraining the generated code to satisfy the desired type signatures, test cases, and performance metrics. We can also use the `OptimizeCode` transformation to automatically optimize the generated code for various criteria, such as readability, maintainability, and efficiency, by applying a series of semantic-preserving transformations, such as variable renaming, code factoring, and loop unrolling. 🌟🔍
 
+```mermaid
+graph LR
+A[RawCode] --> B[ParseModule]
+B --> C[ExtractClasses]
+B --> D[ExtractFunctions]
+B --> E[ExtractDocstrings]
+B --> F[ExtractTestCases]
+C --> G[InstrumentClass]
+D --> H[InstrumentFunction]
+G --> I[CollectTraces]
+H --> I
+I --> J[AnalyzePerformance]
+I --> K[GenerateTrainingData]
+E --> L[GenerateDocumentation]
+F --> M[GenerateTestSuite]
+C --> N[InferTypes]
+D --> N
+N --> O[EliminateDeadCode]
+O --> P[OptimizeCode]
+K --> Q[TrainModel]
+Q --> R[CompleteCode]
+Q --> S[ReviewCode]
+Q --> T[RefactorCode]
+Q --> U[GenerateCode]
+```
+
 To further illustrate these ideas, let us define a transformation table for our Python code processing pipeline, similar to the one we used for narrative text processing, but with some additional columns and rows specific to Python code:
 
 | Transformation          | Input Type         | Output Type            | Deterministic | Metadata     | Processing Mode |
@@ -500,29 +526,6 @@ By combining these techniques with the modular and composable architecture of ou
 
 For example, we can use the `GenerateCode` transformation to automatically generate new and diverse implementations of a given function or class, by sampling from the learned distribution of the LLM, and by constraining the generated code to satisfy the desired type signatures, test cases, and performance metrics. We can also use the `OptimizeCode` transformation to automatically optimize the generated code for various criteria, such as readability, maintainability, and efficiency, by applying a series of semantic-preserving transformations, such as variable renaming, code factoring, and loop unrolling. 🌟🔍
 
-graph LR
-A[RawCode] --> B[ParseModule]
-B --> C[ExtractClasses]
-B --> D[ExtractFunctions]
-B --> E[ExtractDocstrings]
-B --> F[ExtractTestCases]
-C --> G[InstrumentClass]
-D --> H[InstrumentFunction]
-G --> I[CollectTraces]
-H --> I
-I --> J[AnalyzePerformance]
-I --> K[GenerateTrainingData]
-E --> L[GenerateDocumentation]
-F --> M[GenerateTestSuite]
-C --> N[InferTypes]
-D --> N
-N --> O[EliminateDeadCode]
-O --> P[OptimizeCode]
-K --> Q[TrainModel]
-Q --> R[CompleteCode]
-Q --> S[ReviewCode]
-Q --> T[RefactorCode]
-Q --> U[GenerateCode]
 
 In conclusion, our framework for Python code processing provides a principled and flexible way of representing and manipulating Python code at different levels of abstraction, by leveraging the typed objects and transformations provided by the `libcst` library, and the runtime instrumentation and tracing provided by the `opentelemetry` framework. By combining these techniques with the generative and reasoning capabilities of large language models, we can create a virtuous cycle of code understanding, generation, and optimization, which can greatly enhance the productivity and quality of software development. 🚀💻
 
@@ -644,6 +647,7 @@ To implement the `DetectPlagiarism` and `ClusterPapers` transformations, we can 
 
 Finally, to implement the `VisualizeCitations` transformation, we can use techniques from graph visualization and network analysis, such as force-directed layouts, community detection, and centrality measures, to create interactive and insightful visualizations of the citation graph, and highlight the key papers, authors, and topics in the field. 📈🔍
 
+```mermaid
 graph LR
 A[Query] --> B[Search Papers]
 B --> C[Parse Papers]
@@ -662,6 +666,7 @@ I --> N[Generate Survey Paper]
 J --> N
 K --> N
 M --> N
+```
 
 By composing and chaining these transformations in different ways, we can create powerful and flexible pipelines for processing and analyzing scientific papers, that can support a wide range of tasks and applications, such as literature review, knowledge discovery, and research evaluation. For example, we can use the following pipeline to automatically generate a survey paper on a given topic, by retrieving, parsing, and summarizing the most relevant and impactful papers in the field:
 
