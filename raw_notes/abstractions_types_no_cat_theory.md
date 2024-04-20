@@ -1033,7 +1033,7 @@ def generate_survey_paper(query: str, num_papers: int, num_sections: int) -> Pap
     return survey_paper
 ```
 
-In this example, we first use the `search_pubs` function from the `scholarly` library to retrieve a list of relevant papers based on the input query, along with their citation
+
 
 ## Conclusion
 

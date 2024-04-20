@@ -1040,8 +1040,6 @@ def generate_survey_paper(query: str, num_papers: int, num_sections: int) -> Pap
     return survey_paper
 ```
 
-In this example, we first use the `search_pubs` function from the `scholarly` library to retrieve a list of relevant papers based on the input query, along with their citation
-
 ## Conclusion
 
 In this document, we have presented a novel framework for text processing that combines ideas from type theory and functional programming to provide a principled and flexible way of representing and manipulating text data at different levels of abstraction. Through a series of case studies and examples, we have demonstrated the potential of this framework to enable a wide range of applications and insights across various domains, from narrative text processing and Python code analysis to scientific paper summarization and generation.
