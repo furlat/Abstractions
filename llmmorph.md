@@ -175,7 +175,17 @@ It's important to note that the recursive para-lens construction process generat
 
 To derive the abstract LLMMorph category from the grounded morphism graph, we need to aggregate the individual objects into their respective types and compute the validity scores for each type-level morphism. This can be done by averaging the validity scores of all the object-level morphisms that instantiate a given type-level morphism, weighted by the frequency or importance of each object.
 
-For example, suppose we have a grounded morphism graph with the following nodes and edges:
+For example, consider the grounded morphism graph shown in the following mermaid diagram:
+
+```mermaid
+graph LR
+    TC("the cat") <-- Singularization --> TCS("the cats")
+    TCS <-- Pluralization --> TC
+    CTM("chases the mouse") <-- Presentification --> CSTM("chased the mouse")
+    CSTM <-- Pastification --> CTM
+```
+
+In this graph, we have the following nodes and edges:
 
 - Nodes:
   - "the cat" (singular noun phrase)
@@ -188,7 +198,7 @@ For example, suppose we have a grounded morphism graph with the following nodes 
   - "chases the mouse" -> "chased the mouse" (pastification)
   - "chased the mouse" -> "chases the mouse" (presentification)
 
-To derive the abstract LLMMorph category, we would aggregate these nodes and edges into the following types and morphisms:
+To derive the abstract LLMMorph category from this grounded morphism graph, we would aggregate these nodes and edges into the following types and morphisms:
 
 - Types:
   - Singular Noun Phrase (SNP)
@@ -201,7 +211,19 @@ To derive the abstract LLMMorph category, we would aggregate these nodes and edg
   - PTVP -> PSVP (pastification)
   - PSVP -> PTVP (presentification)
 
-The validity scores for each type-level morphism would be computed based on the validity scores of the corresponding object-level morphisms, weighted by their frequency or importance in the grounded morphism graph.
+The resulting abstract LLMMorph category can be visualized using the following mermaid diagram:
+
+```mermaid
+graph LR
+    SNP((Singular Noun Phrase)) <-- Singularization --> PNP((Plural Noun Phrase))
+    PNP <-- Pluralization --> SNP
+    PTVP((Present Tense Verb Phrase)) <-- Presentification --> PSVP((Past Tense Verb Phrase))
+    PSVP <-- Pastification --> PTVP
+```
+
+The validity scores for each type-level morphism in the abstract LLMMorph category would be computed based on the validity scores of the corresponding object-level morphisms in the grounded morphism graph, weighted by their frequency or importance.
+
+To illustrate the relationship between the grounded morphism graph and the abstract LLMMorph category, we can combine both diagrams into a single mermaid graph, using dashed lines to indicate the mapping from grounded objects to abstract types:
 
 ```mermaid
 graph TD
@@ -224,6 +246,10 @@ graph TD
     CTM -.- PTVP
     CSTM -.- PSVP
 ```
+
+This combined graph shows how the grounded objects are mapped to their corresponding abstract types, and how the morphisms between the grounded objects are reduced to morphisms between the abstract types. The dashed lines represent the aggregation process, where the validity scores of the grounded morphisms are used to compute the validity scores of the abstract morphisms.
+
+By visualizing the relationship between the grounded morphism graph and the abstract LLMMorph category in this way, we can better understand the process of reducing the grounded knowledge to the abstract linguistic types and transformations, and see how the para-lens framework enables the construction of a meaningful and coherent linguistic ontology from raw data.
 
 ### Practical Implications of Grounded Knowledge
 
