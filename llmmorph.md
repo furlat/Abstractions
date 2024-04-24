@@ -315,6 +315,7 @@ graph LR
     subgraph Meta-Learning Techniques
         RL[Reinforcement Learning]
         EA[Evolutionary Algorithms]
+        LLM[LLM Type Generation]
     end
 
     subgraph Graph-Based Algorithms
