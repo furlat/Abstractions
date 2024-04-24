@@ -83,34 +83,20 @@ In the next section, we will explore a concrete implementation of the LLMMorph c
 
 ```mermaid
 graph LR
-    A[Singular Noun] <-- Pluralization --> B[Plural Noun]
-    C[Active Voice Sentence] <-- Passivization --> D[Passive Voice Sentence]
-    E[Literal Meaning Phrase] -- Metaphorization --> F[Figurative Meaning Phrase]
-    G[Informal Register Text] -- Formalization --> H[Formal Register Text]
-    I[Declarative Mood Sentence] <-- Interrogativization --> J[Interrogative Mood Sentence]
-    K[Present Tense Verb Phrase] -- Pastification --> L[Past Tense Verb Phrase]
-    
-    A -- Composition --> M[Singular Active Present Sentence]
-    B -- Composition --> N[Plural Active Present Sentence]
-    N -- Passivization --> O[Plural Passive Present Sentence]
-    O -- Pastification --> P[Plural Passive Past Sentence]
-    M -- Composition --> P
-    
-    Q[Singular Noun] -- Nominalization --> R[Singular Noun Phrase]
-    R -- Composition --> M
-    R -- Pluralization --> S[Plural Noun Phrase]
-    S -- Composition --> N
-    
-    T[Present Tense Verb] -- Composition --> U[Present Tense Verb Phrase]
-    U -- Composition --> M
-    U -- Pastification --> V[Past Tense Verb Phrase]
-    V -- Composition --> P
-    
-    W[Literal Meaning Word] -- Composition --> E
-    W -- Metaphorization --> X[Figurative Meaning Word]
-    X -- Composition --> F
-    
-    Y[Informal Register Sentence] -- Formalization --> Z[Formal Register Sentence]
-    M -- Composition --> Y
-    P -- Composition --> Z
+    SNP((Singular Noun Phrase))
+    PNP((Plural Noun Phrase))
+    PTVP((Present Tense Verb Phrase))
+    PSVP((Past Tense Verb Phrase))
+    AP((Adjective Phrase))
+
+    SNP <-- Pluralization --> PNP
+    PNP <-- Singularization --> SNP
+    PTVP <-- Pastification --> PSVP
+    PSVP <-- Presentification --> PTVP
+    AP <-- Verbalization --> PTVP
+    PTVP <-- Adjectivization --> AP
+
+    SNP -- SubjectVerbAgreement --> PTVP
+    PTVP -- SubjectVerbAgreement --> PNP
+    AP -- AdjectiveNounModification --> SNP
 ```
