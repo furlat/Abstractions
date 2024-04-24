@@ -11,12 +11,7 @@ Formally, we define the LLMMorph category as a tuple $(Ob, Hom, \circ, id)$, whe
 
 The objects in $Ob$ are organized into a type system, where each object $x \in Ob$ is associated with a type $T(x)$ that specifies its structural and semantic properties. The type system can be formalized using a suitable type theory, such as dependent type theory or higher-order logic.
 
-The morphisms in $Hom$ are functions $f: A \to B$ that map objects of type $A$ to objects of type $B$, preserving the relevant linguistic structure and meaning. Morphisms can represent a wide range of language phenomena, such as:
-
-- Inflectional and derivational morphology (e.g., pluralization, nominalization)
-- Syntactic transformations (e.g., passivization, topicalization)
-- Semantic and pragmatic operations (e.g., metaphor, implicature)
-- Stylistic and register variations (e.g., formality, politeness)
+The morphisms in $Hom$ are functions $f: A \to B$ that map objects of type $A$ to objects of type $B$, preserving the relevant linguistic structure and meaning. Morphisms can represent a wide range of language phenomena, such as inflectional and derivational morphology, syntactic transformations, semantic and pragmatic operations, and stylistic and register variations.
 
 Morphisms can be composed using the $\circ$ operation, which satisfies the associativity and identity laws:
 
@@ -27,27 +22,50 @@ Some morphisms may also have inverses, satisfying the invertibility law:
 
 - $f^{-1} \circ f = id_A$ and $f \circ f^{-1} = id_B$ for all invertible morphisms $f: A \to B$.
 
-Here are some examples of linguistic transformations and their corresponding morphisms in the LLMMorph category:
+To illustrate the LLMMorph category, let's consider a simple example with 5 linguistic types and their associated transformations:
+
+Types:
+1. Singular Noun Phrase (SNP)
+2. Plural Noun Phrase (PNP)
+3. Present Tense Verb Phrase (PTVP)
+4. Past Tense Verb Phrase (PSVP)
+5. Adjective Phrase (AP)
+
+Transformations:
+| Source Type | Target Type | Transformation Name |
+|-------------|-------------|---------------------|
+| SNP         | PNP         | Pluralization       |
+| PNP         | SNP         | Singularization     |
+| PTVP        | PSVP        | Pastification      |
+| PSVP        | PTVP        | Presentification    |
+| AP          | PTVP        | Verbalization       |
+| PTVP        | AP          | Adjectivization     |
+| SNP + PTVP  | PSVP + PNP  | SubjectVerbAgreement|
+| AP + SNP    | SNP         | AdjectiveNounModification |
+
+We can represent this instance of the LLMMorph category using the following mermaid graph:
 
 ```mermaid
 graph LR
-    A[Singular Noun] <-- Pluralization --> B[Plural Noun]
-    C[Active Voice] <-- Passivization --> D[Passive Voice]
-    E[Literal Meaning] -- Metaphorization --> F[Figurative Meaning]
-    G[Informal Register] -- Formalization --> H[Formal Register]
-    I[Declarative Mood] <-- Interrogativization --> J[Interrogative Mood]
-    K[Present Tense] -- Pastification --> L[Past Tense]
+    SNP((Singular Noun Phrase))
+    PNP((Plural Noun Phrase))
+    PTVP((Present Tense Verb Phrase))
+    PSVP((Past Tense Verb Phrase))
+    AP((Adjective Phrase))
+
+    SNP <-- Pluralization --> PNP
+    PNP <-- Singularization --> SNP
+    PTVP <-- Pastification --> PSVP
+    PSVP <-- Presentification --> PTVP
+    AP <-- Verbalization --> PTVP
+    PTVP <-- Adjectivization --> AP
+
+    SNP -- SubjectVerbAgreement --> PTVP
+    PTVP -- SubjectVerbAgreement --> PNP
+    AP -- AdjectiveNounModification --> SNP
 ```
 
-In this diagram, we see examples of morphisms representing various linguistic transformations, some of which are invertible (indicated by bidirectional arrows) and others that are unidirectional. The LLMMorph category allows for the composition of these morphisms to create more complex transformations, such as:
-
-```mermaid
-graph LR
-    A[Singular Active Present] -- Pluralization --> B[Plural Active Present]
-    B -- Passivization --> C[Plural Passive Present]
-    C -- Pastification --> D[Plural Passive Past]
-    A -- Composition --> D
-```
+In this graph, the nodes represent the linguistic types, and the edges represent the morphisms between them. Bidirectional arrows indicate invertible transformations, while unidirectional arrows indicate non-invertible transformations. The graph also includes morphisms that involve multiple types, such as SubjectVerbAgreement and AdjectiveNounModification.
 
 To construct the LLMMorph category from a given set of linguistic data, we introduce the following components:
 
@@ -80,23 +98,3 @@ The para-lens works by iteratively applying the generator to the input data obje
 This abstract formulation of the LLMMorph category provides a flexible and expressive framework for modeling and reasoning about linguistic transformations, grounded in the principles of category theory and type theory. By specifying the behavior of the generator and validator, the framework can be instantiated for a wide range of language phenomena and applications, from morphological analysis and generation to semantic parsing and machine translation.
 
 In the next section, we will explore a concrete implementation of the LLMMorph category using Pydantic and JSON Schema for type specification and validation, and discuss how this implementation can be used in conjunction with large language models to enable more robust and interpretable natural language processing systems.
-
-```mermaid
-graph LR
-    SNP((Singular Noun Phrase))
-    PNP((Plural Noun Phrase))
-    PTVP((Present Tense Verb Phrase))
-    PSVP((Past Tense Verb Phrase))
-    AP((Adjective Phrase))
-
-    SNP <-- Pluralization --> PNP
-    PNP <-- Singularization --> SNP
-    PTVP <-- Pastification --> PSVP
-    PSVP <-- Presentification --> PTVP
-    AP <-- Verbalization --> PTVP
-    PTVP <-- Adjectivization --> AP
-
-    SNP -- SubjectVerbAgreement --> PTVP
-    PTVP -- SubjectVerbAgreement --> PNP
-    AP -- AdjectiveNounModification --> SNP
-```
