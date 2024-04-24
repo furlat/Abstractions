@@ -80,3 +80,37 @@ The para-lens works by iteratively applying the generator to the input data obje
 This abstract formulation of the LLMMorph category provides a flexible and expressive framework for modeling and reasoning about linguistic transformations, grounded in the principles of category theory and type theory. By specifying the behavior of the generator and validator, the framework can be instantiated for a wide range of language phenomena and applications, from morphological analysis and generation to semantic parsing and machine translation.
 
 In the next section, we will explore a concrete implementation of the LLMMorph category using Pydantic and JSON Schema for type specification and validation, and discuss how this implementation can be used in conjunction with large language models to enable more robust and interpretable natural language processing systems.
+
+```mermaid
+graph LR
+    A[Singular Noun] <-- Pluralization --> B[Plural Noun]
+    C[Active Voice Sentence] <-- Passivization --> D[Passive Voice Sentence]
+    E[Literal Meaning Phrase] -- Metaphorization --> F[Figurative Meaning Phrase]
+    G[Informal Register Text] -- Formalization --> H[Formal Register Text]
+    I[Declarative Mood Sentence] <-- Interrogativization --> J[Interrogative Mood Sentence]
+    K[Present Tense Verb Phrase] -- Pastification --> L[Past Tense Verb Phrase]
+    
+    A -- Composition --> M[Singular Active Present Sentence]
+    B -- Composition --> N[Plural Active Present Sentence]
+    N -- Passivization --> O[Plural Passive Present Sentence]
+    O -- Pastification --> P[Plural Passive Past Sentence]
+    M -- Composition --> P
+    
+    Q[Singular Noun] -- Nominalization --> R[Singular Noun Phrase]
+    R -- Composition --> M
+    R -- Pluralization --> S[Plural Noun Phrase]
+    S -- Composition --> N
+    
+    T[Present Tense Verb] -- Composition --> U[Present Tense Verb Phrase]
+    U -- Composition --> M
+    U -- Pastification --> V[Past Tense Verb Phrase]
+    V -- Composition --> P
+    
+    W[Literal Meaning Word] -- Composition --> E
+    W -- Metaphorization --> X[Figurative Meaning Word]
+    X -- Composition --> F
+    
+    Y[Informal Register Sentence] -- Formalization --> Z[Formal Register Sentence]
+    M -- Composition --> Y
+    P -- Composition --> Z
+```
