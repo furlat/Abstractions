@@ -203,6 +203,28 @@ To derive the abstract LLMMorph category, we would aggregate these nodes and edg
 
 The validity scores for each type-level morphism would be computed based on the validity scores of the corresponding object-level morphisms, weighted by their frequency or importance in the grounded morphism graph.
 
+```mermaid
+graph TD
+    subgraph Grounded Morphism Graph
+        TC("the cat") <-- Singularization --> TCS("the cats")
+        TCS <-- Pluralization --> TC
+        CTM("chases the mouse") <-- Presentification --> CSTM("chased the mouse")
+        CSTM <-- Pastification --> CTM
+    end
+
+    subgraph Abstract LLMMorph Category
+        SNP((Singular Noun Phrase)) <-- Singularization --> PNP((Plural Noun Phrase))
+        PNP <-- Pluralization --> SNP
+        PTVP((Present Tense Verb Phrase)) <-- Presentification --> PSVP((Past Tense Verb Phrase))
+        PSVP <-- Pastification --> PTVP
+    end
+
+    TC -.- SNP
+    TCS -.- PNP
+    CTM -.- PTVP
+    CSTM -.- PSVP
+```
+
 ### Practical Implications of Grounded Knowledge
 
 While the recursive para-lens framework provides a principled and flexible way to construct the LLMMorph category from data, it is important to acknowledge the practical challenges and limitations that arise when implementing this framework in real-world settings.
