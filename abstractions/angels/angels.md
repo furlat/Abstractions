@@ -150,7 +150,7 @@ sequenceDiagram
 
 As these diagrams illustrate, our framework aims to guide readers through a rich and iterative process of engagement with the text, one that gradually expands in scope and complexity. By generating prompts and analyses that target each of these levels in turn, we can help readers build up a multifaceted and nuanced understanding of the work, one that integrates local details with broader patterns, contexts with connections, and objective analysis with subjective response. 🌈🔍
 
-##🌿✨ Pydantic Implementation and Data Integration 🔧💡
+## 🌿✨ Pydantic Implementation and Data Integration 🔧💡
 
 To bring our conceptual model to life, we'll implement each class using the Pydantic library, which provides powerful tools for data validation, serialization, and documentation. Let's take a closer look at each class and how we can integrate data from external sources.
 
