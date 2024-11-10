@@ -383,4 +383,207 @@ The continuous structure enables operations impossible in discrete representatio
    $$\|\phi_\theta(h + \delta) - \phi_\theta(h)\| \leq L\|\delta\|$$
    for Lipschitz constant $L$
 
-These properties emerge naturally from the geometric structure rather than being explicitly enforced, suggesting that continuous representations are fundamental to generalization in language models.
+
+The emergence of these geometric properties - smooth transitions, compositional operations, and robust neighborhoods - suggests that transformer representations capture something fundamental about how prediction structures computation. While we started with discrete causal states as our theoretical foundation, the continuous nature of these learned representations offers new insights into how computational abstractions can be organized and manipulated. In the next section, we formalize these insights by examining how predictive equivalence classes, whether discrete or continuous, naturally give rise to systematic rules for composition and transformation - the essential elements of a type system.
+
+# 3. Type Systems for Predictive Processes
+
+The structures induced by predictive equivalence—whether discrete causal states or continuous geometric representations—naturally give rise to type systems. In this section, we formalize this connection, showing that predictive equivalence classes satisfy the fundamental properties required of types while providing additional structure through their grounding in prediction.
+
+## 3.1 From Predictive Classes to Types
+
+We begin by considering what properties a type system based on predictive equivalence must satisfy. Let $\Sigma$ be our alphabet and $\Sigma^*$ the set of all finite sequences over $\Sigma$.
+
+**Definition 9** (Type Assignment). A predictive type assignment is a function $\tau: \Sigma^* \to \mathcal{T}$ mapping histories to some type space $\mathcal{T}$ that satisfies:
+
+1. **Predictive Sufficiency**: For all histories $h \in \Sigma^*$:
+   $$I[X_{>t}; \tau(X_{\leq t})] = I[X_{>t}; X_{\leq t}]$$
+
+2. **Type Safety**: For all histories $h_1, h_2 \in \Sigma^*$:
+   $$\tau(h_1) = \tau(h_2) \implies P(X_{>t}|h_1) = P(X_{>t}|h_2)$$
+
+3. **Unifilarity**: For all histories $h_1, h_2 \in \Sigma^*$ and tokens $x \in \Sigma$:
+   $$\tau(h_1) = \tau(h_2) \implies \tau(h_1x) = \tau(h_2x)$$
+
+These requirements ensure that types capture exactly the predictively relevant structure while supporting systematic computation. The type space $\mathcal{T}$ itself can take different forms:
+
+**Theorem 14** (Type Space Realization). The type space $\mathcal{T}$ can be realized as either:
+
+1. **Discrete Types**: When $\mathcal{T} = \mathcal{S}$ is the set of causal states, with:
+   $$\tau(h) = \epsilon(h)$$
+   where $\epsilon$ is the causal state mapping.
+
+2. **Continuous Types**: When $\mathcal{T} = \mathcal{M}$ is a manifold in $\mathbb{R}^d$, with:
+   $$\tau(h) = \phi_\theta(h)$$
+   where $\phi_\theta$ is a learned embedding.
+
+The discrete realization provides exact types but may be computationally intractable, while the continuous realization enables practical computation through geometric approximation.
+
+**Proposition 5** (Type Equivalence). For either realization, histories $h_1, h_2$ share a type if and only if they are predictively equivalent:
+
+$$\tau(h_1) = \tau(h_2) \iff P(X_{>t}|h_1) = P(X_{>t}|h_2)$$
+
+This establishes predictive equivalence as the fundamental basis for typing, with both discrete and continuous realizations preserving the essential type structure while offering different computational trade-offs.
+
+## 3.2 Type System Structure
+
+The structure of predictive types reveals a fundamental difference from traditional type systems: while standard type hierarchies allow for arbitrary refinement, predictive types are built upon minimal elements—the causal states—which admit no further refinement. This constraint, far from being limiting, provides a principled foundation for understanding how computational abstractions emerge from prediction.
+
+Our development proceeds by first examining the relationship between causal states and more general types through the lens of mixed states, then showing how this organization provides a natural setting for type operations that respect predictive structure.
+
+### 3.2.1 Mixed States and Type Hierarchy
+
+We begin with a crucial observation: causal states, being minimal sufficient statistics, cannot be further decomposed while maintaining their predictive power. This leads to our first fundamental result:
+
+**Theorem 15** (Causal State Minimality). For any causal state $\epsilon_i \in \mathcal{S}$:
+1. There exists no type $\tau$ that is strictly more informative:
+   $$\not\exists \tau: I[X_{>t}; \tau] > I[X_{>t}; \epsilon_i]$$
+2. Any attempt to refine a causal state results in either:
+   - The same state (up to predictive equivalence)
+   - Loss of predictive power
+
+This minimality naturally leads to the concept of mixed states as more general types:
+
+**Definition 10** (Mixed State Types). A mixed state type $\tau_m$ is characterized by:
+1. A probability distribution over causal states:
+   $$\tau_m \in \Delta(\mathcal{S}) = \{p \in \mathbb{R}^{|\mathcal{S}|} : \sum_i p_i = 1, p_i \geq 0\}$$
+2. Induced predictive distribution:
+   $$P(X_{>t}|\tau_m) = \sum_i p_i P(X_{>t}|\epsilon_i)$$
+
+This construction has several important properties:
+
+**Proposition 6** (Mixed State Properties).
+1. Information Content:
+   $$I[X_{>t}; \tau_m] \leq \sum_i p_i I[X_{>t}; \epsilon_i]$$
+   with equality if and only if $\tau_m$ is a pure causal state
+
+2. Predictive Uncertainty:
+   $$H[X_{>t}|\tau_m] \geq \sum_i p_i H[X_{>t}|\epsilon_i]$$
+   reflecting the loss of predictive power in mixed states
+
+3. State Complexity:
+   $$H[\tau_m] = -\sum_i p_i \log p_i$$
+   measuring the uncertainty in the state description itself
+
+The relationship between pure and mixed states provides the foundation for subtyping:
+
+**Definition 11** (Predictive Subtyping). For states $\tau_1, \tau_2$, we say $\tau_1$ is a subtype of $\tau_2$ (written $\tau_1 \leq \tau_2$) if there exists a measure $\mu$ over $\Delta(\mathcal{S})$ such that:
+$$P(X_{>t}|\tau_2) = \int P(X_{>t}|\tau_1)d\mu(\tau_1)$$
+
+This leads to a crucial structural result:
+
+**Theorem 16** (Type Hierarchy Structure). The predictive type system is:
+1. Bottom-bounded by pure causal states
+2. Top-bounded by the uniform distribution over causal states
+3. Internally ordered by the refinement of predictive information
+4. Not necessarily a lattice, as joins of incompatible types may not exist
+
+The practical implications of this structure are significant:
+- Types naturally represent levels of abstraction
+- More abstract types correspond to more mixed states
+- Type refinement corresponds to gaining predictive information
+- Type abstraction corresponds to controlled loss of predictive detail
+
+**Theorem 17** (Abstraction-Mixing Correspondence). For any two types $\tau_1, \tau_2$ where $\tau_1 \leq \tau_2$ (τ₁ is a subtype of τ₂):
+
+1. **Entropy Ordering**:
+   $$H[\tau_1] \leq H[\tau_2]$$
+   More abstract types have higher entropy over causal states
+
+2. **Information Loss**:
+   $$I[X_{>t}; \tau_1] \geq I[X_{>t}; \tau_2]$$
+   Abstraction monotonically reduces predictive information
+
+3. **Mixing Measure**:
+   $$\text{mix}(\tau) = 1 - \max_i p_i$$
+   where $p_i$ are the probabilities over causal states, quantifies the degree of abstraction
+
+This establishes a quantitative theory of abstraction where:
+- The most concrete types are pure causal states: $\text{mix}(\epsilon_i) = 0$
+- The most abstract type is the uniform mixture: $\text{mix}(\top) = 1 - \frac{1}{|\mathcal{S}|}$
+- Every intermediate abstraction level corresponds to a specific degree of mixing
+
+The practical value is that this tells us exactly how much predictive power we trade for abstraction at each level.
+
+
+### 3.2.2 Type Operations and Composition
+
+Having established that types are fundamentally mixtures of causal states, we now face a crucial question: how can we systematically manipulate and compose these types while preserving their predictive properties? This question is essential for building a practical computational framework from our theoretical foundation.
+
+We begin by examining the most basic operation - combining two types:
+
+**Definition 12** (Type Composition). For mixed state types $\tau_1, \tau_2$, their composition $\tau_1 \circ \tau_2$ combines their predictive distributions:
+
+$$P(X_{>t}|\tau_1 \circ \tau_2) = \sum_{i,j} p_i q_j P(X_{>t}|\epsilon_i \circ \epsilon_j)$$
+
+where $p_i, q_j$ are the mixing weights of $\tau_1, \tau_2$ respectively over their causal states.
+
+This definition encodes a crucial insight: when we compose types, we must account for all possible interactions between their constituent causal states. The mixing weights $p_i, q_j$ capture our uncertainty about which causal states are actually involved.
+
+The composition operation has important properties that constrain how types can interact:
+
+**Theorem 18** (Composition Properties).
+1. **Mixing Preservation**:
+   $$\text{mix}(\tau_1 \circ \tau_2) \geq \max(\text{mix}(\tau_1), \text{mix}(\tau_2))$$
+   Composition never decreases uncertainty about causal states
+
+2. **Information Loss**:
+   $$I[X_{>t}; \tau_1 \circ \tau_2] \leq \min(I[X_{>t}; \tau_1], I[X_{>t}; \tau_2])$$
+   Composition cannot create new predictive information
+
+3. **Coherence**:
+   $$H[S_{t+1}|X_{t+1}, (\tau_1 \circ \tau_2)_t] = H[S_{t+1}|X_{t+1}, \tau_1 \circ S_{t+1}|X_{t+1}, \tau_2]$$
+   The uncertainty about future states combines consistently
+
+These properties reveal that composition necessarily leads to more mixed states. This suggests we need additional operations to manage the level of abstraction:
+
+**Definition 13** (Core Type Operations).
+
+1. **Abstraction** ($\alpha: \tau \to \tau'$) intentionally increases mixing:
+   $$P(X_{>t}|\alpha(\tau)) = \int P(X_{>t}|\tau)d\mu(\tau)$$
+   where $\mu$ is a measure that spreads probability mass over more causal states
+
+2. **Refinement** ($\rho: \tau \to \tau'$) reduces mixing:
+   $$P(X_{>t}|\rho(\tau)) = \sum_i w_i P(X_{>t}|\epsilon_i)$$
+   where $w_i$ concentrates probability mass on fewer causal states
+
+3. **Fusion** ($\tau_1 \otimes \tau_2$) combines compatible predictions:
+   $$P(X_{>t}|\tau_1 \otimes \tau_2) = \text{normalize}(P(X_{>t}|\tau_1) \cdot P(X_{>t}|\tau_2))$$
+   only defined when the predictions are not contradictory
+
+Each operation serves a specific computational purpose:
+- Abstraction allows us to deliberately forget irrelevant details
+- Refinement helps us recover more precise predictions when possible
+- Fusion combines information from different predictive sources
+
+These operations must satisfy certain laws to ensure computational coherence:
+
+**Theorem 19** (Computational Laws).
+
+1. **Abstraction Chain**: $\tau_1 \leq \tau_2$ if and only if there exists an abstraction operation connecting them:
+   $$\tau_1 \leq \tau_2 \iff \exists \alpha: \tau_1 \to \tau_2$$
+   This establishes abstraction as the fundamental ordering principle.
+
+2. **Refinement Convergence**: Repeated refinement must eventually reach a causal state:
+   $$\lim_{n\to\infty} \rho^n(\tau) \in \{\epsilon_i\}$$
+   We cannot endlessly refine beyond the minimal elements.
+
+3. **Fusion Compatibility**: Types can be fused only when their predictions align:
+   $$\tau_1 \otimes \tau_2 \text{ exists } \iff P(X_{>t}|\tau_1) \not\perp P(X_{>t}|\tau_2)$$
+   Preventing inconsistent combinations.
+
+Together, these operations and laws provide a complete computational framework:
+
+**Theorem 20** (Computational Completeness). Any valid transformation between predictive types can be expressed through compositions of these basic operations while maintaining:
+
+1. **Type Preservation**: Operations always produce valid predictive types
+2. **Information Bounds**: Cannot create or destroy predictive information arbitrarily
+3. **Computational Coherence**: Operations compose sensibly and respect causal state structure
+
+The practical significance of this framework is that it provides principled answers to key computational questions:
+- How to build complex abstractions from simple ones (composition and abstraction)
+- When combining information sources is valid (fusion compatibility)
+- What predictive guarantees are maintained (information bounds)
+- How to recover more precise predictions (refinement)
+
+This algebraic structure bridges the gap between our theoretical understanding of predictive types and practical computational needs, while maintaining rigorous guarantees about predictive power.
