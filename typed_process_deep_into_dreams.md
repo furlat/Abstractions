@@ -1,6 +1,6 @@
 
 
-# Typed Processes: From Next-Token Prediction to Abstract Computation in Language Models
+# Typed Processes: From Next-Token Prediction to Abstract Computation in Large Language Models
 
 ## Abstract
 
