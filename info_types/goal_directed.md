@@ -381,3 +381,168 @@ The most promising approach may be hybrid systems that combine neural type infer
 By explicitly modeling the information flow between agents, tools, and goals, and recognizing the tripartite nature of computational traces, we can develop more efficient training methodologies, better architectures for capturing predictive states, and improved strategies for handling uncertainty.
 
 Ultimately, this framework suggests that the key to more capable goal-directed agents lies not in simply scaling parameters, but in better aligning model representations with the underlying tripartite structure of computational traces they aim to approximate. By focusing on this alignment, we can develop agents that more efficiently leverage tools to extend their capabilities beyond what their static parameters would otherwise allow, guided by well-specified goals that define terminal conditions for their stochastic processes.
+
+
+
+## Examples
+---
+
+### 1. **Clarifying Type-Level Determinism**
+
+To illustrate type-level determinism explicitly, add an example showing how an LLM agent uses perfect type information to rule out invalid compositions:
+
+**Example (Type-Level Determinism)**:  
+
+Consider an agent tasked with generating a CSV report from user feedback stored in a database. The type constraints are:
+
+```
+fetchDatabaseRecords(query: String) → List[Record]
+filterRecords(records: List[Record], predicate: Function) → List[Record]
+generateCSV(records: List[Record]) → CSVFile
+```
+
+Even without observing specific values, the agent deterministically recognizes a valid composition path based on types alone:
+
+```
+fetchDatabaseRecords("user_feedback")
+  → filterRecords(records, predicate)
+    → generateCSV(records)
+```
+
+Type-level reasoning immediately rules out invalid compositions like `generateCSV(fetchDatabaseRecords)` without intermediate filtering. This emphasizes type-level determinism (Theorem 1).
+
+---
+
+### Example 2: Value-Level Uncertainty (Theorem 2)
+
+Consider an agent tasked with booking the cheapest available flight:
+
+```
+searchFlights(origin, destination, date) → List[Flight]
+selectCheapest(flights: List[Flight]) → Flight
+bookFlight(flight: Flight) → Confirmation
+```
+
+Initially, the agent knows the type chain is valid:
+
+```
+searchFlights → selectCheapest → bookFlight
+```
+
+But it cannot know value-level information ahead of time—such as price or availability. Until it calls `searchFlights`, there's uncertainty about the flight costs. Only after observing results (`$300`, `$350`, `$400`) can the agent confidently select the cheapest option (`$300`), thus collapsing value uncertainty.
+
+This clearly illustrates value-level stochasticity (Theorem 2).
+
+---
+
+### Example 3: Goal-Level Approximation (Theorem 3)
+
+An agent tries to determine if a proposed restaurant reservation satisfies a user's preference for a "romantic atmosphere." Initially, the agent is uncertain (e.g., 50% confidence) due to ambiguous reviews:
+
+```
+restaurantSearch(city: String, cuisine: String) → List[Restaurant]
+checkAmbience(reviews: List[Review]) → Score[0,1]
+```
+
+Initially, without specific data, the agent estimates moderate goal satisfaction (`E_v=0.6`). However, after observing the actual review scores (`0.8`), the agent’s updated confidence in goal satisfaction rises substantially (`E_v=0.9`), showing how value resolution improves goal approximations.
+
+---
+
+### Example 4: Illustrating the Type-Value-Goal Entropy Paradox (Section 4)
+
+Suppose an agent is asked to summarize recent AI papers published on arXiv today:
+
+- **Type entropy**: Limited (`queryPapers → List[Paper]`, always predictable).
+- **Value entropy**: High, as papers published today are uncertain (potentially dozens of new papers).
+- **Goal entropy**: High, as "good summary" depends on specific values (titles, abstracts).
+
+The paradox arises because, although the agent’s parameters (`θ`) are fixed, it easily resolves this high uncertainty iteratively by making specific API calls (`fetchPapers()`), progressively reducing entropy by observing returned paper titles and abstracts, then composing precise summaries.
+
+---
+
+### Example 4: Entropy Amplification due to Incorrect Types (Definition 4)
+
+Consider an agent mistakenly believing that:
+
+```
+fetchWeather(city: String) → Temperature
+convertCurrency(amount: Number, currency: String) → Number
+```
+
+might be composed as:
+
+```
+convertCurrency(fetchWeather("New York"), "EUR")
+```
+
+This incorrect type assumption dramatically amplifies entropy, as the agent unnecessarily explores invalid branches before eventually failing, clearly demonstrating **type-driven entropy amplification**.
+
+---
+
+### Example 5: Goal-Directed Execution Branching (Definition 5)
+
+Consider an agent planning to reserve a restaurant table based on user preferences (`Italian cuisine, 8 pm reservation`):
+
+```
+searchRestaurants(cuisine, date) → List[Restaurant]
+checkAvailability(restaurant: String, date) → Bool
+reserveTable(restaurant: String, date, time) → Confirmation
+```
+
+Each step produces multiple potential values (restaurants, availability). Thus, each uncertain result (`availability=True/False`) creates distinct **goal-directed execution branches**, clearly illustrating entropy growth with each function call.
+
+---
+
+### Example 4: Iterative Resolution of Uncertainty (Theorem 5)
+
+A medical diagnosis agent exemplifies iterative uncertainty resolution:
+
+- **Initial type-level certainty**: `getSymptoms(patientID) → Symptoms`
+- **Value uncertainty**: initially unknown patient symptoms
+- **Goal**: "Accurately diagnose illness"
+
+The agent iteratively:
+- Queries patient symptoms (`getSymptoms()`)
+- Observes lab tests (`runTest(symptomData)`)
+- Updates diagnostic confidence progressively (`evaluateDiagnosis(testResults)`)
+
+Each step reduces value-level uncertainty, refining its goal evaluation (`E_v`), illustrating iterative uncertainty resolution (Theorem 5).
+
+---
+
+### Example 4: Step-Uncertainty Trade-off (Theorem 6)
+
+Consider an agent asked to identify the best product from an e-commerce database (`thousands of options`) to buy based on vague criteria:
+
+- **Option A**: Single large query (low steps, high uncertainty):  
+  "Retrieve all products, then guess the best one."
+
+- **Option B** (many small steps, low uncertainty):  
+  "Retrieve products category by category, filtering progressively by criteria until one clearly emerges."
+
+Agents practically favor **Option B**, illustrating the theorem on step-value uncertainty trade-off clearly.
+
+---
+
+### Example 4: Information Transfer (Theorem 8)
+
+A small agent trained on limited travel booking scenarios (`D`) might generalize surprisingly well because, during runtime, it iteratively retrieves detailed information (e.g., flight prices, hotel availability) via APIs, effectively augmenting its limited learned information (`θ`) with dynamically acquired value-level information.
+
+Thus, the small agent performs well beyond its apparent static knowledge capacity, highlighting iterative information amplification.
+
+---
+
+### Example 5: System Prompt as Goal Controller
+
+Consider two different prompts for a task of creating an event invite:
+
+- Prompt A (ambiguous):  
+  "Write an event invitation."
+
+- Prompt B (structured):  
+  "Write a formal email invitation (τ_goal=Text, E_v(score≥0.8) if polite, includes RSVP, and date)."
+
+Prompt B vastly reduces goal entropy by clearly specifying structural and qualitative criteria upfront, illustrating the importance of goal specification design for successful goal-directed composition.
+
+---
+
