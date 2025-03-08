@@ -188,21 +188,3 @@ Our analysis provides several key insights for the development of tool-using LLM
 These results not only explain the empirical success of current tool-using agents but point to clear directions for improvement: focus on training data that exposes the causal structure of tool applications, emphasize output prediction as the primary training objective, and leverage the natural connection between causal states and types in strongly typed systems.
 
 As AI systems increasingly rely on tool use to extend their capabilities, this theoretical framework provides both guarantees about their behavior and practical guidance for their development.
-
-## References
-
-1. Barnett, N., & Crutchfield, J. P. (2015). Computational mechanics of input-output processes: Structured transformations and the ε-transducer. Journal of Statistical Physics, 161(2), 404-451.
-
-2. Crutchfield, J. P., & Young, K. (1989). Inferring statistical complexity. Physical Review Letters, 63(2), 105.
-
-3. Shalizi, C. R., & Crutchfield, J. P. (2001). Computational mechanics: Pattern and prediction, structure and simplicity. Journal of Statistical Physics, 104(3), 817-879.
-
-4. Zhang, A., Lyle, C., Sodhani, S., Filos, A., Kwiatkowska, M., Pineau, J., ... & Whiteson, S. (2021). Learning causal state representations of partially observable environments. arXiv preprint arXiv:2010.14274.
-
-5. Pearl, J. (2009). Causality. Cambridge University Press.
-
-6. Ferns, N., Panangaden, P., & Precup, D. (2004). Metrics for finite Markov decision processes. In Proceedings of the 20th conference on Uncertainty in artificial intelligence (pp. 162-169).
-
-7. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Ichter, B., Xia, F., ... & Zhou, D. (2022). Chain of thought prompting elicits reasoning in large language models. arXiv preprint arXiv:2201.11903.
-
-8. Schölkopf, B., Locatello, F., Bauer, S., Ke, N. R., Kalchbrenner, N., Goyal, A., & Bengio, Y. (2021). Toward causal representation learning. Proceedings of the IEEE, 109(5), 612-634.
