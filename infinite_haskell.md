@@ -1,14 +1,19 @@
+Below is a version with **Markdown-compatible** math:
+
+---
+
 # From Haskell Traces to Causal States: An Empirical Derivation
 
-In this document, we look at how an **infinite dataset of Haskell execution traces** naturally reveals the “causal state” structure that computational mechanics predicts. We show how these causal states correspond to *Haskell types* and how a language model (such as a transformer) trained on these traces effectively learns the **minimal** state required to predict further outputs—making it an *optimal* predictor under certain conditions. 
+In this document, we look at how an **infinite dataset of Haskell execution traces** naturally reveals the “causal state” structure that computational mechanics predicts. We show how these causal states correspond to *Haskell types* and how a language model (such as a transformer) trained on these traces effectively learns the **minimal** state required to predict further outputs—making it an *optimal* predictor under certain conditions.
 
 Before diving in, it’s worth recalling some key points from the broader theory:
 
 1. **Causal States**: In computational mechanics, the minimal “lumps” of history that preserve full predictive power are called *causal states*. Two histories that predict the same future distribution belong to the same causal state.
 2. **Typed Functional Programming**: In strongly typed languages like Haskell, the type system imposes structure on which function can follow which output. This often matches the notion of “causal state” because being in a type \(\tau\) tells you exactly which functions (and thus transitions) are possible next.
-3. **Implicit vs. Explicit Composition**: Language models can either
+3. **Implicit vs. Explicit Composition**: Language models can either  
    - *explicitly* generate code that composes functions, or  
    - *implicitly* predict what a function call *would* produce without explicitly writing out the function call.  
+
    Despite their different styles, both approaches rely on learning the same underlying states (type-based or otherwise).
 
 With those big ideas in mind, let’s now go **section by section** through the empirical derivation.
@@ -25,9 +30,10 @@ T = [(f_1, x_1, \tau_1, y_1), (f_2, x_2, \tau_2, y_2), \dots, (f_n, x_n, \tau_n,
 \]
 
 where each step has:
-- \(f_i\): the function being applied,
-- \(x_i\): the input,
-- \(\tau_i\): the **type signature** in play at that step,
+
+- \(f_i\): the function being applied,  
+- \(x_i\): the input,  
+- \(\tau_i\): the **type signature** in play at that step,  
 - \(y_i\): the output of that function call.
 
 **Why This Matters**:  
@@ -58,7 +64,8 @@ Hence each step includes *function, input, output, and type signature* in the tr
 ## 2. Properties of the Trace Distribution
 
 **Before** jumping into the formal properties, let’s remember *why* we care:
-- We know Haskell’s type system *strongly restricts* which function can come after which output. This makes the chain of steps *type-driven*.
+
+- We know Haskell’s type system *strongly restricts* which function can come after which output. This makes the chain of steps *type-driven*.  
 - The distribution of valid traces is shaped by *value-specific paths* (the actual data influences which path is taken) and *common compositional patterns* (like using `map` followed by `filter`, etc.).
 
 ### 2.1 Type-Driven Transitions
@@ -89,7 +96,7 @@ P(y_{k+1} \mid f_{k+1}, x_{k+1}, y_1, \dots, y_k) \;=\; P(y_{k+1} \mid f_{k+1}, 
 
 ### 2.4 Error Distributions
 
-**Key Idea**: Even though Haskell is statically typed, we can still see *runtime errors* (e.g., partial functions like `head []`) or type boundary mistakes in ill-typed examples (if the dataset includes them, say from logs or attempts). Typically these appear where the *type* or *value* is incompatible (like calling `head` on an empty list). 
+**Key Idea**: Even though Haskell is statically typed, we can still see *runtime errors* (e.g., partial functions like `head []`) or type boundary mistakes in ill-typed examples (if the dataset includes them, say from logs or attempts). Typically these appear where the *type* or *value* is incompatible (like calling `head` on an empty list).
 
 **Interpretation**: From a distribution viewpoint, these errors become part of the “tails” or rare events that might or might not be included, depending on the dataset’s coverage.
 
@@ -117,13 +124,14 @@ This is the standard “predictive equivalence” that defines a causal state: i
 ### 3.2 Type-Based Partitioning
 
 **Observation**:  
-Empirically, if you group all prefixes that end in a value of type \(\tau\), these appear to have the **same** distribution of possible next functions, next values, etc. 
+Empirically, if you group all prefixes that end in a value of type \(\tau\), these appear to have the **same** distribution of possible next functions, next values, etc.
 
 \[
-P(\text{continuation} \,\mid\, \text{prefix ends with type}(\tau_1))
+P(\text{continuation} \mid \text{prefix ends with type}(\tau_1))
 \;=\;
-P(\text{continuation} \,\mid\, \text{prefix ends with type}(\tau_2))
-\quad \text{iff} \quad \tau_1 = \tau_2.
+P(\text{continuation} \mid \text{prefix ends with type}(\tau_2))
+\quad\text{iff}\quad
+\tau_1 = \tau_2.
 \]
 
 In other words, “if you end with `String`, you face the same set of next-step distributions as all other prefix histories that ended in `String`.”
@@ -170,7 +178,7 @@ This captures how, *empirically*, we move from one type to another by applying s
 A *unifilar* machine is one where, if you know the current state and the next “symbol” (or “input,” or “tool”), the *next* state is *deterministically* determined. In Haskell’s deterministic evaluation:
 
 \[
-P(\text{next state} \,\mid\, \text{current state}, \text{function}, \text{input}) 
+P(\text{next state} \mid \text{current state}, \text{function}, \text{input}) 
 \in \{0,1\}.
 \]
 
@@ -201,7 +209,9 @@ assuming \(x\) is of type \(\tau\). This just says “If you’re in state \(\ta
 ### 5.3 Output Distribution
 
 \[
-P(y \mid \tau, f, x) \;=\; P(y \mid f, x)\quad \text{for}\; x\in \tau.
+P(y \mid \tau, f, x) = P(y \mid f, x)
+\quad
+\text{for } x \in \tau.
 \]
 Meaning, once you specify the function and the input, the next output \(y\) is pinned down (or at least distributed in a known way).
 
@@ -215,15 +225,15 @@ We basically have an *ε-machine* that’s a function of “current type \(\tau\
 ## 6. Transformer Models Learn the Empirical Causal States
 
 **Connection to LLMs**:  
-When you train a **transformer** on these Haskell traces—token by token or step by step—it must learn a representation that *predicts* the next token or the next output. 
+When you train a **transformer** on these Haskell traces—token by token or step by step—it must learn a representation that *predicts* the next token or the next output.
 
 ### 6.1 Predictive Objective Forces Causal State Learning
 
 **Why**:  
 The transformer tries to minimize its prediction error. If the best partition of the past into “equivalence classes” for the future is precisely the type-based partition, the network *must* learn to track which “type” it’s in.
 
-**Implicit vs. Explicit**:
-- Even if the model only *implicitly* outputs the function’s result, it’s forced to figure out: “Given I’m in the state representing `Maybe User`, which function can be next, and what’s that output’s distribution?”
+**Implicit vs. Explicit**:  
+- Even if the model only *implicitly* outputs the function’s result, it’s forced to figure out: “Given I’m in the state representing `Maybe User`, which function can be next, and what’s that output’s distribution?”  
 - If it’s doing *explicit composition*, it must likewise generate code that type-checks, leading to the same underlying state representation.
 
 ### 6.2 Attention Mechanisms Implement Transition Functions
@@ -240,7 +250,7 @@ If you do clustering on the hidden states from a trained model while it processe
 
 ## 7. Empirical Results Support Theoretical Predictions
 
-**Two-Layered Claim**:
+**Two-Layered Claim**:  
 1. **We discovered** from data that states = types.  
 2. **Theory** says that in a strongly typed language, “types” are indeed minimal causal states.
 
@@ -279,17 +289,17 @@ Computational mechanics says that these causal states use minimal memory *while*
 
 ## 9. Conclusion: From Data to Theory
 
-**What We Did**:
+**What We Did**:  
 1. We took an *infinite dataset* of Haskell traces, capturing how actual code executes.  
 2. By analyzing its statistical properties (which transitions are valid, how types shape next-step possibilities), we naturally derived the notion of *causal states*.  
 3. Those states turned out to be exactly “the type of the current value”—the same conclusion reached by the formal theory.  
 4. This explains why language models trained on code can learn to do correct function composition: they are effectively discovering these minimal predictive partitions.
 
-**Further Connection**:
-- This mirrors the broader theoretical results on **LLMs as ε-transducers** and how **implicit output prediction** ensures an agent learns the right “state” structure for *optimal tool selection*.  
+**Further Connection**:  
+- This mirrors the broader theoretical results on **LLMs as \(\varepsilon\)-transducers** and how **implicit output prediction** ensures an agent learns the right “state” structure for *optimal tool selection*.  
 - In a typed environment, that means the model’s internal states line up with the type system, letting it chain functions in correct ways—whether it *explicitly* writes the code or *implicitly* predicts the result.
 
-**Implication**:
+**Implication**:  
 - Because we see the theory “emerge from the data,” we confirm that the computational-mechanics perspective isn’t just an abstract principle but genuinely matches how typed functional programs behave—and how an LLM can effectively master them.
 
 Thus, **both from a theoretical and empirical angle**, we see that **“types = causal states”** in Haskell, and that LLMs will discover and exploit this structure when trained on execution traces, ultimately explaining why they can *so effectively* generate and reason about functional code.
