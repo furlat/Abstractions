@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Set, Callable
 import logging
-from abstractions.ecs.entity import Entity, EntityRegistry
+from abstractions.ecs_old.entity import Entity, EntityRegistry
 from functools import wraps
 
 ##############################

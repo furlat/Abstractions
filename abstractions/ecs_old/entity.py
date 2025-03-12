@@ -1026,7 +1026,6 @@ class Entity(BaseModel):
             # Common relational fields that cause comparison issues
         }
     
-    
     def has_modifications(self, other: "Entity") -> Tuple[bool, Dict["Entity", EntityDiff]]:
         """
         Check if this entity or any nested entities differ from their stored versions.
@@ -1229,188 +1228,29 @@ class Entity(BaseModel):
         return nested
 
 
-
-class InMemoryEntityStorage():
+@runtime_checkable
+class EntityStorage(Protocol):
     """
-    In-memory storage using Python's object references.
+    Generic interface for storing and retrieving Entities, building lineage, etc.
+    
+    This Protocol defines the contract that any storage implementation must satisfy 
+    to be compatible with the Entity system. Implementations may include in-memory 
+    storage, SQL databases, document stores, or other persistence mechanisms.
     """
-    def __init__(self) -> None:
-        self._logger = logging.getLogger("InMemoryEntityStorage")
-        self._registry: Dict[UUID, Entity] = {}
-        self._entity_class_map: Dict[UUID, Type[Entity]] = {}
-        self._lineages: Dict[UUID, List[UUID]] = {}
-        self._inference_orchestrator: Optional[object] = None
-        
-    def merge_entity(self, entity: Entity, session: Any = None) -> Entity:
-        """
-        For in-memory storage, merge is the same as register.
-        This implementation ensures compatibility with the EntityStorage protocol.
-        
-        Args:
-            entity: Entity to merge
-            session: Ignored in in-memory storage
-            
-        Returns:
-            The registered entity
-        """
-        result = self.register(entity)
-        if result is None:
-            raise ValueError(f"Failed to merge entity {entity.ecs_id}")
-        return result
-
-    def has_entity(self, entity_id: UUID) -> bool:
-        """Check if entity exists in storage."""
-        return entity_id in self._registry
-
-    def get_cold_snapshot(self, entity_id: UUID) -> Optional[Entity]:
-        """Get the cold (stored) version of an entity."""
-        return self._registry.get(entity_id)
-
-    def register(self, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]:
-        """Register an entity or retrieve it by ID."""
-        if isinstance(entity_or_id, UUID):
-            return self.get(entity_or_id, None)
-
-        entity = entity_or_id
-            
-        # Check if entity already exists
-        if self.has_entity(entity.ecs_id):
-            # Get existing version
-            existing = self.get_cold_snapshot(entity.ecs_id)
-            if existing and entity.has_modifications(existing):
-                # Fork the entity and all its nested entities
-                entity = entity.fork()
-        
-        # Collect all entities that need to be stored
-        entities_to_store: Dict[UUID, Entity] = {}
-        
-        def collect_entities(e: Entity) -> None:
-            if e.ecs_id not in entities_to_store:
-                # Create a cold snapshot for storage
-                snap = create_cold_snapshot(e)
-                entities_to_store[e.ecs_id] = snap
-                # Collect nested entities
-                for sub in e.get_sub_entities():
-                    collect_entities(sub)
-        
-        # Collect all entities in the tree
-        collect_entities(entity)
-        
-        # Store all entities
-        for e in entities_to_store.values():
-            self._store_cold_snapshot(e)
-            
-        return entity
-
-    def get(self, entity_id: UUID, expected_type: Optional[Type[Entity]] = None) -> Optional[Entity]:
-        """
-        Get an entity by ID with optional type checking.
-        
-        Args:
-            entity_id: The UUID of the entity to retrieve
-            expected_type: Optional type to check against
-            
-        Returns:
-            A warm copy of the entity if found and type matches, otherwise None
-            
-        Note:
-            Type checking compares class names rather than using isinstance() directly,
-            to handle cases where the same class is imported from different modules.
-        """
-        ent = self._registry.get(entity_id)
-        if not ent:
-            self._logger.debug(f"Entity with ID {entity_id} not found in registry")
-            return None
-            
-        # For type checking, we use the class name rather than isinstance()
-        # This handles cases where the same class is imported from different modules
-        if expected_type:
-            actual_type = type(ent)
-            # Check class names match
-            if actual_type.__name__ != expected_type.__name__:
-                # Fall back to isinstance for subtypes
-                if not isinstance(ent, expected_type):
-                    self._logger.error(f"Type mismatch: got {actual_type.__name__}, expected {expected_type.__name__}")
-                    return None
-            
-        # Create a warm copy
-        warm_copy = deepcopy(ent)
-        warm_copy.live_id = uuid4()
-        warm_copy.from_storage = True  # Mark as coming from storage
-        
-        return warm_copy
-
-    def list_by_type(self, entity_type: Type[Entity]) -> List[Entity]:
-        """List all entities of a specific type."""
-        return [
-            deepcopy(e)
-            for e in self._registry.values()
-            if isinstance(e, entity_type)
-        ]
-
-    def get_many(self, entity_ids: List[UUID], expected_type: Optional[Type[Entity]] = None) -> List[Entity]:
-        """Get multiple entities by ID."""
-        return [e for eid in entity_ids if (e := self.get(eid, expected_type)) is not None]
-
-    def get_registry_status(self) -> Dict[str, Any]:
-        """Get status information about the registry."""
-        return {
-            "storage": "in_memory",
-            "in_memory": True,
-            "entity_count": len(self._registry),
-            "lineage_count": len(self._lineages)
-        }
-
-    def set_inference_orchestrator(self, orchestrator: object) -> None:
-        """Set an inference orchestrator."""
-        self._inference_orchestrator = orchestrator
-
-    def get_inference_orchestrator(self) -> Optional[object]:
-        """Get the current inference orchestrator."""
-        return self._inference_orchestrator
-
-    def clear(self) -> None:
-        """Clear all data from storage."""
-        self._registry.clear()
-        self._entity_class_map.clear()
-        self._lineages.clear()
-
-    def get_lineage_entities(self, lineage_id: UUID) -> List[Entity]:
-        """Get all entities with a specific lineage ID."""
-        return [e for e in self._registry.values() if e.lineage_id == lineage_id]
-
-    def has_lineage_id(self, lineage_id: UUID) -> bool:
-        """Check if a lineage ID exists."""
-        return any(e for e in self._registry.values() if e.lineage_id == lineage_id)
-
-    def get_lineage_ids(self, lineage_id: UUID) -> List[UUID]:
-        """Get all entity IDs with a specific lineage ID."""
-        return [e.ecs_id for e in self._registry.values() if e.lineage_id == lineage_id]
-
-    def _store_cold_snapshot(self, entity: Entity) -> None:
-        """Store a cold snapshot of an entity and all its sub-entities."""
-        stored = set()
-        
-        def store_recursive(e: Entity) -> None:
-            if e in stored:  # Using new hash/eq
-                return
-                
-            stored.add(e)
-            snap = create_cold_snapshot(e)
-            self._registry[e.ecs_id] = snap
-            
-            # Update lineage tracking
-            if e.lineage_id not in self._lineages:
-                self._lineages[e.lineage_id] = []
-            if e.ecs_id not in self._lineages[e.lineage_id]:
-                self._lineages[e.lineage_id].append(e.ecs_id)
-                
-            # Store all sub-entities
-            for sub in e.get_sub_entities():
-                store_recursive(sub)
-                
-        store_recursive(entity)
-
+    def has_entity(self, entity_id: UUID) -> bool: ...
+    def get_cold_snapshot(self, entity_id: UUID) -> Optional[Entity]: ...
+    def register(self, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]: ...
+    def get(self, entity_id: UUID, expected_type: Optional[Type[Entity]]) -> Optional[Entity]: ...
+    def list_by_type(self, entity_type: Type[Entity]) -> List[Entity]: ...
+    def get_many(self, entity_ids: List[UUID], expected_type: Optional[Type[Entity]]) -> List[Entity]: ...
+    def get_registry_status(self) -> Dict[str, Any]: ...
+    def set_inference_orchestrator(self, orchestrator: object) -> None: ...
+    def get_inference_orchestrator(self) -> Optional[object]: ...
+    def clear(self) -> None: ...
+    def get_lineage_entities(self, lineage_id: UUID) -> List[Entity]: ...
+    def has_lineage_id(self, lineage_id: UUID) -> bool: ...
+    def get_lineage_ids(self, lineage_id: UUID) -> List[UUID]: ...
+    def merge_entity(self, entity: Entity, session: Any = None) -> Entity: ...
 
 
 class EntityRegistry(BaseRegistry):
@@ -1418,10 +1258,10 @@ class EntityRegistry(BaseRegistry):
     Improved static registry class with unified lineage handling.
     """
     _logger = logging.getLogger("EntityRegistry")
-    _storage: InMemoryEntityStorage   # default
+    _storage: EntityStorage   # default
 
     @classmethod
-    def use_storage(cls, storage: InMemoryEntityStorage) -> None:
+    def use_storage(cls, storage: EntityStorage) -> None:
         """Set the storage implementation to use."""
         cls._storage = storage
         cls._logger.info(f"Now using {type(storage).__name__} for storage")
