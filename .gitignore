@@ -11,3 +11,4 @@ abstractions/__pycache__/*
 abstractions/text/chat/conversation_graph
 *.json
 *.parquet
+/.venv
