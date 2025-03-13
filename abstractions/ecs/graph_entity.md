@@ -445,3 +445,195 @@ EntityRegistry.register_graph(new_graph)
 By optimizing both graph construction and diffing, we can efficiently manage hierarchical entity relationships and versioning at scale. The path-based approach provides a significant performance improvement over naive comparison methods, especially for complex entity hierarchies with localized changes.
 
 The combination of ancestry path tracking during construction and path-based prioritization during diffing creates a powerful system that can quickly identify and version changes while avoiding unnecessary work.
+
+
+You're right - we can optimize this further by constructing the DAG in a single pass. Let me rewrite the document section focusing on this insight:
+
+# Addendum: Single-Pass DAG Transformation During Entity Graph Construction
+
+## Key Insight: On-the-Fly Path Analysis
+
+The most efficient approach to transforming cyclic entity graphs into DAGs is to perform the canonical path analysis during the initial graph traversal. By maintaining a distance-to-root metric for each entity and making edge classification decisions immediately upon discovery, we eliminate the need for subsequent analysis passes.
+
+## Optimized Single-Pass Algorithm
+
+```python
+def build_canonical_dag(root_entity: Entity) -> EntityGraph:
+    """
+    Build entity graph with automatic DAG transformation in a single pass.
+    
+    This algorithm:
+    1. Traverses the entity graph once
+    2. Classifies edges immediately upon discovery
+    3. Maintains minimal path information
+    """
+    graph = EntityGraph(root_id=root_entity.ecs_id)
+    
+    # Track shortest known distance to root for each entity
+    # Map: entity_id -> distance
+    shortest_distance = {root_entity.live_id: 0}
+    
+    # Track canonical parent for each entity
+    # Map: entity_id -> (parent_entity, field_info)
+    canonical_parent = {}
+    
+    # Process queue with distance information
+    # (entity, distance, source_entity, field_info)
+    to_process = deque([(root_entity, 0, None, None)])
+    
+    while to_process:
+        entity, distance, source, field_info = to_process.popleft()
+        
+        # Always add the entity to the graph (if not already added)
+        if entity.live_id not in graph.nodes:
+            graph.add_entity(entity)
+        
+        # Check if we've seen this entity before and compare distances
+        if entity.live_id in shortest_distance:
+            current_best = shortest_distance[entity.live_id]
+            
+            if distance < current_best:
+                # We found a shorter path - update shortest distance
+                shortest_distance[entity.live_id] = distance
+                
+                # Update canonical parent
+                old_parent_info = canonical_parent.get(entity.live_id)
+                if old_parent_info:
+                    old_parent, old_field_info = old_parent_info
+                    # Mark old edge as reference
+                    graph.mark_edge_as_reference(old_parent.live_id, entity.live_id, old_field_info)
+                
+                # Store new canonical parent
+                if source:
+                    canonical_parent[entity.live_id] = (source, field_info)
+                    # Add hierarchical edge
+                    add_edge_to_graph(graph, source, entity, field_info, EdgeType.HIERARCHICAL)
+                
+                # Continue exploration from this entity
+                explore_entity_fields(entity, distance, graph, to_process, shortest_distance)
+                
+            else:
+                # Current path is not shorter - mark as reference edge
+                if source:
+                    # Add reference edge
+                    add_edge_to_graph(graph, source, entity, field_info, EdgeType.REFERENCE)
+                # Don't explore further from this path
+                
+        else:
+            # First time seeing this entity
+            shortest_distance[entity.live_id] = distance
+            
+            # Store canonical parent
+            if source:
+                canonical_parent[entity.live_id] = (source, field_info)
+                # Add hierarchical edge
+                add_edge_to_graph(graph, source, entity, field_info, EdgeType.HIERARCHICAL)
+            
+            # Explore all fields
+            explore_entity_fields(entity, distance, graph, to_process, shortest_distance)
+    
+    return graph
+
+def explore_entity_fields(entity, current_distance, graph, to_process, shortest_distance):
+    """Explore all entity fields and add children to processing queue."""
+    next_distance = current_distance + 1
+    
+    for field_name, field_value in get_entity_fields(entity):
+        # Handle direct entity reference
+        if isinstance(field_value, Entity):
+            to_process.append((field_value, next_distance, entity, (field_name, None, None)))
+        
+        # Handle list/tuple of entities
+        elif isinstance(field_value, (list, tuple)):
+            for i, item in enumerate(field_value):
+                if isinstance(item, Entity):
+                    to_process.append((item, next_distance, entity, (field_name, i, None)))
+        
+        # Handle dict of entities
+        elif isinstance(field_value, dict):
+            for k, v in field_value.items():
+                if isinstance(v, Entity):
+                    to_process.append((v, next_distance, entity, (field_name, None, k)))
+```
+
+## Operational Principles
+
+The algorithm operates on a few key principles:
+
+1. **Immediate Edge Classification**: Every edge is classified as hierarchical or reference as soon as it's discovered, eliminating the need for post-processing.
+
+2. **Distance-Based Path Selection**: We maintain a simple integer distance metric for each entity rather than storing complete paths.
+
+3. **Dynamic Path Updating**: When a shorter path is discovered:
+   - The previous edge is reclassified as a reference edge
+   - The new edge becomes the hierarchical edge
+   - Further exploration continues from this shorter path
+
+4. **Exploration Pruning**: When discovering an entity through a longer path, the edge is marked as a reference and exploration from that entity is skipped to avoid redundant processing.
+
+## Set Operations for Path Management
+
+Instead of storing complete ancestry paths, we utilize efficient set operations:
+
+1. **Distance Tracking**: `shortest_distance` mapping uses constant-time lookups to determine if a shorter path exists.
+
+2. **Path Reclassification**: When a shorter path is found, we simply update the canonical parent and reclassify the previous edge without reconstructing complete paths.
+
+3. **Exploration Control**: The algorithm naturally stops exploring branches that would create longer paths to already-discovered entities.
+
+## Performance Characteristics
+
+This approach achieves optimal performance for DAG transformation:
+
+- **Time Complexity**: O(n + e) where n is the number of entities and e is the number of edges
+  - Each entity is processed exactly once for its shortest path
+  - Each edge is classified exactly once
+
+- **Space Complexity**: O(n) for tracking distance and canonical parent information
+  - No need to store complete paths
+  - Only minimal metadata per entity
+
+## Versioning with the Transformed DAG
+
+Once the DAG is constructed, versioning operations become straightforward:
+
+```python
+def propagate_changes_in_dag(graph, changed_entity_ids):
+    """Propagate changes up through hierarchical edges only."""
+    entities_to_version = set(changed_entity_ids)
+    processed = set()
+    
+    # Process each changed entity
+    for entity_id in changed_entity_ids:
+        if entity_id in processed:
+            continue
+            
+        current = graph.get_entity(entity_id)
+        processed.add(entity_id)
+        
+        # Follow hierarchical edges up to the root
+        while current:
+            entities_to_version.add(current.ecs_id)
+            
+            # Find the parent through a hierarchical edge
+            parent = None
+            for edge in graph.get_outgoing_edges(current.ecs_id):
+                if edge.type == EdgeType.HIERARCHICAL:
+                    parent = graph.get_entity(edge.target_id)
+                    break
+                    
+            # Stop if no hierarchical parent or we've processed this path
+            if not parent or parent.ecs_id in processed:
+                break
+                
+            current = parent
+            processed.add(current.ecs_id)
+    
+    return entities_to_version
+```
+
+## Conclusion
+
+The single-pass DAG transformation algorithm efficiently converts potentially cyclic entity graphs into directed acyclic graphs for versioning purposes. By making classification decisions immediately upon entity discovery and using simple set operations to track path information, we achieve optimal performance while maintaining the full semantics of the entity relationships.
+
+This approach elegantly handles complex entity structures with circular references, providing clear, deterministic versioning behavior without unnecessary propagation through reference edges.
