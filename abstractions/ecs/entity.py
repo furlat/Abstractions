@@ -239,29 +239,12 @@ class EntityGraph(BaseModel):
 
 def get_field_ownership(entity: "Entity", field_name: str) -> bool:
     """
-    Get the ownership flag from a Pydantic field.
+    Since we're not handling circular references yet, all fields are treated as hierarchical.
+    This is a simplification that will be enhanced later.
     
-    Args:
-        entity: The entity to inspect
-        field_name: The name of the field to check
-        
     Returns:
-        True if the field represents an ownership relationship, False otherwise
+        Always returns True for now
     """
-    # Skip if field doesn't exist
-    if field_name not in entity.model_fields:
-        return True  # Default to ownership=True for backward compatibility
-    
-    # Get the field info from Pydantic model
-    field_info = entity.model_fields[field_name]
-    
-    # Check if ownership is specified in json_schema_extra
-    if field_info.json_schema_extra:
-        ownership_value = field_info.json_schema_extra.get("ownership", True)
-        # Ensure we return a boolean
-        return bool(ownership_value) if ownership_value is not None else True
-    
-    # Default to ownership=True for backward compatibility
     return True
 
 def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optional[Type]:
@@ -552,12 +535,13 @@ def process_field_value(
 
 def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     """
-    Build a complete entity graph from a root entity.
+    Build a complete entity graph from a root entity in a single pass.
     
     This algorithm:
-    1. Builds the graph structure in a single pass
-    2. Tracks shortest paths for each entity
-    3. Creates ancestry paths for path-based diffing
+    1. Builds the graph structure and ancestry paths in a single traversal
+    2. Immediately classifies edges based on ownership
+    3. Maintains shortest paths for each entity
+    4. Creates ancestry paths for path-based diffing on-the-fly
     
     Args:
         root_entity: The root entity of the graph
@@ -571,31 +555,61 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
         lineage_id=root_entity.lineage_id
     )
     
-    # Maps entity ecs_id to its shortest known distance from root
-    distance_map = {root_entity.ecs_id: 0}
+    # Maps entity ecs_id to its ancestry path (list of entity IDs from root to this entity)
+    ancestry_paths = {root_entity.ecs_id: [root_entity.ecs_id]}
     
-    # Queue for breadth-first traversal
-    to_process = deque([root_entity])
+    # Queue for breadth-first traversal with path information
+    # Each item is (entity, parent_id)
+    # For the root, parent is None
+    # Using direct annotation instead of a type alias
+    to_process: deque[tuple[Entity, Optional[UUID]]] = deque([(root_entity, None)])
     
     # Set of processed entities to avoid cycles
     processed = set()
     
+    # Add root entity to graph
+    graph.add_entity(root_entity)
+    graph.set_ancestry_path(root_entity.ecs_id, [root_entity.ecs_id])
+    
     # Process all entities
     while to_process:
-        entity = to_process.popleft()
+        entity, parent_id = to_process.popleft()
         
         # Raise error if we encounter a circular reference
         # We don't allow circular entities at this stage
-        if entity.ecs_id in processed:
+        if entity.ecs_id in processed and parent_id is not None:
             raise ValueError(f"Circular entity reference detected: {entity.ecs_id}. Circular entities are not supported.")
+        
+        # If we've seen this entity before but now found a new parent relationship,
+        # we only need to process the edge, not the entity's fields again
+        entity_needs_processing = entity.ecs_id not in processed
         
         # Mark as processed
         processed.add(entity.ecs_id)
         
-        # Add entity to graph
-        graph.add_entity(entity)
+        # Process edge from parent if this isn't the root
+        if parent_id is not None:
+            # Update the edge's hierarchical status - all edges are hierarchical for now
+            edge_key = (parent_id, entity.ecs_id)
+            if edge_key in graph.edges:
+                # Always mark as hierarchical (since we're not handling circular references yet)
+                graph.mark_edge_as_hierarchical(parent_id, entity.ecs_id)
+                
+                # Update ancestry path
+                if parent_id in ancestry_paths:
+                    parent_path = ancestry_paths[parent_id]
+                    entity_path = parent_path + [entity.ecs_id]
+                    
+                    # If we have no path yet or found a shorter path
+                    if entity.ecs_id not in ancestry_paths or len(entity_path) < len(ancestry_paths[entity.ecs_id]):
+                        ancestry_paths[entity.ecs_id] = entity_path
+                        graph.set_ancestry_path(entity.ecs_id, entity_path)
         
-        # Process all fields
+        # If we've already processed this entity's fields, skip to the next one
+        if not entity_needs_processing:
+            continue
+            
+        # Process all fields if the entity hasn't been processed yet
         for field_name in entity.model_fields:
             value = getattr(entity, field_name)
             
@@ -606,58 +620,119 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             # Get expected type for this field
             field_type = get_pydantic_field_type_entities(entity, field_name)
             
-            # Process the field value
-            process_field_value(
-                graph=graph,
-                entity=entity,
-                field_name=field_name,
-                value=value,
-                field_type=field_type,
-                to_process=to_process,
-                distance_map=distance_map
-            )
+            # Direct entity reference
+            if isinstance(value, Entity):
+                # Add entity to graph if not already present
+                if value.ecs_id not in graph.nodes:
+                    graph.add_entity(value)
+                
+                # Add the appropriate edge type
+                process_entity_reference(
+                    graph=graph,
+                    source=entity,
+                    target=value,
+                    field_name=field_name,
+                    to_process=None,  # We'll handle queue manually
+                    distance_map=None  # Not using distance map in single-pass version
+                )
+                
+                # Add to processing queue
+                to_process.append((value, entity.ecs_id))
+            
+            # List of entities
+            elif isinstance(value, list) and field_type:
+                for i, item in enumerate(value):
+                    if isinstance(item, Entity):
+                        # Add entity to graph if not already present
+                        if item.ecs_id not in graph.nodes:
+                            graph.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            graph=graph,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            list_index=i,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
+            
+            # Dict of entities
+            elif isinstance(value, dict) and field_type:
+                for k, v in value.items():
+                    if isinstance(v, Entity):
+                        # Add entity to graph if not already present
+                        if v.ecs_id not in graph.nodes:
+                            graph.add_entity(v)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            graph=graph,
+                            source=entity,
+                            target=v,
+                            field_name=field_name,
+                            dict_key=k,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((v, entity.ecs_id))
+            
+            # Tuple of entities
+            elif isinstance(value, tuple) and field_type:
+                for i, item in enumerate(value):
+                    if isinstance(item, Entity):
+                        # Add entity to graph if not already present
+                        if item.ecs_id not in graph.nodes:
+                            graph.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            graph=graph,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            tuple_index=i,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
+            
+            # Set of entities
+            elif isinstance(value, set) and field_type:
+                for item in value:
+                    if isinstance(item, Entity):
+                        # Add entity to graph if not already present
+                        if item.ecs_id not in graph.nodes:
+                            graph.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            graph=graph,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
     
-    # Phase 2: Construct ancestry paths
-    # For each entity, find the path to root using only hierarchical edges
+    # Ensure all entities have an ancestry path
+    # This is just a safety check - all entities should have paths by now
     for entity_id in graph.nodes:
-        if entity_id == root_entity.ecs_id:
-            # Root entity has a path of just itself
-            graph.set_ancestry_path(entity_id, [entity_id])
-            continue
-        
-        # Start from the entity and follow hierarchical edges to the root
-        current_id = entity_id
-        path = [current_id]
-        
-        while current_id != root_entity.ecs_id:
-            # Find the parent through a hierarchical edge
-            hierarchical_parent = None
-            
-            for parent_id in graph.incoming_edges.get(current_id, []):
-                if graph.is_hierarchical_edge(parent_id, current_id):
-                    hierarchical_parent = parent_id
-                    break
-            
-            if hierarchical_parent is None:
-                # If no hierarchical parent is found, use the shortest path
-                min_distance = float('inf')
-                for parent_id in graph.incoming_edges.get(current_id, []):
-                    parent_distance = distance_map.get(parent_id, float('inf'))
-                    if parent_distance < min_distance:
-                        min_distance = parent_distance
-                        hierarchical_parent = parent_id
-            
-            if hierarchical_parent is None:
-                # This shouldn't happen in a connected graph
-                break
-            
-            # Move up the path
-            path.append(hierarchical_parent)
-            current_id = hierarchical_parent
-        
-        # Reverse the path to go from root to entity
-        path.reverse()
-        graph.set_ancestry_path(entity_id, path)
+        if entity_id not in ancestry_paths:
+            # If for some reason we don't have a path, set a default path
+            # This shouldn't happen with proper graph construction
+            graph.set_ancestry_path(entity_id, [root_entity.ecs_id, entity_id])
     
     return graph
 
@@ -696,6 +771,90 @@ def update_entity_versions(
     # The real implementation will follow the algorithm in the design doc
     pass
 
+
+def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = False) -> str:
+    """
+    Generate a Mermaid diagram from an EntityGraph.
+    
+    Args:
+        graph: The entity graph to visualize
+        include_attributes: Whether to include entity attributes in the diagram
+        
+    Returns:
+        A string containing the Mermaid diagram code
+    """
+    if not graph.nodes:
+        return "```mermaid\ngraph TD\n  Empty[Empty Graph]\n```"
+        
+    lines = ["```mermaid", "graph TD"]
+    
+    # Entity nodes
+    for entity_id, entity in graph.nodes.items():
+        # Use a shortened version of ID for display
+        short_id = str(entity_id)[-8:]
+        
+        # Create node with label
+        entity_type = entity.__class__.__name__
+        
+        if include_attributes:
+            # Include some attributes in the label
+            attrs = [
+                f"ecs_id: {short_id}",
+                f"lineage_id: {str(entity.lineage_id)[-8:]}"
+            ]
+            if entity.root_ecs_id:
+                attrs.append(f"root: {str(entity.root_ecs_id)[-8:]}")
+                
+            node_label = f"{entity_type}\\n{' | '.join(attrs)}"
+        else:
+            # Simple label with just type and short ID
+            node_label = f"{entity_type} {short_id}"
+            
+        lines.append(f"  {entity_id}[\"{node_label}\"]")
+    
+    # Root node styling
+    lines.append(f"  {graph.root_ecs_id}:::rootNode")
+    
+    # Add edges
+    for edge_key, edge in graph.edges.items():
+        source_id, target_id = edge_key
+        
+        # Determine edge style based on hierarchical status
+        if edge.is_hierarchical:
+            # Hierarchical edges (solid, with arrow)
+            edge_style = "-->"
+            edge_class = "hierarchicalEdge"
+        else:
+            # Reference edges (dashed, with arrow)
+            edge_style = "-.->"
+            edge_class = "referenceEdge"
+            
+        # Add edge label based on field name and container info
+        edge_label = edge.field_name
+        
+        if edge.container_index is not None:
+            edge_label += f"[{edge.container_index}]"
+        elif edge.container_key is not None:
+            edge_label += f"[{edge.container_key}]"
+            
+        # Create the edge line
+        edge_line = f"  {source_id} {edge_style}|{edge_label}| {target_id}"
+        if edge.is_hierarchical:
+            edge_line += ":::hierarchicalEdge"
+        else:
+            edge_line += ":::referenceEdge"
+            
+        lines.append(edge_line)
+    
+    # Add styling classes
+    lines.extend([
+        "  classDef rootNode fill:#f9f,stroke:#333,stroke-width:2px",
+        "  classDef hierarchicalEdge stroke:#333,stroke-width:2px",
+        "  classDef referenceEdge stroke:#999,stroke-width:1px,stroke-dasharray:5 5"
+    ])
+    
+    lines.append("```")
+    return "\n".join(lines)
 
 
 class Entity(BaseModel):
