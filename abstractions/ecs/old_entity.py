@@ -76,17 +76,8 @@ from functools import wraps
 
 from pydantic import BaseModel, Field, model_validator
 
-# SQLAlchemy imports for BaseEntitySQL
-from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, JSON, String, Table, Uuid as SQLAUuid
-)
-from sqlalchemy.orm import (
-    Mapped, Session, mapped_column, relationship, declarative_base
-)
-from abstractions.ecs_old.base_registry import BaseRegistry
+from abstractions.ecs.base_registry import BaseRegistry
 
-# Create SQLAlchemy Base for the entity models
-Base = declarative_base()
 
 ##############################
 
@@ -95,18 +86,9 @@ Base = declarative_base()
 
 # Define type variables
 T = TypeVar('T')
-SQMT = TypeVar('SQMT', bound='SQLModelType')
 T_Self = TypeVar('T_Self', bound='Entity')
 
-# Type for SQL model classes that implement to_entity/from_entity
-class SQLModelType(Protocol):
-    @classmethod
-    def from_entity(cls, entity: 'Entity') -> 'SQLModelType': ...
-    def to_entity(self) -> 'Entity': ...
-    ecs_id: UUID
-    lineage_id: UUID
-
-##############################
+###############
 # 3) Core comparison and storage utilities
 ##############################
 
@@ -134,7 +116,7 @@ def compare_entity_fields(
             exclude_fields = {
                 'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
                 'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-                'sql_root', 'deps_graph', 'is_being_registered'
+                'root_entity', 'deps_graph', 'is_being_registered'
             }
     
     # Get field sets for both entities (ensure exclude_fields is a set for proper type checking)
@@ -295,7 +277,7 @@ class EntityDiff:
             # Skip implementation fields that don't need to trigger a new version
             if field in {
                 'id', 'ecs_id', 'live_id', 'from_storage', 'force_parent_fork', 
-                'sql_root', 'created_at', 'parent_id', 'old_ids', 'lineage_id'
+                'root_entity', 'created_at', 'parent_id', 'old_ids', 'lineage_id'
             }:
                 logger.debug(f"Field '{field}' is an implementation detail - not significant")
                 continue
@@ -717,7 +699,7 @@ class Entity(BaseModel):
        - Initialize dependency graph for all sub-entities
        - Register root entity:
          a) Create cold snapshot
-         b) Store in registry/SQL
+         b) Store in registry
          c) Done
 
     2. TRACED FUNCTION BEHAVIOR:
@@ -759,7 +741,7 @@ class Entity(BaseModel):
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage")
     force_parent_fork: bool = Field(default=False, description="Internal flag to force parent forking")
     # Always set to True by default to ensure all entities are registered properly
-    sql_root: bool = Field(default=True, description="Whether the entity is the root of an SQL entity tree")
+    root_entity: bool = Field(default=True, description="Whether the entity is the root of an entity tree")
     # Dependency graph - not serialized, transient state
     deps_graph: Optional[EntityDependencyGraph] = Field(default=None, exclude=True)
     # Flag to prevent recursive registration
@@ -821,15 +803,12 @@ class Entity(BaseModel):
         A root entity is one that should handle its own registration.
         """
         
-        # SQL mode: only sql_root entities are considered roots
-        storage_info = EntityRegistry.get_registry_status()
-        using_sql_storage = storage_info.get('storage') == 'sql'
-        if using_sql_storage:
-            return self.sql_root
+        
+
         
         # In-memory mode: for now, consider all entities as roots for simplicity
         # This is a temporary solution until we fully resolve circular references
-        return True
+        return self.root_entity
 
     @model_validator(mode='after')
     def register_on_create(self) -> Self:
@@ -1021,10 +1000,11 @@ class Entity(BaseModel):
         return {
             'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
             'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-            'sql_root', 'deps_graph', 'is_being_registered',
+            'root_entity', 'deps_graph', 'is_being_registered',
             
             # Common relational fields that cause comparison issues
         }
+    
     
     def has_modifications(self, other: "Entity") -> Tuple[bool, Dict["Entity", EntityDiff]]:
         """
@@ -1036,18 +1016,12 @@ class Entity(BaseModel):
         """
         # Get storage type to adjust comparison strictness
         storage_info = EntityRegistry.get_registry_status()
-        using_sql_storage = storage_info.get('storage') == 'sql'
-        
         logger = logging.getLogger("EntityModification")
-        logger.info(f"Checking modifications: {type(self).__name__}({self.ecs_id}) vs {type(other).__name__}({other.ecs_id}) [SQL: {using_sql_storage}]")
+        logger.info(f"Checking modifications: {type(self).__name__}({self.ecs_id}) vs {type(other).__name__}({other.ecs_id}) ]")
         
         modified_entities: Dict["Entity", EntityDiff] = {}
         
-        # Early exit if comparing an entity with itself
-        # only if we are using sql storage
-        if self.ecs_id == other.ecs_id and self.live_id == other.live_id and using_sql_storage:
-            logger.debug(f"Same entity instance detected (same ecs_id and live_id): {self.ecs_id}")
-            return False, {}
+
             
         # Initialize dependency graph if not already done
         if not hasattr(self, 'deps_graph') or self.deps_graph is None:
@@ -1088,7 +1062,7 @@ class Entity(BaseModel):
                 implementation_fields = {
                     'id', 'ecs_id', 'live_id', 'created_at', 'parent_id', 
                     'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-                    'sql_root', 'deps_graph', 'is_being_registered'
+                    'root_entity', 'deps_graph', 'is_being_registered'
                 }
                 
                 for field, diff_info in field_diffs.items():
@@ -1137,7 +1111,7 @@ class Entity(BaseModel):
         exclude_keys |= {
             'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
             'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-            'sql_root', 'deps_graph', 'is_being_registered'
+            'root_entity', 'deps_graph', 'is_being_registered'
         }
         kwargs['exclude'] = exclude_keys
 
@@ -1228,122 +1202,186 @@ class Entity(BaseModel):
         return nested
 
 
-@runtime_checkable
-class EntityStorage(Protocol):
-    """
-    Generic interface for storing and retrieving Entities, building lineage, etc.
-    
-    This Protocol defines the contract that any storage implementation must satisfy 
-    to be compatible with the Entity system. Implementations may include in-memory 
-    storage, SQL databases, document stores, or other persistence mechanisms.
-    """
-    def has_entity(self, entity_id: UUID) -> bool: ...
-    def get_cold_snapshot(self, entity_id: UUID) -> Optional[Entity]: ...
-    def register(self, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]: ...
-    def get(self, entity_id: UUID, expected_type: Optional[Type[Entity]]) -> Optional[Entity]: ...
-    def list_by_type(self, entity_type: Type[Entity]) -> List[Entity]: ...
-    def get_many(self, entity_ids: List[UUID], expected_type: Optional[Type[Entity]]) -> List[Entity]: ...
-    def get_registry_status(self) -> Dict[str, Any]: ...
-    def set_inference_orchestrator(self, orchestrator: object) -> None: ...
-    def get_inference_orchestrator(self) -> Optional[object]: ...
-    def clear(self) -> None: ...
-    def get_lineage_entities(self, lineage_id: UUID) -> List[Entity]: ...
-    def has_lineage_id(self, lineage_id: UUID) -> bool: ...
-    def get_lineage_ids(self, lineage_id: UUID) -> List[UUID]: ...
-    def merge_entity(self, entity: Entity, session: Any = None) -> Entity: ...
-
 
 class EntityRegistry(BaseRegistry):
     """
     Improved static registry class with unified lineage handling.
     """
     _logger = logging.getLogger("EntityRegistry")
-    _storage: EntityStorage   # default
+    _registry: Dict[UUID, Entity] = {}
+    _lineages: Dict[UUID, List[UUID]] = {}
+    _inference_orchestrator: Optional[object] = None
 
-    @classmethod
-    def use_storage(cls, storage: EntityStorage) -> None:
-        """Set the storage implementation to use."""
-        cls._storage = storage
-        cls._logger.info(f"Now using {type(storage).__name__} for storage")
 
     # Simple delegation methods
     @classmethod
     def has_entity(cls, entity_id: UUID) -> bool:
-        return cls._storage.has_entity(entity_id)
+        """Check if entity exists in storage."""
+        return  entity_id in cls._registry
 
     @classmethod
     def get_cold_snapshot(cls, entity_id: UUID) -> Optional[Entity]:
-        return cls._storage.get_cold_snapshot(entity_id)
-
+        """Get the cold (stored) version of an entity."""
+        return cls._registry.get(entity_id)
+    
+    @classmethod
+    def _store_cold_snapshot(cls, entity: Entity) -> None:
+        """Store a cold snapshot of an entity and all its sub-entities."""
+        stored = set()
+        
+        def store_recursive(e: Entity) -> None:
+            if e in stored:  # Using new hash/eq
+                return
+                
+            stored.add(e)
+            snap = create_cold_snapshot(e)
+            cls._registry[e.ecs_id] = snap
+            
+            # Update lineage tracking
+            if e.lineage_id not in cls._lineages:
+                cls._lineages[e.lineage_id] = []
+            if e.ecs_id not in cls._lineages[e.lineage_id]:
+                cls._lineages[e.lineage_id].append(e.ecs_id)
+                
+            # Store all sub-entities
+            for sub in e.get_sub_entities():
+                store_recursive(sub)
+                
+        store_recursive(entity)
     @classmethod
     def register(cls, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]:
-        return cls._storage.register(entity_or_id)
+        """Register an entity or retrieve it by ID."""
+        if isinstance(entity_or_id, UUID):
+            return cls.get(entity_or_id, None)
+
+        entity = entity_or_id
+            
+        # Check if entity already exists
+        if cls.has_entity(entity.ecs_id):
+            # Get existing version
+            existing = cls.get_cold_snapshot(entity.ecs_id)
+            if existing and entity.has_modifications(existing):
+                # Fork the entity and all its nested entities
+                entity = entity.fork()
+        
+        # Collect all entities that need to be stored
+        entities_to_store: Dict[UUID, Entity] = {}
+        
+        def collect_entities(e: Entity) -> None:
+            if e.ecs_id not in entities_to_store:
+                # Create a cold snapshot for storage
+                snap = create_cold_snapshot(e)
+                entities_to_store[e.ecs_id] = snap
+                # Collect nested entities
+                for sub in e.get_sub_entities():
+                    collect_entities(sub)
+        
+        # Collect all entities in the tree
+        collect_entities(entity)
+        
+        # Store all entities
+        for e in entities_to_store.values():
+            cls._store_cold_snapshot(e)
+            
+        return entity
+
+    
+
 
     @classmethod
     def get(cls, entity_id: UUID, expected_type: Optional[Type[Entity]] = None) -> Optional[Entity]:
-        return cls._storage.get(entity_id, expected_type)
+        """
+        Get an entity by ID with optional type checking.
+        
+        Args:
+            entity_id: The UUID of the entity to retrieve
+            expected_type: Optional type to check against
+            
+        Returns:
+            A warm copy of the entity if found and type matches, otherwise None
+            
+        Note:
+            Type checking compares class names rather than using isinstance() directly,
+            to handle cases where the same class is imported from different modules.
+        """
+        ent = cls._registry.get(entity_id)
+        if not ent:
+            cls._logger.debug(f"Entity with ID {entity_id} not found in registry")
+            return None
+            
+        # For type checking, we use the class name rather than isinstance()
+        # This handles cases where the same class is imported from different modules
+        if expected_type:
+            actual_type = type(ent)
+            # Check class names match
+            if actual_type.__name__ != expected_type.__name__:
+                # Fall back to isinstance for subtypes
+                if not isinstance(ent, expected_type):
+                    cls._logger.error(f"Type mismatch: got {actual_type.__name__}, expected {expected_type.__name__}")
+                    return None
+            
+        # Create a warm copy
+        warm_copy = deepcopy(ent)
+        warm_copy.live_id = uuid4()
+        warm_copy.from_storage = True  # Mark as coming from storage
+        
+        return warm_copy
 
     @classmethod
     def list_by_type(cls, entity_type: Type[Entity]) -> List[Entity]:
-        return cls._storage.list_by_type(entity_type)
+        """List all entities of a specific type."""
+        return [
+            deepcopy(e)
+            for e in cls._registry.values()
+            if isinstance(e, entity_type)
+        ]
 
     @classmethod
     def get_many(cls, entity_ids: List[UUID], expected_type: Optional[Type[Entity]] = None) -> List[Entity]:
-        return cls._storage.get_many(entity_ids, expected_type)
+       return [e for eid in entity_ids if (e := cls.get(eid, expected_type)) is not None]
 
     @classmethod
     def get_registry_status(cls) -> Dict[str, Any]:
-        """Get combined status from base registry and storage."""
-        base = super().get_registry_status()
-        store = cls._storage.get_registry_status()
-        return {**base, **store}
+        """Get status information about the registry."""
+        return {
+            "storage": "in_memory",
+            "entity_count": len(cls._registry),
+            "lineage_count": len(cls._lineages)
+        }
 
     @classmethod
     def set_inference_orchestrator(cls, orchestrator: object) -> None:
-        cls._storage.set_inference_orchestrator(orchestrator)
+        cls._inference_orchestrator = orchestrator
 
     @classmethod
     def get_inference_orchestrator(cls) -> Optional[object]:
-        return cls._storage.get_inference_orchestrator()
+        return cls._inference_orchestrator
+
+
 
     @classmethod
     def clear(cls) -> None:
-        cls._storage.clear()
+        cls._registry.clear()
+        cls._lineages.clear()
 
     # Lineage methods
     @classmethod
     def has_lineage_id(cls, lineage_id: UUID) -> bool:
-        return cls._storage.has_lineage_id(lineage_id)
+        """Check if a lineage ID exists."""
+        return any(e for e in cls._registry.values() if e.lineage_id == lineage_id)
 
     @classmethod
     def get_lineage_ids(cls, lineage_id: UUID) -> List[UUID]:
-        return cls._storage.get_lineage_ids(lineage_id)
+        """Get all entity IDs with a specific lineage ID."""
+        return [e.ecs_id for e in cls._registry.values() if e.lineage_id == lineage_id]
         
-    @classmethod
-    def merge_entity(cls, entity: Entity) -> Optional[Entity]:
-        """
-        Special method for SQL storage to merge an entity that might be attached to another session.
-        If using in-memory storage, this just calls register.
-        
-        Args:
-            entity: Entity to merge
-            
-        Returns:
-            The merged entity if successful, None otherwise
-        """
-        # Check if we're using SQL storage
-        storage_info = cls.get_registry_status()
-        if storage_info.get('storage') == 'sql' and hasattr(cls._storage, 'merge_entity'):
-            # Use hasattr to check for merge_entity method at runtime
-            merge_method = getattr(cls._storage, 'merge_entity')
-            return merge_method(entity)
-        # Otherwise, use normal registration
-        return cls.register(entity)
+
         
     @classmethod
     def get_lineage_entities(cls, lineage_id: UUID) -> List[Entity]:
         """Get all entities with a specific lineage ID."""
-        return cls._storage.get_lineage_entities(lineage_id)
+        return [e for e in cls._registry.values() if e.lineage_id == lineage_id]
+
 
     @classmethod
     def build_lineage_tree(cls, lineage_id: UUID) -> Dict[UUID, Dict[str, Any]]:
@@ -1494,3 +1532,290 @@ class EntityRegistry(BaseRegistry):
         lines.append("```")
         return "\n".join(lines)
 
+##############################
+# 8) Entity Tracing
+##############################
+
+def _collect_entities(args: tuple, kwargs: dict) -> Dict[int, Entity]:
+    """Helper to collect all Entity instances from args and kwargs with their memory ids."""
+    logger = logging.getLogger("EntityCollection")
+    logger.debug(f"Collecting entities from {len(args)} args and {len(kwargs)} kwargs")
+    
+    entities = {}
+    scanned_ids = set()  # Track entity IDs we've seen to avoid cycles
+    
+    def scan(obj: Any, path: str = "") -> None:
+        if isinstance(obj, Entity):
+            # Only process each entity once by its UUID
+            if obj.ecs_id not in scanned_ids:
+                scanned_ids.add(obj.ecs_id)
+                entities[id(obj)] = obj
+                logger.debug(f"Found entity {type(obj).__name__}({obj.ecs_id}) at path {path}")
+        elif isinstance(obj, (list, tuple, set)):
+            logger.debug(f"Scanning collection at path {path} with {len(obj)} items")
+            for i, item in enumerate(obj):
+                scan(item, f"{path}[{i}]")
+        elif isinstance(obj, dict):
+            logger.debug(f"Scanning dict at path {path} with {len(obj)} keys")
+            for k, v in obj.items():
+                scan(v, f"{path}.{k}")
+    
+    # Scan args and kwargs
+    for i, arg in enumerate(args):
+        scan(arg, f"args[{i}]")
+    for key, arg in kwargs.items():
+        scan(arg, f"kwargs[{key}]")
+    
+    logger.info(f"Collected {len(entities)} unique entities")
+    return entities
+
+def _check_and_process_entities(entities: Dict[int, Entity], fork_if_modified: bool = True) -> None:
+    """
+    Check entities for modifications and optionally fork them.
+    Process in bottom-up order (nested entities first).
+    """
+    logger = logging.getLogger("EntityProcessing")
+    logger.info(f"Processing {len(entities)} entities, fork_if_modified={fork_if_modified}")
+    
+    
+    # Build dependency graph
+    dependency_graph: Dict[int, List[int]] = {id(e): [] for e in entities.values()}
+    for entity_id, entity in entities.items():
+        # Find all nested entities
+        for sub in entity.get_sub_entities():
+            nested_id = id(sub)
+            if nested_id in entities:
+                # Add dependency: entity depends on nested_entity
+                dependency_graph[entity_id].append(nested_id)
+                logger.debug(f"Dependency: {type(entity).__name__}({entity.ecs_id}) depends on {type(sub).__name__}({sub.ecs_id})")
+    
+    logger.debug(f"Built dependency graph with {len(dependency_graph)} nodes")
+    
+    # Topological sort (process leaves first)
+    processed: Set[int] = set()
+    
+    def process_entity(entity_id: int) -> None:
+        if entity_id in processed:
+            logger.debug(f"Entity {entity_id} already processed, skipping")
+            return
+            
+        # Process dependencies first
+        for dep_id in dependency_graph[entity_id]:
+            if dep_id not in processed:
+                logger.debug(f"Processing dependency {dep_id} first")
+                process_entity(dep_id)
+                
+        # Process this entity
+        entity = entities[entity_id]
+        logger.info(f"Processing entity {type(entity).__name__}({entity.ecs_id})")
+        cold = EntityRegistry.get_cold_snapshot(entity.ecs_id)
+        
+        if cold:
+            needs_fork, modified_entities = entity.has_modifications(cold)
+            if needs_fork and fork_if_modified:
+                logger.info(f"Entity {type(entity).__name__}({entity.ecs_id}) has modifications, forking")
+                forked = entity.fork()
+                logger.debug(f"Forked to new entity {forked.ecs_id}")
+            else:
+                logger.debug(f"Entity {type(entity).__name__}({entity.ecs_id}) has no modifications or fork_if_modified=False")
+        else:
+            logger.debug(f"No cold snapshot found for entity {entity.ecs_id}")
+            
+        processed.add(entity_id)
+        logger.debug(f"Marked entity {entity_id} as processed")
+    
+    # Process all entities
+    for entity_id in entities:
+        if entity_id not in processed:
+            logger.debug(f"Starting processing for entity {entity_id}")
+            process_entity(entity_id)
+    
+    logger.info(f"Finished processing {len(processed)}/{len(entities)} entities")
+
+
+def entity_tracer(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to trace entity modifications and handle versioning.
+    Automatically detects and handles all Entity instances in arguments.
+    Works with both sync and async functions, and both storage types.
+    """
+    logger = logging.getLogger("EntityTracer")
+    logger.info(f"Decorating function {func.__name__} with entity_tracer")
+    
+    # Handle detection of async functions safely
+    is_async = False
+    try:
+        # Try to import inspect locally to avoid any module conflicts
+        import inspect as local_inspect
+        is_async = local_inspect.iscoroutinefunction(func)
+    except (ImportError, AttributeError):
+        # Fallback method if inspect.iscoroutinefunction is not available
+        is_async = hasattr(func, '__await__') or (hasattr(func, '__code__') and func.__code__.co_flags & 0x80)
+    
+    logger.debug(f"Function {func.__name__} is {'async' if is_async else 'sync'}")
+    
+    @wraps(func)
+    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+        logger.info(f"Entering async wrapper for {func.__name__}")
+        
+        # Collect input entities and their IDs
+        input_entities = _collect_entities(args, kwargs)
+        input_entity_uuids = {e.ecs_id for e in input_entities.values()}
+        input_entity_lineage_uuids = {e.lineage_id for e in input_entities.values()}
+        logger.info(f"Collected {len(input_entities)} input entities")
+        
+        # Get storage type to adjust behavior
+        
+        # Check for modifications before call
+        fork_count = 0
+        for entity_id, entity in input_entities.items():
+            logger.debug(f"Checking input entity {type(entity).__name__}({entity.ecs_id}) before function call")
+            cold_snapshot = EntityRegistry.get_cold_snapshot(entity.ecs_id)
+            if cold_snapshot:
+                # Special handling based on storage type
+               
+                # Simpler check for in-memory mode for better tracing
+                needs_fork, _ = entity.has_modifications(cold_snapshot)
+                if needs_fork:
+                    logger.info(f"Input entity {type(entity).__name__}({entity.ecs_id}) needs fork - forking before call (in-memory mode)")
+                    entity.fork()
+                    fork_count += 1
+            else:
+                logger.debug(f"No cold snapshot found for entity {entity.ecs_id}")
+        
+        logger.info(f"Forked {fork_count} input entities before calling {func.__name__}")
+
+        # Call the function
+        logger.debug(f"Calling async function {func.__name__}")
+        result = await func(*args, **kwargs)
+        logger.debug(f"Function {func.__name__} returned: {type(result)}")
+
+        # Collect output entities, excluding those that were inputs
+        output_entities = _collect_entities((result,), {})
+        new_entities = {
+            id_: entity 
+            for id_, entity in output_entities.items()
+            if entity.ecs_id not in input_entity_uuids
+        }
+        new_entities_from_lineage = {
+            id_: entity 
+            for id_, entity in output_entities.items()
+            if entity.lineage_id not in input_entity_lineage_uuids
+        }
+        logger.info(f"Found {len(new_entities)} new entities in output by ecs_id")
+        logger.info(f"Found {len(new_entities_from_lineage)} new entities in output by lineage_id")
+        
+        # Register new entities first
+        for entity in new_entities_from_lineage.values():
+            if not EntityRegistry.has_entity(entity.ecs_id):
+                logger.warning(f"Registering new output entity: {type(entity).__name__}({entity.ecs_id}) this should not happen, the entity should already be registered at creation")
+                EntityRegistry.register(entity)
+        
+        # Now check modifications on input entities
+        after_fork_count = 0
+        for entity_id, entity in input_entities.items():
+            logger.debug(f"Checking input entity {type(entity).__name__}({entity.ecs_id}) after function call")
+            cold_snapshot = EntityRegistry.get_cold_snapshot(entity.ecs_id)
+            if cold_snapshot:
+                
+                needs_fork, _ = entity.has_modifications(cold_snapshot)
+                if needs_fork:
+                    logger.info(f"Input entity {type(entity).__name__}({entity.ecs_id}) needs fork - forking after call (in-memory mode)")
+                    entity.fork()
+                    after_fork_count += 1
+        
+        logger.info(f"Forked {after_fork_count} input entities after calling {func.__name__}")
+        
+        # Handle the result
+        if isinstance(result, Entity):
+            # If it was an input entity that was modified, return the forked version
+            if id(result) in input_entities:
+                logger.info(f"Result is an input entity that was modified, returning most recent version")
+                return input_entities[id(result)]
+            # If it's a new entity, it's already been registered above
+            return result
+            
+        return result
+    
+    @wraps(func)
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        logger.info(f"Entering sync wrapper for {func.__name__}")
+        
+        # Collect input entities and their IDs
+        input_entities = _collect_entities(args, kwargs)
+        input_entity_uuids = {e.ecs_id for e in input_entities.values()}
+        logger.info(f"Collected {len(input_entities)} input entities")
+        
+        # Get storage type to adjust behavior
+        storage_info = EntityRegistry.get_registry_status()
+        
+        
+        # Check for modifications before call
+        fork_count = 0
+        for entity_id, entity in input_entities.items():
+            logger.debug(f"Checking input entity {type(entity).__name__}({entity.ecs_id}) before function call")
+            cold_snapshot = EntityRegistry.get_cold_snapshot(entity.ecs_id)
+            if cold_snapshot:
+                
+                # Simpler check for in-memory mode for better tracing
+                needs_fork, _ = entity.has_modifications(cold_snapshot)
+                if needs_fork:
+                    logger.info(f"Input entity {type(entity).__name__}({entity.ecs_id}) needs fork - forking before call (in-memory mode)")
+                    entity.fork()
+                    fork_count += 1
+            else:
+                logger.debug(f"No cold snapshot found for entity {entity.ecs_id}")
+        
+        logger.info(f"Forked {fork_count} input entities before calling {func.__name__}")
+
+        # Call the function
+        logger.debug(f"Calling sync function {func.__name__}")
+        result = func(*args, **kwargs)
+        logger.debug(f"Function {func.__name__} returned: {type(result)}")
+
+        # Collect output entities, excluding those that were inputs
+        output_entities = _collect_entities((result,), {})
+        new_entities = {
+            id_: entity 
+            for id_, entity in output_entities.items()
+            if entity.ecs_id not in input_entity_uuids
+        }
+        logger.info(f"Found {len(new_entities)} new entities in output")
+        
+        # Register new entities first
+        for entity in new_entities.values():
+            if not EntityRegistry.has_entity(entity.ecs_id):
+                logger.info(f"Registering new output entity: {type(entity).__name__}({entity.ecs_id})")
+                EntityRegistry.register(entity)
+        
+        # Now check modifications on input entities
+        after_fork_count = 0
+        for entity_id, entity in input_entities.items():
+            logger.debug(f"Checking input entity {type(entity).__name__}({entity.ecs_id}) after function call")
+            cold_snapshot = EntityRegistry.get_cold_snapshot(entity.ecs_id)
+            if cold_snapshot:
+                
+                needs_fork, _ = entity.has_modifications(cold_snapshot)
+                if needs_fork:
+                    logger.info(f"Input entity {type(entity).__name__}({entity.ecs_id}) needs fork - forking after call (in-memory mode)")
+                    entity.fork()
+                    after_fork_count += 1
+        
+        logger.info(f"Forked {after_fork_count} input entities after calling {func.__name__}")
+        
+        # Handle the result
+        if isinstance(result, Entity):
+            # If it was an input entity that was modified, return the forked version
+            if id(result) in input_entities:
+                logger.info(f"Result is an input entity that was modified, returning most recent version")
+                return input_entities[id(result)]
+            # If it's a new entity, it's already been registered above
+            return result
+            
+        return result
+    
+    # Use the appropriate wrapper based on whether the function is async
+    if is_async:
+        return async_wrapper
+    else:
+        return sync_wrapper
