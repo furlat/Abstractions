@@ -31,10 +31,12 @@ class EntityEdge(BaseModel):
     """Edge between two entities in the graph"""
     source_id: UUID
     target_id: UUID
-    edge_type: EdgeType
+    edge_type: EdgeType                   # The container type (DIRECT, LIST, DICT, etc.)
     field_name: str
     container_index: Optional[int] = None  # For lists and tuples
     container_key: Optional[Any] = None    # For dictionaries
+    ownership: bool = True                 # Whether this represents an ownership relationship
+    is_hierarchical: bool = False          # Whether this is a hierarchical edge
 
     def __hash__(self):
         return hash((self.source_id, self.target_id, self.field_name))
@@ -94,56 +96,61 @@ class EntityGraph(BaseModel):
             self.incoming_edges[edge.target_id].append(edge.source_id)
             self.edge_count += 1
     
-    def add_direct_edge(self, source: "Entity", target: "Entity", field_name: str) -> None:
+    def add_direct_edge(self, source: "Entity", target: "Entity", field_name: str, ownership: bool = True) -> None:
         """Add a direct field reference edge"""
         edge = EntityEdge(
             source_id=source.ecs_id,
             target_id=target.ecs_id,
             edge_type=EdgeType.DIRECT,
-            field_name=field_name
+            field_name=field_name,
+            ownership=ownership
         )
         self.add_edge(edge)
     
-    def add_list_edge(self, source: "Entity", target: "Entity", field_name: str, index: int) -> None:
+    def add_list_edge(self, source: "Entity", target: "Entity", field_name: str, index: int, ownership: bool = True) -> None:
         """Add a list container edge"""
         edge = EntityEdge(
             source_id=source.ecs_id,
             target_id=target.ecs_id,
             edge_type=EdgeType.LIST,
             field_name=field_name,
-            container_index=index
+            container_index=index,
+            ownership=ownership
         )
         self.add_edge(edge)
     
-    def add_dict_edge(self, source: "Entity", target: "Entity", field_name: str, key: Any) -> None:
+    def add_dict_edge(self, source: "Entity", target: "Entity", field_name: str, key: Any, ownership: bool = True) -> None:
         """Add a dictionary container edge"""
         edge = EntityEdge(
             source_id=source.ecs_id,
             target_id=target.ecs_id,
             edge_type=EdgeType.DICT,
             field_name=field_name,
-            container_key=key
+            container_key=key,
+            ownership=ownership
         )
         self.add_edge(edge)
     
-    def add_set_edge(self, source: "Entity", target: "Entity", field_name: str) -> None:
+    def add_set_edge(self, source: "Entity", target: "Entity", field_name: str, ownership: bool = True) -> None:
         """Add a set container edge"""
         edge = EntityEdge(
             source_id=source.ecs_id,
             target_id=target.ecs_id,
             edge_type=EdgeType.SET,
-            field_name=field_name
+            field_name=field_name,
+            ownership=ownership
         )
         self.add_edge(edge)
     
-    def add_tuple_edge(self, source: "Entity", target: "Entity", field_name: str, index: int) -> None:
+    def add_tuple_edge(self, source: "Entity", target: "Entity", field_name: str, index: int, ownership: bool = True) -> None:
         """Add a tuple container edge"""
         edge = EntityEdge(
             source_id=source.ecs_id,
             target_id=target.ecs_id,
             edge_type=EdgeType.TUPLE,
             field_name=field_name,
-            container_index=index
+            container_index=index,
+            ownership=ownership
         )
         self.add_edge(edge)
     
@@ -157,14 +164,14 @@ class EntityGraph(BaseModel):
         edge_key = (source_id, target_id)
         if edge_key in self.edges:
             edge = self.edges[edge_key]
-            edge.edge_type = EdgeType.HIERARCHICAL
+            edge.is_hierarchical = True
     
     def mark_edge_as_reference(self, source_id: UUID, target_id: UUID) -> None:
         """Mark an edge as a reference (non-ownership) edge"""
         edge_key = (source_id, target_id)
         if edge_key in self.edges:
             edge = self.edges[edge_key]
-            edge.edge_type = EdgeType.REFERENCE
+            edge.is_hierarchical = False
     
     def get_entity(self, entity_id: UUID) -> Optional["Entity"]:
         """Get an entity by its ID"""
@@ -204,7 +211,7 @@ class EntityGraph(BaseModel):
         """Check if the edge is a hierarchical (ownership) edge"""
         edge_key = (source_id, target_id)
         if edge_key in self.edges:
-            return self.edges[edge_key].edge_type == EdgeType.HIERARCHICAL
+            return self.edges[edge_key].is_hierarchical
         return False
     
     def get_hierarchical_parent(self, entity_id: UUID) -> Optional[UUID]:
@@ -230,8 +237,144 @@ class EntityGraph(BaseModel):
 
 # Functions to build the entity graph
 
+def get_field_ownership(entity: "Entity", field_name: str) -> bool:
+    """
+    Get the ownership flag from a Pydantic field.
+    
+    Args:
+        entity: The entity to inspect
+        field_name: The name of the field to check
+        
+    Returns:
+        True if the field represents an ownership relationship, False otherwise
+    """
+    # Skip if field doesn't exist
+    if field_name not in entity.model_fields:
+        return True  # Default to ownership=True for backward compatibility
+    
+    # Get the field info from Pydantic model
+    field_info = entity.model_fields[field_name]
+    
+    # Check if ownership is specified in json_schema_extra
+    if field_info.json_schema_extra:
+        ownership_value = field_info.json_schema_extra.get("ownership", True)
+        # Ensure we return a boolean
+        return bool(ownership_value) if ownership_value is not None else True
+    
+    # Default to ownership=True for backward compatibility
+    return True
+
 def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optional[Type]:
-    """Get the entity type from a Pydantic field type hint"""
+    """
+    Get the entity type from a Pydantic field, handling container types properly.
+    
+    This function uses Pydantic's model_fields metadata, field annotations, and runtime
+    type checking to determine if a field contains entities or entity containers,
+    even when they're empty.
+    
+    Args:
+        entity: The entity to inspect
+        field_name: The name of the field to check
+        
+    Returns:
+        The Entity type or subclass if the field contains entities, None otherwise
+    """
+    # Skip if field doesn't exist
+    if field_name not in entity.model_fields:
+        return None
+    
+    # First use Pydantic's model_fields which has rich metadata
+    field_info = entity.model_fields[field_name]
+    annotation = field_info.annotation
+    
+    # Directly analyze Pydantic field annotations
+    if annotation:
+        # Handle direct Entity field type
+        try:
+            # Check if it's an Entity type or subclass
+            if annotation == Entity or (isinstance(annotation, type) and issubclass(annotation, Entity)):
+                return annotation
+        except TypeError:
+            # Not a class or Entity, continue to other checks
+            pass
+            
+        # Handle Optional fields
+        origin = get_origin(annotation)
+        if origin is Union:
+            args = get_args(annotation)
+            # Find the non-None type in Optional[T]
+            inner_type = next((arg for arg in args if arg is not type(None)), None)
+            if inner_type:
+                try:
+                    if inner_type == Entity or (isinstance(inner_type, type) and issubclass(inner_type, Entity)):
+                        return inner_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+                
+            # Handle Optional containers of entities
+            origin = get_origin(inner_type) if inner_type else None
+        
+        # Handle container types
+        if origin in (list, set, tuple, dict):
+            args = get_args(annotation)
+            if origin is dict and len(args) >= 2:
+                # For dictionaries, check value type (second argument)
+                value_type = args[1]
+                try:
+                    if value_type == Entity or (isinstance(value_type, type) and issubclass(value_type, Entity)):
+                        return value_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+            elif origin in (list, set, tuple) and args:
+                # For other containers, check first argument
+                item_type = args[0]
+                try:
+                    if item_type == Entity or (isinstance(item_type, type) and issubclass(item_type, Entity)):
+                        return item_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+    
+    # Check field default factory for extra information
+    # For empty containers created with default_factory, this helps determine item type
+    if field_info.default_factory is not None:
+        # Skip trying to call default_factory, it might not be safely callable here
+        pass
+    
+    # If we can't determine from field metadata, check instance value
+    field_value = getattr(entity, field_name)
+    
+    # For direct entity instances, return immediately
+    if isinstance(field_value, Entity):
+        return type(field_value)
+    
+    # For populated containers, check content types directly
+    if field_value is not None:
+        # Check list type
+        if isinstance(field_value, list) and field_value:
+            if isinstance(field_value[0], Entity):
+                return type(field_value[0])
+                
+        # Check dict type
+        elif isinstance(field_value, dict) and field_value:
+            first_value = next(iter(field_value.values()), None)
+            if isinstance(first_value, Entity):
+                return type(first_value)
+                
+        # Check tuple type
+        elif isinstance(field_value, tuple) and field_value:
+            if isinstance(field_value[0], Entity):
+                return type(field_value[0])
+                
+        # Check set type
+        elif isinstance(field_value, set) and field_value:
+            first_value = next(iter(field_value))
+            if isinstance(first_value, Entity):
+                return type(first_value)
+    
+    # Fallback to type hints as last resort
     try:
         # Get type hints for the class
         hints = get_type_hints(entity.__class__)
@@ -246,9 +389,12 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
             args = get_args(field_type)
             # Check if this is Optional[Entity]
             field_type = next((arg for arg in args if arg is not type(None)), None)
+            # If we unwrapped an Optional, get its origin
+            if field_type:
+                origin = get_origin(field_type)
         
-        # Check if field_type is Entity or a subclass
-        if field_type and (field_type == Entity or issubclass(field_type, Entity)):
+        # Check if field_type is directly Entity or a subclass
+        if field_type and not origin and (field_type == Entity or issubclass(field_type, Entity)):
             return field_type
         
         # Handle container types
@@ -265,6 +411,7 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
                 if item_type == Entity or (inspect.isclass(item_type) and issubclass(item_type, Entity)):
                     return item_type
     except Exception:
+        # Fall back to direct instance check if type hint analysis fails
         pass
     
     return None
@@ -281,17 +428,28 @@ def process_entity_reference(
     distance_map: Optional[Dict[UUID, int]] = None
 ):
     """Process a single entity reference, updating the graph"""
+    # Get ownership information from the field
+    ownership = get_field_ownership(source, field_name)
+    
     # Add the appropriate edge type
     if list_index is not None:
-        graph.add_list_edge(source, target, field_name, list_index)
+        graph.add_list_edge(source, target, field_name, list_index, ownership)
     elif dict_key is not None:
-        graph.add_dict_edge(source, target, field_name, dict_key)
+        graph.add_dict_edge(source, target, field_name, dict_key, ownership)
     elif tuple_index is not None:
-        graph.add_tuple_edge(source, target, field_name, tuple_index)
+        graph.add_tuple_edge(source, target, field_name, tuple_index, ownership)
     else:
-        graph.add_direct_edge(source, target, field_name)
+        graph.add_direct_edge(source, target, field_name, ownership)
     
-    # Update distance map for the single-pass DAG algorithm
+    # Set the edge type immediately based on ownership
+    edge_key = (source.ecs_id, target.ecs_id)
+    if edge_key in graph.edges:
+        if ownership:
+            graph.mark_edge_as_hierarchical(source.ecs_id, target.ecs_id)
+        else:
+            graph.mark_edge_as_reference(source.ecs_id, target.ecs_id)
+    
+    # Update distance map for shortest path tracking
     if distance_map is not None:
         source_distance = distance_map.get(source.ecs_id, float('inf'))
         target_distance = distance_map.get(target.ecs_id, float('inf'))
@@ -300,17 +458,97 @@ def process_entity_reference(
         if new_target_distance < target_distance:
             # Found a shorter path to target
             distance_map[target.ecs_id] = int(new_target_distance)
-            
-            # Update ancestry path (will be done in a separate phase)
-            
-            # If we already processed this entity, we need to reprocess it
-            # since we found a shorter path
-            if target.ecs_id in graph.nodes and to_process is not None:
-                to_process.append(target)
     
     # Add to processing queue
     if to_process is not None:
         to_process.append(target)
+
+def process_field_value(
+    graph: EntityGraph,
+    entity: "Entity",
+    field_name: str,
+    value: Any,
+    field_type: Optional[Type],
+    to_process: Optional[deque],
+    distance_map: Optional[Dict[UUID, int]]
+) -> None:
+    """
+    Process an entity field value and add any contained entities to the graph.
+    
+    Args:
+        graph: The entity graph to update
+        entity: The source entity containing the field
+        field_name: The name of the field being processed
+        value: The field value to process
+        field_type: The expected entity type for this field, if known
+        to_process: Queue of entities to process
+        distance_map: Maps entity IDs to their distance from root
+    """
+    # Direct entity reference
+    if isinstance(value, Entity):
+        process_entity_reference(
+            graph=graph,
+            source=entity,
+            target=value,
+            field_name=field_name,
+            to_process=to_process,
+            distance_map=distance_map
+        )
+    
+    # List of entities
+    elif isinstance(value, list) and field_type:
+        for i, item in enumerate(value):
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    graph=graph,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    list_index=i,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Dict of entities
+    elif isinstance(value, dict) and field_type:
+        for k, v in value.items():
+            if isinstance(v, Entity):
+                process_entity_reference(
+                    graph=graph,
+                    source=entity,
+                    target=v,
+                    field_name=field_name,
+                    dict_key=k,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Tuple of entities
+    elif isinstance(value, tuple) and field_type:
+        for i, item in enumerate(value):
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    graph=graph,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    tuple_index=i,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Set of entities
+    elif isinstance(value, set) and field_type:
+        for item in value:
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    graph=graph,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
 
 def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     """
@@ -346,9 +584,10 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     while to_process:
         entity = to_process.popleft()
         
-        # Skip if already processed
+        # Raise error if we encounter a circular reference
+        # We don't allow circular entities at this stage
         if entity.ecs_id in processed:
-            continue
+            raise ValueError(f"Circular entity reference detected: {entity.ecs_id}. Circular entities are not supported.")
         
         # Mark as processed
         processed.add(entity.ecs_id)
@@ -367,110 +606,54 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             # Get expected type for this field
             field_type = get_pydantic_field_type_entities(entity, field_name)
             
-            # Direct entity reference
-            if isinstance(value, Entity):
-                process_entity_reference(
-                    graph=graph,
-                    source=entity,
-                    target=value,
-                    field_name=field_name,
-                    to_process=to_process,
-                    distance_map=distance_map
-                )
-            
-            # List of entities
-            elif isinstance(value, list) and field_type:
-                for i, item in enumerate(value):
-                    if isinstance(item, Entity):
-                        process_entity_reference(
-                            graph=graph,
-                            source=entity,
-                            target=item,
-                            field_name=field_name,
-                            list_index=i,
-                            to_process=to_process,
-                            distance_map=distance_map
-                        )
-            
-            # Dict of entities
-            elif isinstance(value, dict) and field_type:
-                for k, v in value.items():
-                    if isinstance(v, Entity):
-                        process_entity_reference(
-                            graph=graph,
-                            source=entity,
-                            target=v,
-                            field_name=field_name,
-                            dict_key=k,
-                            to_process=to_process,
-                            distance_map=distance_map
-                        )
-            
-            # Tuple of entities
-            elif isinstance(value, tuple) and field_type:
-                for i, item in enumerate(value):
-                    if isinstance(item, Entity):
-                        process_entity_reference(
-                            graph=graph,
-                            source=entity,
-                            target=item,
-                            field_name=field_name,
-                            tuple_index=i,
-                            to_process=to_process,
-                            distance_map=distance_map
-                        )
-            
-            # Set of entities
-            elif isinstance(value, set) and field_type:
-                for item in value:
-                    if isinstance(item, Entity):
-                        process_entity_reference(
-                            graph=graph,
-                            source=entity,
-                            target=item,
-                            field_name=field_name,
-                            to_process=to_process,
-                            distance_map=distance_map
-                        )
+            # Process the field value
+            process_field_value(
+                graph=graph,
+                entity=entity,
+                field_name=field_name,
+                value=value,
+                field_type=field_type,
+                to_process=to_process,
+                distance_map=distance_map
+            )
     
-    # Phase 2: Construct ancestry paths and classify edges
-    # For each entity, find the shortest path to root
+    # Phase 2: Construct ancestry paths
+    # For each entity, find the path to root using only hierarchical edges
     for entity_id in graph.nodes:
         if entity_id == root_entity.ecs_id:
             # Root entity has a path of just itself
             graph.set_ancestry_path(entity_id, [entity_id])
             continue
         
-        # Start from the entity and follow incoming edges to find the shortest path to root
+        # Start from the entity and follow hierarchical edges to the root
         current_id = entity_id
         path = [current_id]
         
         while current_id != root_entity.ecs_id:
-            # Find parent with minimum distance
-            min_distance = float('inf')
-            min_parent = None
+            # Find the parent through a hierarchical edge
+            hierarchical_parent = None
             
             for parent_id in graph.incoming_edges.get(current_id, []):
-                parent_distance = distance_map.get(parent_id, float('inf'))
-                if parent_distance < min_distance:
-                    min_distance = parent_distance
-                    min_parent = parent_id
+                if graph.is_hierarchical_edge(parent_id, current_id):
+                    hierarchical_parent = parent_id
+                    break
             
-            if min_parent is None:
+            if hierarchical_parent is None:
+                # If no hierarchical parent is found, use the shortest path
+                min_distance = float('inf')
+                for parent_id in graph.incoming_edges.get(current_id, []):
+                    parent_distance = distance_map.get(parent_id, float('inf'))
+                    if parent_distance < min_distance:
+                        min_distance = parent_distance
+                        hierarchical_parent = parent_id
+            
+            if hierarchical_parent is None:
                 # This shouldn't happen in a connected graph
                 break
             
-            # Mark the edge as hierarchical
-            graph.mark_edge_as_hierarchical(min_parent, current_id)
-            
-            # Mark all other incoming edges as reference
-            for parent_id in graph.incoming_edges.get(current_id, []):
-                if parent_id != min_parent:
-                    graph.mark_edge_as_reference(parent_id, current_id)
-            
             # Move up the path
-            path.append(min_parent)
-            current_id = min_parent
+            path.append(hierarchical_parent)
+            current_id = hierarchical_parent
         
         # Reverse the path to go from root to entity
         path.reverse()
@@ -678,13 +861,13 @@ class EntityinList(Entity):
     """
     An entity that contains a list of entities.
     """
-    entities: List[Entity] = Field(description="The list of entities of the entity")
+    entities: List[Entity] = Field(description="The list of entities of the entity", default_factory=list)
 
 class EntityinDict(Entity):
     """
     An entity that contains a dictionary of entities.
     """
-    entities: Dict[str, Entity] = Field(description="The dictionary of entities of the entity")
+    entities: Dict[str, Entity] = Field(description="The dictionary of entities of the entity", default_factory=dict)
 
 class EntityinTuple(Entity):
     """
@@ -716,6 +899,51 @@ class EntityInEntityInEntity(Entity):
     """
     entity_of_entity: EntityinEntity = Field(description="The entity of the entity", default_factory=EntityinEntity)
 
+# Entities with non-entity data types
+
+class EntityWithPrimitives(Entity):
+    """
+    An entity with primitive data types.
+    """
+    string_value: str = ""
+    int_value: int = 0
+    float_value: float = 0.0
+    bool_value: bool = False
+    datetime_value: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    uuid_value: UUID = Field(default_factory=uuid4)
+
+class EntityWithContainersOfPrimitives(Entity):
+    """
+    An entity with containers of primitive types.
+    """
+    string_list: List[str] = Field(default_factory=list)
+    int_dict: Dict[str, int] = Field(default_factory=dict)
+    float_tuple: Tuple[float, ...] = Field(default_factory=tuple)
+    bool_set: Set[bool] = Field(default_factory=set)
+
+class EntityWithMixedContainers(Entity):
+    """
+    An entity with containers that mix entity and non-entity types.
+    """
+    mixed_list: List[Union[Entity, str]] = Field(default_factory=list)
+    mixed_dict: Dict[str, Union[Entity, int]] = Field(default_factory=dict)
+
+class EntityWithNestedContainers(Entity):
+    """
+    An entity with nested containers.
+    """
+    list_of_lists: List[List[str]] = Field(default_factory=list)
+    dict_of_dicts: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    list_of_dicts: List[Dict[str, Entity]] = Field(default_factory=list)
+
+class OptionalEntityContainers(Entity):
+    """
+    An entity with optional containers of entities.
+    """
+    optional_entity: Optional[Entity] = None
+    optional_entity_list: Optional[List[Entity]] = None
+    optional_entity_dict: Optional[Dict[str, Entity]] = None
+
 # Hierachical entities
 
 class HierachicalEntity(Entity):
@@ -726,6 +954,7 @@ class HierachicalEntity(Entity):
     entity_of_entity_2: EntityinEntity = Field(description="The entity of the entity", default_factory=EntityinEntity)
     flat_entity: Entity = Field(description="The flat entity", default_factory=Entity)
     entity_of_entity_of_entity: EntityInEntityInEntity = Field(description="The entity of the entity of the entity", default_factory=EntityInEntityInEntity)
+    primitive_data: EntityWithPrimitives = Field(description="Entity with primitive data", default_factory=EntityWithPrimitives)
 
 
 
