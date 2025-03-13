@@ -527,6 +527,24 @@ class Entity(BaseModel):
     root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's graph")
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
     untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
+    
+    def _hash_str(self) -> str:
+        """Generate a hash string from identity fields."""
+        return f"{self.ecs_id}-{self.live_id}-{self.root_ecs_id}-{self.root_live_id}"
+        
+    def __hash__(self) -> int:
+        """
+        Make entity hashable using a string representation of identity fields.
+        """
+        return hash(self._hash_str())
+        
+    def __eq__(self, other: object) -> bool:
+        """
+        Simple equality comparison using the hash string.
+        """
+        if not isinstance(other, Entity):
+            return False
+        return self._hash_str() == other._hash_str()
 
     
     def is_root_entity(self) -> bool:
