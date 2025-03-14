@@ -5,11 +5,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Tuple, Set, Self
 from collections import defaultdict
 
 from pydantic import BaseModel, Field, model_validator
-from typing import Dict, List, Set, Tuple, Any, Optional, Type, Union, get_type_hints, get_origin, get_args
+from typing import Dict, List, Set, Tuple, Any, Optional, Type, Union, get_type_hints, get_origin, get_args, Self
 from uuid import UUID, uuid4
 from enum import Enum
 from collections import deque
@@ -860,14 +859,18 @@ class Entity(BaseModel):
     live_id: UUID = Field(default_factory=uuid4, description="Live/warm identifier")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     forked_at: Optional[datetime] = Field(default=None, description="Timestamp of the last fork")
-    previous_ecs_id: Optional[UUID] = None
+    previous_ecs_id: Optional[UUID] = Field(default=None, description="Previous ecs_id before forking")
     lineage_id: UUID = Field(default_factory=uuid4)
     old_ids: List[UUID] = Field(default_factory=list)
+    old_ecs_id: Optional[UUID] = Field(default=None, description="Last ecs_id before forking")  # Added this field
     root_ecs_id: Optional[UUID] = Field(default=None, description="The ecs_id of the root entity of this entity's graph")
     root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's graph")
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
     untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
-    attribute_source: Dict[str, Optional[UUID]] = Field(default_factory=dict, description="Tracks the source entity for each attribute")
+    attribute_source: Dict[str, Union[Optional[UUID], List[Optional[UUID]],List[None], Dict[str, Optional[UUID]]]] = Field(
+        default_factory=dict, 
+        description="Tracks the source entity for each attribute"
+    )
 
     @model_validator(mode='after')
     def validate_attribute_source(self) -> Self:
@@ -875,6 +878,10 @@ class Entity(BaseModel):
         Validates that the attribute_source dictionary only contains keys 
         that match fields in the model. Initializes the dictionary if not present,
         and adds missing fields with source=None to indicate initialization from Python.
+        
+        For container fields (List, Dict), initializes appropriate nested structures:
+        - Lists: List[Optional[UUID]] initialized to same length as field value with None
+        - Dicts: Dict[str, Optional[UUID]] initialized with None for each key
         """
         # Initialize the attribute_source if not present
         if self.attribute_source is None:
@@ -891,10 +898,49 @@ class Entity(BaseModel):
         if invalid_keys:
             raise ValueError(f"Invalid keys in attribute_source: {invalid_keys}. Valid fields are: {valid_fields}")
         
-        # Initialize missing fields with None source (originated in Python)
+        # Initialize missing fields with appropriate structure based on field type
         for field_name in valid_fields:
-            if field_name not in self.attribute_source:
+            field_value = getattr(self, field_name)
+            
+            # Skip if already initialized
+            if field_name in self.attribute_source:
+                continue
+                
+            # Handle different field types
+            if isinstance(field_value, list):
+                # Initialize list of None values matching length of field_value
+                # Create a properly typed list that satisfies type checking
+                none_value: Optional[UUID] = None
+                self.attribute_source[field_name] = [none_value] * len(field_value)
+            elif isinstance(field_value, dict):
+                # Initialize dict with None values for each key
+                typed_dict: Dict[str, Optional[UUID]] = {str(k): None for k in field_value.keys()}
+                self.attribute_source[field_name] = typed_dict
+            else:
+                # Regular field gets simple None value
                 self.attribute_source[field_name] = None
+        
+        # Validate existing container fields have correct structure
+        for field_name, source_value in self.attribute_source.items():
+            field_value = getattr(self, field_name)
+            
+            if isinstance(field_value, list):
+                # Ensure source is a list of the same length
+                if not isinstance(source_value, list) or len(source_value) != len(field_value):
+                    none_value: Optional[UUID] = None 
+                    self.attribute_source[field_name] = [none_value] * len(field_value)
+            elif isinstance(field_value, dict):
+                # Ensure source is a dict with all current keys
+                if not isinstance(source_value, dict):
+                    self.attribute_source[field_name] = {str(k): None for k in field_value.keys()}
+                else:
+                    # Add any missing keys
+                    source_dict = source_value  # For type clarity
+                    if isinstance(source_dict, dict):  # Type guard for type checker
+                        for key in field_value.keys():
+                            str_key = str(key)  # Convert key to string to ensure dict compatibility
+                            if str_key not in source_dict:
+                                source_dict[str_key] = None
         
         return self
 
@@ -928,6 +974,7 @@ class Entity(BaseModel):
         Check if the entity is an orphan.
         """
         return self.root_ecs_id is None or self.root_live_id is None
+        
     
     def fork(self, new_root_ecs_id: Optional[UUID] = None) -> None:
         """

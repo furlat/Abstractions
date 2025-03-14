@@ -21,7 +21,7 @@ class TestEntityBasics(unittest.TestCase):
         self.assertIsInstance(entity.lineage_id, UUID)
         
         # Check default values
-        self.assertIsNone(entity.parent_id)
+        self.assertIsNone(entity.previous_ecs_id)
         self.assertEqual(entity.old_ids, [])
         self.assertFalse(entity.from_storage)
         self.assertEqual(entity.untyped_data, "")
@@ -41,14 +41,14 @@ class TestEntityBasics(unittest.TestCase):
         custom_ecs_id = uuid4()
         custom_live_id = uuid4()
         custom_lineage_id = uuid4()
-        custom_parent_id = uuid4()
+        custom_previous_id = uuid4()
         
         entity = Entity(
             ecs_id=custom_ecs_id,
             live_id=custom_live_id,
             lineage_id=custom_lineage_id,
-            parent_id=custom_parent_id,
-            old_ids=[custom_parent_id],
+            previous_ecs_id=custom_previous_id,
+            old_ids=[custom_previous_id],
             from_storage=True,
             untyped_data="test data"
         )
@@ -57,8 +57,8 @@ class TestEntityBasics(unittest.TestCase):
         self.assertEqual(entity.ecs_id, custom_ecs_id)
         self.assertEqual(entity.live_id, custom_live_id)
         self.assertEqual(entity.lineage_id, custom_lineage_id)
-        self.assertEqual(entity.parent_id, custom_parent_id)
-        self.assertEqual(entity.old_ids, [custom_parent_id])
+        self.assertEqual(entity.previous_ecs_id, custom_previous_id)
+        self.assertEqual(entity.old_ids, [custom_previous_id])
         self.assertTrue(entity.from_storage)
         self.assertEqual(entity.untyped_data, "test data")
 
@@ -112,8 +112,8 @@ class TestEntityBasics(unittest.TestCase):
         # Check that ecs_id changed
         self.assertNotEqual(entity.ecs_id, old_ecs_id)
         
-        # Check that parent_id is set to old ecs_id
-        self.assertEqual(entity.parent_id, old_ecs_id)
+        # Check that old_ecs_id is set to old ecs_id
+        self.assertEqual(entity.old_ecs_id, old_ecs_id)
         
         # Check that old_ids contains the old ecs_id
         self.assertIn(old_ecs_id, entity.old_ids)
@@ -129,8 +129,8 @@ class TestEntityBasics(unittest.TestCase):
         # Check that ecs_id changed again
         self.assertNotEqual(entity.ecs_id, second_ecs_id)
         
-        # Check that parent_id is updated
-        self.assertEqual(entity.parent_id, second_ecs_id)
+        # Check that old_ecs_id is updated
+        self.assertEqual(entity.old_ecs_id, second_ecs_id)
         
         # Check that old_ids contains both old ecs_ids
         self.assertIn(old_ecs_id, entity.old_ids)
@@ -158,8 +158,8 @@ class TestEntityBasics(unittest.TestCase):
         # Check that ecs_id changed
         self.assertNotEqual(entity.ecs_id, old_ecs_id)
         
-        # Check that parent_id is set to old ecs_id
-        self.assertEqual(entity.parent_id, old_ecs_id)
+        # Check that old_ecs_id is set to old ecs_id
+        self.assertEqual(entity.old_ecs_id, old_ecs_id)
         
         # Detach with promoting to root
         entity = Entity()
@@ -214,8 +214,8 @@ class TestEntityBasics(unittest.TestCase):
         # Check that ecs_id changed
         self.assertNotEqual(orphan.ecs_id, original_orphan_ecs_id)
         
-        # Check that parent_id is set to old ecs_id
-        self.assertEqual(orphan.parent_id, original_orphan_ecs_id)
+        # Check that old_ecs_id is set to old ecs_id
+        self.assertEqual(orphan.old_ecs_id, original_orphan_ecs_id)
         
         # Test attaching to an orphan (should raise ValueError)
         orphan2 = Entity()
