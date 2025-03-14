@@ -1,11 +1,11 @@
 """ Implementing step by step the entity system from
 source docs:  /Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/ecs/graph_entity.md"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Tuple, Set
+from typing import Optional, List, Dict, Tuple, Set, Self
 from collections import defaultdict
 
 from pydantic import BaseModel, Field, model_validator
@@ -730,9 +730,7 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     # This is just a safety check - all entities should have paths by now
     for entity_id in graph.nodes:
         if entity_id not in ancestry_paths:
-            # If for some reason we don't have a path, set a default path
-            # This shouldn't happen with proper graph construction
-            graph.set_ancestry_path(entity_id, [root_entity.ecs_id, entity_id])
+            raise ValueError(f"Entity {entity_id} does not have an ancestry path")
     
     return graph
 
@@ -862,14 +860,44 @@ class Entity(BaseModel):
     live_id: UUID = Field(default_factory=uuid4, description="Live/warm identifier")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     forked_at: Optional[datetime] = Field(default=None, description="Timestamp of the last fork")
-    parent_id: Optional[UUID] = None
+    previous_ecs_id: Optional[UUID] = None
     lineage_id: UUID = Field(default_factory=uuid4)
     old_ids: List[UUID] = Field(default_factory=list)
     root_ecs_id: Optional[UUID] = Field(default=None, description="The ecs_id of the root entity of this entity's graph")
     root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's graph")
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
     untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
-    
+    attribute_source: Dict[str, Optional[UUID]] = Field(default_factory=dict, description="Tracks the source entity for each attribute")
+
+    @model_validator(mode='after')
+    def validate_attribute_source(self) -> Self:
+        """
+        Validates that the attribute_source dictionary only contains keys 
+        that match fields in the model. Initializes the dictionary if not present,
+        and adds missing fields with source=None to indicate initialization from Python.
+        """
+        # Initialize the attribute_source if not present
+        if self.attribute_source is None:
+            raise ValueError("attribute_source is None factory did not work")
+        
+        # Get all valid field names for this model
+        valid_fields = set(self.model_fields.keys())
+        
+        # Remove 'attribute_source' itself from valid fields to prevent recursion
+        valid_fields.discard('attribute_source')
+        
+        # Check that all keys in attribute_source are valid field names
+        invalid_keys = set(self.attribute_source.keys()) - valid_fields
+        if invalid_keys:
+            raise ValueError(f"Invalid keys in attribute_source: {invalid_keys}. Valid fields are: {valid_fields}")
+        
+        # Initialize missing fields with None source (originated in Python)
+        for field_name in valid_fields:
+            if field_name not in self.attribute_source:
+                self.attribute_source[field_name] = None
+        
+        return self
+
     def _hash_str(self) -> str:
         """Generate a hash string from identity fields."""
         return f"{self.ecs_id}-{self.live_id}-{self.root_ecs_id}-{self.root_live_id}"
@@ -906,7 +934,7 @@ class Entity(BaseModel):
         Fork the entity.
         Assign new ecs_id 
         Assign a forked_at timestamp
-        Updates parent_id to the previous ecs_id
+        Updates previous_ecs_id to the previous ecs_id
         Adds the previous ecs_id to old_ids
         If new_root_ecs_id is provided, updates root_ecs_id to the new value
         """
@@ -915,7 +943,7 @@ class Entity(BaseModel):
         
         self.ecs_id = new_ecs_id
         self.forked_at = datetime.now(timezone.utc)
-        self.parent_id = old_ecs_id
+        self.old_ecs_id = old_ecs_id
         self.old_ids.append(old_ecs_id)
         if new_root_ecs_id:
             self.root_ecs_id = new_root_ecs_id
@@ -966,7 +994,7 @@ class Entity(BaseModel):
         #set root to None the entity is effectively an orphan detached from the registry
         self.root_ecs_id = None
         self.root_live_id = None
-        #forks the entity to assign a new ecs_id and update the parent_id to the previous ecs_id and adds the previous ecs_id to old_ids
+        #forks the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
         self.fork()
         if promote_to_root:
             #if promoting to root, set the new root to the new ecs_id
@@ -1003,7 +1031,7 @@ class Entity(BaseModel):
         self.root_ecs_id = new_entity.root_ecs_id
         self.root_live_id = new_entity.root_live_id
         self.lineage_id = new_entity.lineage_id
-        #fork the entity to assign a new ecs_id and update the parent_id to the previous ecs_id and adds the previous ecs_id to old_ids
+        #fork the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
         self.fork()
 
 
