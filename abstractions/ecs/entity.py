@@ -948,6 +948,13 @@ def find_modified_entities(
         new_entity = new_graph.get_entity(entity_id)
         old_entity = old_graph.get_entity(entity_id)
         
+        # Ensure both entities are not None before comparing
+        if new_entity is None or old_entity is None:
+            # If either entity is None, mark as changed
+            path = new_graph.get_ancestry_path(entity_id)
+            modified_entities.update(path)
+            continue
+            
         # Compare the non-entity attributes
         comparison_count += 1
         has_changes = compare_non_entity_attributes(new_entity, old_entity)
