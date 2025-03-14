@@ -84,6 +84,14 @@ python -m unittest tests/test_entity.py
 - Ownership-based edge classification tested with hierarchical and reference relationships
 - Circular reference detection tested with appropriate error handling
 - Mermaid diagram generation tested for various graph structures
+- Graph diffing tested for multiple change scenarios:
+  - Non-entity attribute changes
+  - Entity additions and removals
+  - Entity movement within the graph
+  - Container modifications (lists, dicts)
+  - Optional entity fields (setting to None)
+  - Deep and complex entity hierarchies
+  - Reassigning children of removed entities
 
 ## Next Development Steps
 1. **✅ Improved Field Type Detection**: Successfully enhanced to handle container fields and empty containers
@@ -94,8 +102,10 @@ python -m unittest tests/test_entity.py
 6. **✅ Single-Pass Graph Construction**: Implemented the algorithm from the addendum for efficient graph building
 
 Next priorities:
-7. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
-8. **Add Circular Reference Tests**: Once circular reference handling is implemented, add specific tests
+7. **✅ Entity Graph Diffing Algorithm**: Implemented efficient set-based approach for detecting entity changes
+8. **✅ Graph Diffing Tests**: Added comprehensive tests for detecting various entity change scenarios
+9. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
+10. **Add Circular Reference Tests**: Once circular reference handling is implemented, add specific tests
 
 ## Code Style Guidelines
 - **Python Version**: 3.9+ (use type hints extensively)
@@ -120,6 +130,33 @@ The implementation uses a simplified single-pass approach:
    - Simple queue structure with entity and parent information
 
 This simplifies the "Single-Pass DAG Transformation" approach described in the design document, creating a foundation that can be extended later to support reference edges and circular references.
+
+## Graph Diffing Algorithm
+
+The implementation uses an efficient set-based approach to identify entities that require versioning:
+
+1. **Set-Based Structural Comparison**:
+   - Compares node sets to identify added/removed entities
+   - Compares edge sets to identify moved entities (same entity, different parent)
+   - Marks entire ancestry paths for versioning when structural changes are detected
+
+2. **Moved Entity Detection**:
+   - Specifically identifies entities that exist in both graphs but with different parent sets
+   - Ensures both old parent path and new parent path are marked for versioning
+   - Provides explicit tracking of moved entities for debugging and analysis
+
+3. **Attribute-Level Comparison**:
+   - Only performs attribute comparisons for entities not already marked for versioning
+   - Starts with leaf nodes (entities with longest paths to root) and works upward
+   - Efficiently propagates changes up ancestor paths when differences are detected
+
+4. **Complete Change Detection**:
+   - Detects changes in non-entity attribute values
+   - Identifies entity additions and removals
+   - Recognizes when entities are moved within the graph
+   - Detects when optional entities are set to None
+
+The algorithm is optimized to minimize comparisons while ensuring all relevant entities are properly versioned.
 
 ## Graph Visualization Example
 

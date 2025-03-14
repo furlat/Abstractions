@@ -246,7 +246,7 @@ def get_field_ownership(entity: "Entity", field_name: str) -> bool:
     """
     return True
 
-def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optional[Type]:
+def get_pydantic_field_type_entities(entity: "Entity", field_name: str, detect_non_entities: bool = False) -> Union[Optional[Type], bool]:
     """
     Get the entity type from a Pydantic field, handling container types properly.
     
@@ -257,9 +257,15 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
     Args:
         entity: The entity to inspect
         field_name: The name of the field to check
+        detect_non_entities: If True, returns None for entity fields and True for non-entity fields
         
     Returns:
-        The Entity type or subclass if the field contains entities, None otherwise
+        If detect_non_entities=False (default):
+            - The Entity type or subclass if the field contains entities
+            - None otherwise
+        If detect_non_entities=True:
+            - None for entity fields
+            - True for non-entity fields
     """
     # Skip if field doesn't exist
     if field_name not in entity.model_fields:
@@ -269,13 +275,78 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
     field_info = entity.model_fields[field_name]
     annotation = field_info.annotation
     
-    # Directly analyze Pydantic field annotations
-    if annotation:
+    # Check for identity fields that should be ignored in comparisons
+    if field_name in ('ecs_id', 'live_id', 'created_at', 'forked_at', 'previous_ecs_id', 
+                      'old_ids', 'old_ecs_id', 'from_storage', 'attribute_source', 'root_ecs_id', 
+                      'root_live_id', 'lineage_id'):
+        return None
+    
+    # For direct entity instance, handle based on detect_non_entities flag
+    field_value = getattr(entity, field_name)
+    if isinstance(field_value, Entity):
+        return None if detect_non_entities else type(field_value)
+    
+    # First check for container values with entities
+    is_entity_container = False
+    
+    # For populated containers, check content types directly
+    if field_value is not None:
+        # Check list type
+        if isinstance(field_value, list) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
+                
+        # Check dict type
+        elif isinstance(field_value, dict) and field_value:
+            if any(isinstance(v, Entity) for v in field_value.values()):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for v in field_value.values():
+                        if isinstance(v, Entity):
+                            return type(v)
+                
+        # Check tuple type
+        elif isinstance(field_value, tuple) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
+                
+        # Check set type
+        elif isinstance(field_value, set) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
+    
+    # If we've determined it's a container with entities
+    if is_entity_container:
+        return None if detect_non_entities else None  # We return type above if not detect_non_entities
+    
+    # If we're looking for non-entity fields and we've gotten this far,
+    # it's a non-entity field
+    if detect_non_entities:
+        return True
+    
+    # Directly analyze Pydantic field annotations only if we need to detect entity types
+    if annotation and not detect_non_entities:
         # Handle direct Entity field type
         try:
             # Check if it's an Entity type or subclass
             if annotation == Entity or (isinstance(annotation, type) and issubclass(annotation, Entity)):
-                return annotation
+                return None if detect_non_entities else annotation
         except TypeError:
             # Not a class or Entity, continue to other checks
             pass
@@ -289,7 +360,7 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
             if inner_type:
                 try:
                     if inner_type == Entity or (isinstance(inner_type, type) and issubclass(inner_type, Entity)):
-                        return inner_type
+                        return None if detect_non_entities else inner_type
                 except TypeError:
                     # Not a class or Entity, continue to other checks
                     pass
@@ -305,7 +376,7 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
                 value_type = args[1]
                 try:
                     if value_type == Entity or (isinstance(value_type, type) and issubclass(value_type, Entity)):
-                        return value_type
+                        return None if detect_non_entities else value_type
                 except TypeError:
                     # Not a class or Entity, continue to other checks
                     pass
@@ -314,88 +385,64 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str) -> Optio
                 item_type = args[0]
                 try:
                     if item_type == Entity or (isinstance(item_type, type) and issubclass(item_type, Entity)):
-                        return item_type
+                        return None if detect_non_entities else item_type
                 except TypeError:
                     # Not a class or Entity, continue to other checks
                     pass
     
     # Check field default factory for extra information
     # For empty containers created with default_factory, this helps determine item type
-    if field_info.default_factory is not None:
+    if field_info.default_factory is not None and not detect_non_entities:
         # Skip trying to call default_factory, it might not be safely callable here
         pass
     
-    # If we can't determine from field metadata, check instance value
-    field_value = getattr(entity, field_name)
+    # Fallback to type hints as last resort for entity detection
+    if not detect_non_entities:
+        try:
+            # Get type hints for the class
+            hints = get_type_hints(entity.__class__)
+            if field_name not in hints:
+                return None
+            
+            field_type = hints[field_name]
+            
+            # Handle Optional types
+            origin = get_origin(field_type)
+            if origin is Union:
+                args = get_args(field_type)
+                # Check if this is Optional[Entity]
+                field_type = next((arg for arg in args if arg is not type(None)), None)
+                # If we unwrapped an Optional, get its origin
+                if field_type:
+                    origin = get_origin(field_type)
+            
+            # Check if field_type is directly Entity or a subclass
+            if field_type and not origin and (field_type == Entity or issubclass(field_type, Entity)):
+                return None if detect_non_entities else field_type
+            
+            # Handle container types
+            if origin in (list, set, tuple, dict):
+                args = get_args(field_type)
+                if origin is dict and len(args) >= 2:
+                    # For dictionaries, check value type (second argument)
+                    value_type = args[1]
+                    if value_type == Entity or (inspect.isclass(value_type) and issubclass(value_type, Entity)):
+                        return None if detect_non_entities else value_type
+                elif origin in (list, set, tuple) and args:
+                    # For other containers, check first argument
+                    item_type = args[0]
+                    if item_type == Entity or (inspect.isclass(item_type) and issubclass(item_type, Entity)):
+                        return None if detect_non_entities else item_type
+        except Exception:
+            # Fall back to direct instance check if type hint analysis fails
+            pass
     
-    # For direct entity instances, return immediately
-    if isinstance(field_value, Entity):
-        return type(field_value)
-    
-    # For populated containers, check content types directly
-    if field_value is not None:
-        # Check list type
-        if isinstance(field_value, list) and field_value:
-            if isinstance(field_value[0], Entity):
-                return type(field_value[0])
-                
-        # Check dict type
-        elif isinstance(field_value, dict) and field_value:
-            first_value = next(iter(field_value.values()), None)
-            if isinstance(first_value, Entity):
-                return type(first_value)
-                
-        # Check tuple type
-        elif isinstance(field_value, tuple) and field_value:
-            if isinstance(field_value[0], Entity):
-                return type(field_value[0])
-                
-        # Check set type
-        elif isinstance(field_value, set) and field_value:
-            first_value = next(iter(field_value))
-            if isinstance(first_value, Entity):
-                return type(first_value)
-    
-    # Fallback to type hints as last resort
-    try:
-        # Get type hints for the class
-        hints = get_type_hints(entity.__class__)
-        if field_name not in hints:
-            return None
+    # If detect_non_entities is True and we've gotten this far without detecting an entity,
+    # return True to indicate this is a non-entity field
+    if detect_non_entities:
+        return True
         
-        field_type = hints[field_name]
-        
-        # Handle Optional types
-        origin = get_origin(field_type)
-        if origin is Union:
-            args = get_args(field_type)
-            # Check if this is Optional[Entity]
-            field_type = next((arg for arg in args if arg is not type(None)), None)
-            # If we unwrapped an Optional, get its origin
-            if field_type:
-                origin = get_origin(field_type)
-        
-        # Check if field_type is directly Entity or a subclass
-        if field_type and not origin and (field_type == Entity or issubclass(field_type, Entity)):
-            return field_type
-        
-        # Handle container types
-        if origin in (list, set, tuple, dict):
-            args = get_args(field_type)
-            if origin is dict and len(args) >= 2:
-                # For dictionaries, check value type (second argument)
-                value_type = args[1]
-                if value_type == Entity or (inspect.isclass(value_type) and issubclass(value_type, Entity)):
-                    return value_type
-            elif origin in (list, set, tuple) and args:
-                # For other containers, check first argument
-                item_type = args[0]
-                if item_type == Entity or (inspect.isclass(item_type) and issubclass(item_type, Entity)):
-                    return item_type
-    except Exception:
-        # Fall back to direct instance check if type hint analysis fails
-        pass
-    
+    # Otherwise, return None to indicate no entity type was found
     return None
 
 def process_entity_reference(
@@ -733,25 +780,201 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     
     return graph
 
+def get_non_entity_attributes(entity: "Entity") -> Dict[str, Any]:
+    """
+    Get all non-entity attributes of an entity.
+    
+    This includes primitive types and containers that don't contain entities.
+    Identity fields and entity-containing fields are excluded.
+    
+    Args:
+        entity: The entity to inspect
+        
+    Returns:
+        Dict[str, Any]: Dictionary of field_name -> field_value for non-entity fields
+    """
+    non_entity_attrs = {}
+    
+    # Check all fields
+    for field_name in entity.model_fields:
+        # Use our helper to check if this is a non-entity field
+        if get_pydantic_field_type_entities(entity, field_name, detect_non_entities=True) is True:
+            non_entity_attrs[field_name] = getattr(entity, field_name)
+    
+    return non_entity_attrs
+
+
+def compare_non_entity_attributes(entity1: "Entity", entity2: "Entity") -> bool:
+    """
+    Compare non-entity attributes between two entities.
+    
+    Args:
+        entity1: First entity to compare
+        entity2: Second entity to compare
+        
+    Returns:
+        bool: True if the entities have different non-entity attributes, False if they're the same
+    """
+    # Get non-entity attributes for both entities
+    attrs1 = get_non_entity_attributes(entity1)
+    attrs2 = get_non_entity_attributes(entity2)
+    
+    # Different set of non-entity attributes
+    if set(attrs1.keys()) != set(attrs2.keys()):
+        return True
+    
+    # Empty sets of attributes means no changes
+    if not attrs1 and not attrs2:
+        return False
+    
+    # Compare values of non-entity attributes
+    for field_name, value1 in attrs1.items():
+        value2 = attrs2[field_name]
+        
+        # Direct comparison for non-entity values
+        if value1 != value2:
+            return True
+    
+    # No differences found
+    return False
+
+
 def find_modified_entities(
     new_graph: EntityGraph,
-    old_graph: EntityGraph
-) -> Set[UUID]:
+    old_graph: EntityGraph,
+    greedy: bool = True,
+    debug: bool = False
+) -> Union[Set[UUID], Tuple[Set[UUID], Dict[str, Any]]]:
     """
     Find entities that have been modified between two graphs.
     
-    Uses the path-based diffing algorithm to efficiently identify changes.
+    Uses a set-based approach to identify changes:
+    1. Compares node sets to identify added/removed entities
+    2. Compares edge sets to identify moved entities (same entity, different parent)
+    3. Checks attribute changes only for entities not already marked for versioning
     
     Args:
         new_graph: The new entity graph
-        old_graph: The old entity graph (from storage)
+        old_graph: The old graph (from storage)
+        greedy: If True, stops checking parents once an entity is marked for change
+        debug: If True, collects and returns debugging information
         
     Returns:
-        Set[UUID]: Set of entity ecs_ids that need new versions
+        If debug=False:
+            Set[UUID]: Set of entity ecs_ids that need new versions
+        If debug=True:
+            Tuple[Set[UUID], Dict[str, Any]]: Set of modified entity IDs and debugging info
     """
-    # This is just a stub for now
-    # The real implementation will follow the algorithm in the design doc
-    return set()
+    # Set to track entities that need versioning
+    modified_entities = set()
+    
+    # For debugging
+    comparison_count = 0
+    moved_entities = set()
+    unchanged_entities = set()
+    
+    # Step 1: Compare node sets to identify added/removed entities
+    new_entity_ids = set(new_graph.nodes.keys())
+    old_entity_ids = set(old_graph.nodes.keys())
+    
+    added_entities = new_entity_ids - old_entity_ids
+    removed_entities = old_entity_ids - new_entity_ids
+    common_entities = new_entity_ids & old_entity_ids
+    
+    # Mark all added entities and their ancestry paths for versioning
+    for entity_id in added_entities:
+        path = new_graph.get_ancestry_path(entity_id)
+        modified_entities.update(path)
+    
+    # Step 2: Compare edge sets to identify moved entities
+    # Collect all parent-child relationships in both graphs
+    new_edges = set()
+    old_edges = set()
+    
+    for (source_id, target_id), edge in new_graph.edges.items():
+        new_edges.add((source_id, target_id))
+        
+    for (source_id, target_id), edge in old_graph.edges.items():
+        old_edges.add((source_id, target_id))
+    
+    # Find edges that exist in new graph but not in old graph
+    added_edges = new_edges - old_edges
+    # Find edges that exist in old graph but not in new graph
+    removed_edges = old_edges - new_edges
+    
+    # Identify moved entities - common entities with different connections
+    for source_id, target_id in added_edges:
+        # If target is a common entity but has a new connection
+        if target_id in common_entities:
+            # Check if this entity has a different parent in the old graph
+            old_parents = set()
+            for old_source_id, old_target_id in old_edges:
+                if old_target_id == target_id:
+                    old_parents.add(old_source_id)
+            
+            new_parents = set()
+            for new_source_id, new_target_id in new_edges:
+                if new_target_id == target_id:
+                    new_parents.add(new_source_id)
+            
+            # If the entity has different parents, it's been moved
+            if old_parents != new_parents:
+                moved_entities.add(target_id)
+                
+                # Mark the entire path for the moved entity for versioning
+                path = new_graph.get_ancestry_path(target_id)
+                modified_entities.update(path)
+    
+    # Step 3: Check attribute changes for remaining common entities
+    # Create a list of remaining entities sorted by path length
+    remaining_entities = []
+    
+    for entity_id in common_entities:
+        if entity_id not in modified_entities and entity_id not in moved_entities:
+            # Get path length as priority (longer paths = higher priority)
+            path_length = len(new_graph.get_ancestry_path(entity_id))
+            remaining_entities.append((path_length, entity_id))
+    
+    # Sort by path length (descending) - process leaf nodes first
+    remaining_entities.sort(reverse=True)
+    
+    # Process entities in order of path length
+    for _, entity_id in remaining_entities:
+        # Skip if already processed
+        if entity_id in modified_entities or entity_id in unchanged_entities:
+            continue
+        
+        # Get the entities to compare
+        new_entity = new_graph.get_entity(entity_id)
+        old_entity = old_graph.get_entity(entity_id)
+        
+        # Compare the non-entity attributes
+        comparison_count += 1
+        has_changes = compare_non_entity_attributes(new_entity, old_entity)
+        
+        if has_changes:
+            # Mark the entire path as changed
+            path = new_graph.get_ancestry_path(entity_id)
+            modified_entities.update(path)
+            
+            # If greedy, we can skip processing parents now
+            if greedy:
+                continue
+        else:
+            # Mark just this entity as unchanged
+            unchanged_entities.add(entity_id)
+    
+    # Return the debug info if requested
+    if debug:
+        return modified_entities, {
+            "comparison_count": comparison_count,
+            "added_entities": added_entities,
+            "removed_entities": removed_entities,
+            "moved_entities": moved_entities,
+            "unchanged_entities": unchanged_entities
+        }
+    
+    return modified_entities
 
 def update_entity_versions(
     graph: EntityGraph,
