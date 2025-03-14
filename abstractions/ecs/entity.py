@@ -816,16 +816,9 @@ def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = Fals
     for edge_key, edge in graph.edges.items():
         source_id, target_id = edge_key
         
-        # Determine edge style based on hierarchical status
-        if edge.is_hierarchical:
-            # Hierarchical edges (solid, with arrow)
-            edge_style = "-->"
-            edge_class = "hierarchicalEdge"
-        else:
-            # Reference edges (dashed, with arrow)
-            edge_style = "-.->"
-            edge_class = "referenceEdge"
-            
+        # All edges are hierarchical since we don't support circular graphs yet
+        edge_style = "-->"
+        
         # Add edge label based on field name and container info
         edge_label = edge.field_name
         
@@ -835,19 +828,13 @@ def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = Fals
             edge_label += f"[{edge.container_key}]"
             
         # Create the edge line
-        edge_line = f"  {source_id} {edge_style}|{edge_label}| {target_id}"
-        if edge.is_hierarchical:
-            edge_line += ":::hierarchicalEdge"
-        else:
-            edge_line += ":::referenceEdge"
-            
+        edge_line = f"  {source_id} {edge_style}|{edge_label}| {target_id}:::hierarchicalEdge"
         lines.append(edge_line)
     
     # Add styling classes
     lines.extend([
         "  classDef rootNode fill:#f9f,stroke:#333,stroke-width:2px",
-        "  classDef hierarchicalEdge stroke:#333,stroke-width:2px",
-        "  classDef referenceEdge stroke:#999,stroke-width:1px,stroke-dasharray:5 5"
+        "  classDef hierarchicalEdge stroke:#333,stroke-width:2px"
     ])
     
     lines.append("```")
