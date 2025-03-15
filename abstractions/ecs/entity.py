@@ -1171,7 +1171,7 @@ class EntityRegistry():
             return cls.get_live_root_from_entity(entity)
         
     @classmethod
-    def version_entity(cls, entity: "Entity") -> bool:
+    def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
         """ Core function to version an entity, currently working only for root entities, what this function does is:
         1) check if function is registered , if not delegate to reigister()
         2) get the stored graph snapshot for the entity 
@@ -1189,8 +1189,11 @@ class EntityRegistry():
             return True
         else:
             new_graph = build_entity_graph(entity)
+            if force_versioning:
+                modified_entities = new_graph.nodes.keys()
+            else:
+                modified_entities = list(find_modified_entities(new_graph=new_graph, old_graph=old_graph))
         
-            modified_entities = list(find_modified_entities(new_graph=new_graph, old_graph=old_graph))
             typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
             
             if len(typed_entities) > 0:
@@ -1206,6 +1209,11 @@ class EntityRegistry():
                 new_root_ecs_id = root_entity.ecs_id
                 root_entity_live_id = root_entity.live_id
                 assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
+                
+                # Update the nodes dictionary to use the new root entity ID
+                new_graph.nodes.pop(current_root_ecs_id)
+                new_graph.nodes[new_root_ecs_id] = root_entity
+                
                 # now we fork all the modified entities with the new root_ecs_id as input
                 
                 for modified_entity_id in typed_entities:
@@ -1216,7 +1224,12 @@ class EntityRegistry():
                     else:
                         #later here we will handle the case where the entity has been moved to a different graph or prompoted to it's own graph
                         print(f"modified entity {modified_entity_id} not found in new graph, something went wrong")
-
+                
+                # Update the graph's root_ecs_id and lineage_id to match the updated root entity
+                # This is critical to avoid the "entity graph already registered" error
+                new_graph.root_ecs_id = new_root_ecs_id
+                new_graph.lineage_id = root_entity.lineage_id
+                
                 cls.register_entity_graph(new_graph)
             return True            
 
@@ -1358,7 +1371,7 @@ class Entity(BaseModel):
         """
         old_ecs_id = self.ecs_id
         new_ecs_id = uuid4()
-        
+        is_root_entity = self.is_root_entity()
         self.ecs_id = new_ecs_id
         self.forked_at = datetime.now(timezone.utc)
         self.old_ecs_id = old_ecs_id
@@ -1369,7 +1382,7 @@ class Entity(BaseModel):
             raise ValueError("if root_entity_live_id is provided new_root_ecs_id must be provided")
         elif root_entity_live_id:
             self.root_live_id = root_entity_live_id
-        if self.is_root_entity():
+        if is_root_entity:
             self.root_ecs_id = new_ecs_id
     
     def get_live_root_entity(self) -> Optional["Entity"]: 
@@ -1423,74 +1436,85 @@ class Entity(BaseModel):
             return None
   
 
+    def promote_to_root(self) -> None:
+        """
+        Promote the entity to the root of its graph
+        """
+        self.root_ecs_id = self.ecs_id
+        self.root_live_id = self.live_id
+        self.update_ecs_ids()
+        EntityRegistry.register_entity(self)
     
-    def prevalidate_detach(self) -> None:
+    def detach(self) -> None:
         """
-        Pre-validate the detachment of the entity from its graph.
-        for later optimizaiton phases this should be safe to run before the fork
-        because if the entity is effectively detached this graph can be stored as the new cold reference
-        """
-        pass
-    
-    def detach(self, promote_to_root: bool = False) -> None:
-        """
-        Mostly a stub for now not really implemented
-        Detach the entity from its graph due to disconnection from the root entity.
-        Sets the entity root to either None or promotes the entity to the root of its graph. And then forks the entity.
-        If the entity is to be promoted the forks happens first so that the root is directly assigned to the new self ecs id
-        If the entity is to be re-atached to a new root it must be first detached.
+        This has to be called after the entity has been removed from its parent python object
+        the scenarios are that 
+        1) entity is already a root entity and nothing has to be done, trigger versioning
+        2) the entity is currently already has root_ecs_id and root_live_id  set to None--> promote to root and register 
+        3) the graph does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+        3) the entity has root_ecs_id and root_live_id but is not present in the graph --> physically is detached from the graph, we only need to update the ecs_id and register
+        4) the entity has root_ecs_id and root_live_id and is present in the graph --> do nothing python has to physically remove the entity from the parent object
+        We leave out the case where the entity is a sub entity of a new root entity which is not the root_entity of the current entity. In that case the attach method should be used instead. 
         """
         if self.is_root_entity():
-            #if is already root it can not be detached from anything
-            return None
-        # here we will have to add a method once we implement the registry which checks if the entity has really been actually from the root entity in the python object,
-        #  this method role is not to remove the entity from the python root but to update the registry to reflect the detachment of the in memory reference between python objects
-        self.prevalidate_detach()
+            #case 1 is already a root entity we just version it
+            EntityRegistry.version_entity(self)
+        elif self.root_ecs_id is None or self.root_live_id is None:
+            #case 2 the entity is not attached to anything and we can just update the ecs_id and register
+            self.promote_to_root()
+        else:
+            graph = self.get_graph(recompute=True)
+            
+            if graph is None:
+                #case 3 the graph does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+                self.promote_to_root()
+            else:
+                graph_root_entity = graph.get_entity(self.root_ecs_id)
+                if self.ecs_id not in graph.nodes:
+                    #case 4 the entity is not present in the graph and we can just update the ecs_id and register
+                    self.promote_to_root()
+                if graph_root_entity is not None:
+                    #we version teh graph root entity to ensure that its' lates version is stored
+                    EntityRegistry.version_entity(graph_root_entity) 
+  
+        #thi
+        
 
-        #set root to None the entity is effectively an orphan detached from the registry
-        self.root_ecs_id = None
-        self.root_live_id = None
-        #forks the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
-        self.update_ecs_ids()
-        if promote_to_root:
-            #if promoting to root, set the new root to the new ecs_id
-            self.root_ecs_id = self.ecs_id
-            self.root_live_id = self.live_id
 
-    def prevalidate_attach(self, new_entity: "Entity") -> None:
+
+    def attach(self, new_root_entity: "Entity") -> None:
         """
-        Pre-validate the attachment of the entity to a new entity. Will raise an error if the new entity is in practice an orphan
-        this will trigger reconstruction of the graph from the live root entity 
-        we can do it before the fork and use it for the comparisong that will guide the 
-        upstream ecs_id update for all the entities in the graph we need that update to be triggered
-        in order to have the new root ecs id anyway.
+        This has to be attached when a previously root entity is added as subentity to a new root parent entity
         """
-        pass
+        if not self.is_root_entity():
+            raise ValueError("You can only attach a root entity to a new entity")
+        if not new_root_entity.is_root_entity():
+            live_root_entity = new_root_entity.get_live_root_entity()
+            if live_root_entity is None or not live_root_entity.is_root_entity():
+                raise ValueError("Cannot attach an orphan entity")
+        else:
+            live_root_entity = new_root_entity
 
-    def attach(self, new_entity: "Entity") -> None:
-        """
-        Just a stub for now not really implemented
-        Attach the entity to a new entity.
-        """
-        #check that the new entity is not an orphan
-        if new_entity.is_orphan():
-            raise ValueError("Cannot attach an orphan entity")
-         #first detach the entity if it is not already an orphan
+        graph = live_root_entity.get_graph(recompute=True)
+        assert graph is not None
+        if self.ecs_id not in graph.nodes:
+            raise ValueError("Cannot attach an entity that is not in the graph")
+        
+        if self.root_ecs_id == live_root_entity.ecs_id and self.root_live_id == live_root_entity.live_id and self.lineage_id == live_root_entity.lineage_id:
+            #only versioning is needed
+            EntityRegistry.version_entity(self)
+        else:
+            old_root_entity = self.get_live_root_entity()
 
-        if not self.is_orphan():
-            self.detach()
-        #prevalidate the attachment of the entity to the new entity this will 
-        self.prevalidate_attach(new_entity)
-
-        #attach the entity to the new entity root in reality this in the future will happen during the validation of the attachment 
-        #since there is where we globally define for the whoel graph which nodes needs new ecs id 
-        # due to the attachment
-        self.root_ecs_id = new_entity.root_ecs_id
-        self.root_live_id = new_entity.root_live_id
-        self.lineage_id = new_entity.lineage_id
-        #fork the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
-        self.update_ecs_ids()
-
+            self.root_ecs_id = live_root_entity.ecs_id
+            self.root_live_id = live_root_entity.live_id
+            self.lineage_id = live_root_entity.lineage_id
+            self.update_ecs_ids()
+            if old_root_entity is not None:
+                EntityRegistry.version_entity(old_root_entity)
+            EntityRegistry.version_entity(live_root_entity)
+        
+   
 
 # Example hierarchical entities
 

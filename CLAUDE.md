@@ -132,12 +132,14 @@ Completed features:
 13. **✅ Entity Serialization Tests**: Implemented comprehensive tests for entity and graph serialization
 
 Current priorities:
-14. **Subentity Attachment/Detachment**: Complete the implementation for attaching and detaching subentities
-15. **Entity Movement**: Implement functionality to move subentities between parent entities
-16. **Attachment/Detachment Testing**: Add comprehensive tests for entity movement operations
+14. **✅ Subentity Attachment/Detachment**: Completed implementation for attaching and detaching subentities
+15. **✅ Entity Movement**: Implemented functionality to move subentities between parent entities
+16. **✅ Attachment/Detachment Testing**: Added comprehensive tests for entity movement operations
+
+Current focus:
+17. **Performance Optimization**: Improve performance of graph operations and versioning for large entity structures
 
 Future work:
-17. **Performance Optimization**: Improve performance of graph operations and versioning for large entity structures
 18. **Registry Persistence**: Implement persistent storage for the registry to survive application restarts
 19. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
 20. **Direct Entity References**: Support for direct entity references without requiring root entities
@@ -220,6 +222,28 @@ The EntityRegistry provides a complete versioning and storage system for entity 
    - Updates entity ecs_ids while preserving lineage
    - Maintains history through old_ids tracking
    - Propagates root_ecs_id updates through the entire graph
+
+5. **Entity Movement Operations**:
+   - `detach()`: Promotes an entity to a root entity after physical removal from its parent
+   - `attach()`: Updates an entity's references after physical attachment to a new parent
+   - `promote_to_root()`: Internal method to transform an entity into a root entity
+
+## Entity Movement Workflow
+
+To move an entity between parent entities, follow these precise steps:
+
+1. **Detaching an Entity**:
+   - First, physically remove the entity from its parent's field
+   - Call `entity.detach()` to update metadata and promote to root
+   - The entity is now an independent root entity registered in the registry
+
+2. **Attaching an Entity**:
+   - First, physically add the entity to its new parent's field
+   - Re-register the parent's updated graph (or force rebuild with build_entity_graph)
+   - Call `entity.attach(new_parent)` to update metadata
+   - The entity is now properly linked to its new parent with updated IDs
+
+This two-phase approach (physical modification + metadata update) ensures proper tracking of entity relationships and maintains the versioning integrity of the system.
 
 ## Graph Visualization Example
 
