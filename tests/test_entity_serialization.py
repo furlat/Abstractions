@@ -527,11 +527,17 @@ class TestEntitySerialization(unittest.TestCase):
         stored_ids = {e.ecs_id for e in stored_entity.entities}
         self.assertEqual(stored_ids, entity_ids)
         
-        # Check the live registry contains the entities
+        # With the new immutability implementation, we can't look up entities by their
+        # original live_id because EntityRegistry.get_stored_entity assigns new live_ids
+        # Instead, we verify the structure is preserved by checking we can still
+        # access all the original entity's ecs_ids in the stored entity
         for entity in original_entities:
-            live_entity = EntityRegistry.get_live_entity(entity.live_id)
-            self.assertIsNotNone(live_entity)
-            self.assertEqual(live_entity.ecs_id, entity.ecs_id)
+            # Find the corresponding entity in the stored set
+            stored_entity_match = next((e for e in stored_entity.entities if e.ecs_id == entity.ecs_id), None)
+            self.assertIsNotNone(stored_entity_match, f"Couldn't find entity with ecs_id {entity.ecs_id} in stored set")
+            
+            # Verify it has a different live_id (immutability feature)
+            self.assertNotEqual(stored_entity_match.live_id, entity.live_id)
     
     def test_primitive_entity_serialization(self):
         """Test serialization and deserialization of an entity with primitive values."""

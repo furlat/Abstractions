@@ -228,7 +228,31 @@ class EntityGraph(BaseModel):
                 children.append(target_id)
         return children
     
-    # Serialization/deserialization helpers
+    def update_live_ids(self) -> None:
+        """ update the live id of all nodes in the graph used when a stored graph is loaded from the registry to enforce immutability
+        and map them to the new live id """
+        root_node = self.get_entity(self.root_ecs_id)
+        if root_node is None:
+            raise ValueError("root node not found in graph")
+        old_root_live_id = root_node.live_id
+        new_root_live_id = uuid4()
+        root_node.live_id = new_root_live_id
+        root_node.root_live_id = new_root_live_id
+        self.live_id_to_ecs_id[new_root_live_id] = self.root_ecs_id
+        # Only remove the old ID if it's in the map
+        if old_root_live_id in self.live_id_to_ecs_id:
+            self.live_id_to_ecs_id.pop(old_root_live_id)
+        for node in self.nodes.values():
+            if node.live_id != new_root_live_id:
+                old_node_live_id = node.live_id  # Save the old ID before changing it
+                node.live_id = uuid4()  # Generate a new ID
+                node.root_live_id = new_root_live_id  # Update the root reference
+                self.live_id_to_ecs_id[node.live_id] = node.ecs_id  # Map new ID to ecs_id
+                # Only remove the old ID if it's in the map
+                if old_node_live_id in self.live_id_to_ecs_id:
+                    self.live_id_to_ecs_id.pop(old_node_live_id)
+
+        # Serialization/deserialization helpers
     def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
         """Custom dump method to handle circular references"""
         # This will be implemented for efficient serialization
@@ -1129,7 +1153,14 @@ class EntityRegistry():
     @classmethod            
     def get_stored_graph(cls, root_ecs_id: UUID) -> Optional[EntityGraph]:
         """ Get the graph for a given root_ecs_id """
-        return cls.graph_registry.get(root_ecs_id, None)
+        stored_graph= cls.graph_registry.get(root_ecs_id, None)
+        if stored_graph is None:
+            return None
+        else:
+            new_graph = stored_graph.model_copy(deep=True)
+            new_graph.update_live_ids() #this are new python objects with new live ids
+            return new_graph
+            
     @classmethod
     def get_stored_entity(cls, root_ecs_id: UUID, ecs_id: UUID) -> Optional["Entity"]:
         """ Get the entity for a given root_ecs_id and ecs_id """
@@ -1215,7 +1246,8 @@ class EntityRegistry():
                 new_graph.nodes[new_root_ecs_id] = root_entity
                 
                 # now we fork all the modified entities with the new root_ecs_id as input
-                
+                #remove the old root_ecs_id from the typed_entities
+                typed_entities.remove(current_root_ecs_id)
                 for modified_entity_id in typed_entities:
                     modified_entity = new_graph.get_entity(modified_entity_id)
                     if modified_entity is not None:
@@ -1329,18 +1361,27 @@ class Entity(BaseModel):
         return self
 
     def _hash_str(self) -> str:
-        """Generate a hash string from identity fields."""
-        return f"{self.ecs_id}-{self.live_id}-{self.root_ecs_id}-{self.root_live_id}"
+        """
+        Generate a hash string from identity fields.
+        
+        With the immutability approach, this includes only the persistent identity fields
+        (ecs_id and root_ecs_id), not the temporary runtime ones (live_id and root_live_id).
+        """
+        return f"{self.ecs_id}-{self.root_ecs_id}"
         
     def __hash__(self) -> int:
         """
-        Make entity hashable using a string representation of identity fields.
+        Make entity hashable using a string representation of persistent identity fields.
         """
         return hash(self._hash_str())
         
     def __eq__(self, other: object) -> bool:
         """
-        Simple equality comparison using the hash string.
+        Simple equality comparison using persistent identity fields.
+        
+        This ensures that when comparing entities from different retrievals
+        (which will have different live_ids), we still consider them equal
+        if they represent the same persistent entity (same ecs_id).
         """
         if not isinstance(other, Entity):
             return False
@@ -1480,6 +1521,28 @@ class Entity(BaseModel):
         #thi
         
 
+    def add_to(self, new_entity: "Entity", field_name: str, copy= False, detach_target: bool = False) -> None:
+        """
+        just a stub for now
+        This method will move the entity to a new root entity and update the attribute_source to reflect the new root entity
+        1) get the attribute field from the new entity and type check
+        2) it if it is the correct entity type or a container of the correct entity type
+        3) if it is a container we need plan forr adding to the container
+        4) if it is an entity we need to check if there already is an entity in the field we are moving to and detach if detach_target is True
+        5) if copy is True we need to version self root entity and get the copy to attach from this versioned entity from the storage
+        6) if copy is False we ned to pop the entity from its parent in the graph (or from the container)
+        6) we detach our working object (self or the copy) and set the new entity to the field and update its source to the new entity
+        7) if copy is False we version the old root entity and the new entity otherwise only the new entity
+        """
+
+    def borrow_attribute(self, new_entity: "Entity", target_field: str, self_field: str) -> None:
+        """
+        just a stub for now
+        This method will borrow the attribute from the new entity and set it to the self field and update the attribute_source to reflect the new entity
+        we want to be sure to reference the data we do not wnat it to be modified in place by the source entity 
+        so we have to copy the data, of course we need to first validate that the data contained is of the correct type
+        we will worry later about borrowing data from a container
+        """
 
 
     def attach(self, new_root_entity: "Entity") -> None:

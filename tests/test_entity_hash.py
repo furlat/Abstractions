@@ -62,13 +62,15 @@ class TestEntityHashing(unittest.TestCase):
         entity3.root_live_id = entity1.root_live_id
         self.assertNotEqual(entity1, entity3)
         
-        # Different live_id should make entities not equal
+        # With the new immutability implementation, entities with same ecs_id
+        # and root_ecs_id are considered equal even with different live_ids
+        # This test is updated to match the new behavior
         entity4 = Entity()
         entity4.ecs_id = entity1.ecs_id
         entity4.live_id = uuid4()  # Different live_id
         entity4.root_ecs_id = entity1.root_ecs_id
-        entity4.root_live_id = entity1.root_live_id
-        self.assertNotEqual(entity1, entity4)
+        entity4.root_live_id = uuid4()  # Different root_live_id
+        self.assertEqual(entity1, entity4)  # Now they should be equal based on ecs_id
         
         # Different root_ecs_id should make entities not equal
         entity5 = Entity()
@@ -78,13 +80,13 @@ class TestEntityHashing(unittest.TestCase):
         entity5.root_live_id = entity1.root_live_id
         self.assertNotEqual(entity1, entity5)
         
-        # Different root_live_id should make entities not equal
+        # With the new immutability implementation, root_live_id no longer affects equality
         entity6 = Entity()
         entity6.ecs_id = entity1.ecs_id
         entity6.live_id = entity1.live_id
         entity6.root_ecs_id = entity1.root_ecs_id
         entity6.root_live_id = uuid4()  # Different root_live_id
-        self.assertNotEqual(entity1, entity6)
+        self.assertEqual(entity1, entity6)
         
     def test_hash_consistency(self):
         """Test that hash values are consistent with equality."""
@@ -131,12 +133,20 @@ class TestEntityHashing(unittest.TestCase):
         entity4.root_live_id = entity1.root_live_id
         
         entity_set = {entity1, entity4}
+        # With the new implementation, entities with same ecs_id and root_ecs_id
+        # are considered the same entity
         self.assertEqual(len(entity_set), 1)
         
-        # Change an ID
+        # Changing live_id doesn't change the entity identity anymore
         entity4.live_id = uuid4()
         
-        # Now adding it again should result in a different entity
+        # Adding again shouldn't change the set size
+        entity_set.add(entity4)
+        # Still only one unique entity based on ecs_id
+        self.assertEqual(len(entity_set), 1)
+        
+        # But changing the ecs_id WILL make it a different entity
+        entity4.ecs_id = uuid4()
         entity_set.add(entity4)
         self.assertEqual(len(entity_set), 2)
 

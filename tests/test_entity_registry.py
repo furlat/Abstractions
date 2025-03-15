@@ -100,7 +100,10 @@ class TestEntityRegistry(unittest.TestCase):
         retrieved_graph = EntityRegistry.get_stored_graph(self.root.ecs_id)
         
         # Check that the correct graph was retrieved
-        self.assertEqual(retrieved_graph, self.root_graph)
+        # With immutability, we get a new copy with the same ecs_ids but different live_ids
+        self.assertEqual(retrieved_graph.root_ecs_id, self.root_graph.root_ecs_id)
+        self.assertEqual(retrieved_graph.lineage_id, self.root_graph.lineage_id)
+        self.assertNotEqual(retrieved_graph, self.root_graph)  # Should be different objects
         
         # Test retrieving a non-existent graph
         non_existent_id = uuid4()
@@ -142,7 +145,9 @@ class TestEntityRegistry(unittest.TestCase):
         retrieved_graph = EntityRegistry.get_stored_graph_from_entity(sub_entity)
         
         # Check that the correct graph was retrieved
-        self.assertEqual(retrieved_graph, self.nested_graph)
+        # With the new immutability implementation, we get a copy with same ecs_ids but different live_ids
+        self.assertEqual(retrieved_graph.root_ecs_id, self.nested_graph.root_ecs_id)
+        self.assertEqual(retrieved_graph.lineage_id, self.nested_graph.lineage_id)
         
         # Test retrieving a graph for an entity without root_ecs_id
         entity_without_root = Entity()

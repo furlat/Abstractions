@@ -29,6 +29,7 @@ python -m unittest tests/test_entity.py
 - **Ancestry Paths**: On-the-fly construction during graph traversal
 - **Entity Registry**: Core EntityRegistry implementation with storage and retrieval
 - **Versioning System**: Set-based diffing with hierarchical propagation for efficient versioning
+- **Immutability**: Deep copy-based immutability for entities retrieved from registry
 
 ## Implementation Status
 1. **Field Type Detection**: The `get_pydantic_field_type_entities` function has been enhanced to:
@@ -103,6 +104,7 @@ python -m unittest tests/test_entity.py
   - Multi-version lineage tracking
   - Container entity versioning
   - Type registry functionality
+  - Immutability of retrieved entities and graphs
   - Entity serialization and deserialization with comprehensive coverage:
     - Basic entity serialization/deserialization
     - Nested entity structures serialization
@@ -136,13 +138,16 @@ Current priorities:
 15. **✅ Entity Movement**: Implemented functionality to move subentities between parent entities
 16. **✅ Attachment/Detachment Testing**: Added comprehensive tests for entity movement operations
 
+Completed features:
+17. **✅ Entity Immutability**: Implemented deep copy-based immutability for entities retrieved from the registry
+
 Current focus:
-17. **Performance Optimization**: Improve performance of graph operations and versioning for large entity structures
+18. **Performance Optimization**: Improve performance of graph operations and versioning for large entity structures
 
 Future work:
-18. **Registry Persistence**: Implement persistent storage for the registry to survive application restarts
-19. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
-20. **Direct Entity References**: Support for direct entity references without requiring root entities
+19. **Registry Persistence**: Implement persistent storage for the registry to survive application restarts
+20. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
+21. **Direct Entity References**: Support for direct entity references without requiring root entities
 
 ## Code Style Guidelines
 - **Python Version**: 3.9+ (use type hints extensively)
@@ -211,8 +216,8 @@ The EntityRegistry provides a complete versioning and storage system for entity 
    - `version_entity`: Computes differences and updates entity versions
 
 3. **Retrieval Operations**:
-   - `get_stored_graph`: Retrieves a graph by root_ecs_id
-   - `get_stored_entity`: Gets an entity from a specific graph
+   - `get_stored_graph`: Retrieves a deep copy of a graph by root_ecs_id with new live_ids
+   - `get_stored_entity`: Gets an entity from a specific graph with new live_id
    - `get_live_entity`: Retrieves an entity by its live_id
    - `get_live_root_from_entity`: Finds a root entity from any sub-entity
    - `get_stored_graph_from_entity`: Gets the graph containing a specific entity
@@ -227,6 +232,12 @@ The EntityRegistry provides a complete versioning and storage system for entity 
    - `detach()`: Promotes an entity to a root entity after physical removal from its parent
    - `attach()`: Updates an entity's references after physical attachment to a new parent
    - `promote_to_root()`: Internal method to transform an entity into a root entity
+
+6. **Immutability System**:
+   - Creates deep copies with new live_ids when retrieving from registry
+   - Maintains persistent identity (ecs_id) while changing runtime identity (live_id)
+   - Allows independent modification of different copies of the same entity
+   - Supports natural branching through separate modifications to retrieved copies
 
 ## Entity Movement Workflow
 
@@ -244,6 +255,34 @@ To move an entity between parent entities, follow these precise steps:
    - The entity is now properly linked to its new parent with updated IDs
 
 This two-phase approach (physical modification + metadata update) ensures proper tracking of entity relationships and maintains the versioning integrity of the system.
+
+## Entity Immutability System
+
+The entity system implements a powerful immutability feature that ensures entities retrieved from the registry are always deep copies with new runtime identities:
+
+1. **Deep Copy Retrieval**:
+   - When an entity or graph is retrieved from the registry using `get_stored_graph()` or `get_stored_entity()`, a deep copy is created
+   - The copies maintain the same ecs_ids (persistent identity) but receive new live_ids (runtime identity)
+   - All references within the graph are updated to maintain proper relationships in the copy
+
+2. **Identity-Based Equality**:
+   - Entity equality is based only on persistent identity (ecs_id and root_ecs_id)
+   - This allows entities with different live_ids to be considered equal if they represent the same logical entity
+   - Simplifies diffing and comparison operations across different retrievals
+
+3. **Natural Branching Model**:
+   - Different code paths can retrieve the same entity and modify it independently
+   - When each copy is versioned, it creates a new branch in the version history
+   - All branches trace back to the same lineage, allowing for tracking changes over time
+   - Similar to Git's branching model for code versioning
+
+4. **Benefits**:
+   - Prevents unexpected side effects when multiple parts of code work with the same entity
+   - Creates a natural isolation boundary that simplifies concurrent operations
+   - Supports "what-if" scenarios where different modifications can be explored in parallel
+   - Reduces the risk of inadvertent modification of shared state
+
+To take advantage of immutability, always use the registry's retrieval methods rather than keeping direct references to entities across different operations.
 
 ## Graph Visualization Example
 
