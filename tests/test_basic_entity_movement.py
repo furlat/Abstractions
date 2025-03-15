@@ -4,7 +4,7 @@ from uuid import UUID
 from abstractions.ecs.entity import (
     Entity, 
     EntityRegistry,
-    build_entity_graph
+    build_entity_tree
 )
 
 class TestParentEntity(Entity):
@@ -18,7 +18,7 @@ class TestBasicEntityMovement(unittest.TestCase):
     def setUp(self):
         """Reset the EntityRegistry before each test"""
         # Clear the registry between tests
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -51,9 +51,9 @@ class TestBasicEntityMovement(unittest.TestCase):
         print(f"Parent1 ecs_id: {parent1.ecs_id}")
         
         # Check if child.root_ecs_id is set after parent1 registration
-        parent1_graph = EntityRegistry.get_stored_graph(parent1.ecs_id)
-        print(f"Parent1 graph has {len(parent1_graph.nodes)} nodes")
-        print(f"Child in parent1 graph? {child.ecs_id in parent1_graph.nodes}")
+        parent1_tree = EntityRegistry.get_stored_tree(parent1.ecs_id)
+        print(f"Parent1 tree has {len(parent1_tree.nodes)} nodes")
+        print(f"Child in parent1 tree? {child.ecs_id in parent1_tree.nodes}")
         
         # Remember the child's ID before the move
         child_id_before_move = child.ecs_id
@@ -78,16 +78,16 @@ class TestBasicEntityMovement(unittest.TestCase):
         print("\nStep 3: Adding child to parent2")
         parent2.child = child
         
-        # Build the graph to establish physical connection
-        temp_graph = build_entity_graph(parent2)
-        print(f"Child is in parent2 graph? {child.ecs_id in temp_graph.nodes}")
+        # Build the tree to establish physical connection
+        temp_tree = build_entity_tree(parent2)
+        print(f"Child is in parent2 tree? {child.ecs_id in temp_tree.nodes}")
         
-        # Add the temporary graph to registry
+        # Add the temporary tree to registry
         try:
-            EntityRegistry.register_entity_graph(temp_graph)
+            EntityRegistry.register_entity_tree(temp_tree)
         except ValueError as e:
             if "already registered" in str(e):
-                print("Graph already registered (expected if parent2 is registered)")
+                print("Tree already registered (expected if parent2 is registered)")
             else:
                 raise
         

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 from abstractions.ecs.entity import (
-    Entity, EntityGraph, EntityRegistry, build_entity_graph,
+    Entity, EntityTree, EntityRegistry, build_entity_tree,
     EntityinEntity, EntityinList, EntityinDict, HierachicalEntity
 )
 
@@ -17,7 +17,7 @@ class TestEntityRegistry(unittest.TestCase):
     def setUp(self):
         """Set up test entities and reset the registry for each test."""
         # Clear registry state before each test
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -38,19 +38,19 @@ class TestEntityRegistry(unittest.TestCase):
         self.list_entity.root_live_id = self.list_entity.live_id
         self.list_entity.entities = [Entity(), Entity()]
         
-        # Build graphs for testing
-        self.root_graph = build_entity_graph(self.root)
-        self.nested_graph = build_entity_graph(self.nested)
-        self.list_graph = build_entity_graph(self.list_entity)
+        # Build trees for testing
+        self.root_tree = build_entity_tree(self.root)
+        self.nested_tree = build_entity_tree(self.nested)
+        self.list_tree = build_entity_tree(self.list_entity)
 
-    def test_register_entity_graph(self):
-        """Test registering an entity graph in the registry."""
-        # Register the root graph
-        EntityRegistry.register_entity_graph(self.root_graph)
+    def test_register_entity_tree(self):
+        """Test registering an entity tree in the registry."""
+        # Register the root tree
+        EntityRegistry.register_entity_tree(self.root_tree)
         
-        # Check that the graph was added to graph_registry
-        self.assertIn(self.root.ecs_id, EntityRegistry.graph_registry)
-        self.assertEqual(EntityRegistry.graph_registry[self.root.ecs_id], self.root_graph)
+        # Check that the tree was added to tree_registry
+        self.assertIn(self.root.ecs_id, EntityRegistry.tree_registry)
+        self.assertEqual(EntityRegistry.tree_registry[self.root.ecs_id], self.root_tree)
         
         # Check that the root entity is in the live_id_registry
         self.assertIn(self.root.live_id, EntityRegistry.live_id_registry)
@@ -64,17 +64,17 @@ class TestEntityRegistry(unittest.TestCase):
         self.assertIn(self.root.__class__, EntityRegistry.type_registry)
         self.assertIn(self.root.lineage_id, EntityRegistry.type_registry[self.root.__class__])
         
-        # Test registering a second graph with the same root_ecs_id (should fail)
+        # Test registering a second tree with the same root_ecs_id (should fail)
         with self.assertRaises(ValueError):
-            EntityRegistry.register_entity_graph(self.root_graph)
+            EntityRegistry.register_entity_tree(self.root_tree)
 
     def test_register_entity(self):
         """Test registering an entity in the registry."""
         # Register the root entity
         EntityRegistry.register_entity(self.root)
         
-        # Check that a graph was built and added to graph_registry
-        self.assertIn(self.root.ecs_id, EntityRegistry.graph_registry)
+        # Check that a tree was built and added to tree_registry
+        self.assertIn(self.root.ecs_id, EntityRegistry.tree_registry)
         
         # Check that the live_id_registry was updated
         self.assertIn(self.root.live_id, EntityRegistry.live_id_registry)
@@ -85,34 +85,34 @@ class TestEntityRegistry(unittest.TestCase):
         with self.assertRaises(ValueError):
             EntityRegistry.register_entity(non_root)
         
-        # Test registering an entity that is not the root of its own graph
+        # Test registering an entity that is not the root of its own tree
         non_root = Entity()
         non_root.root_ecs_id = uuid4()  # Different from its ecs_id
         with self.assertRaises(ValueError):
             EntityRegistry.register_entity(non_root)
 
-    def test_get_stored_graph(self):
-        """Test retrieving a stored graph."""
-        # Register the graph
-        EntityRegistry.register_entity_graph(self.root_graph)
+    def test_get_stored_tree(self):
+        """Test retrieving a stored tree."""
+        # Register the tree
+        EntityRegistry.register_entity_tree(self.root_tree)
         
-        # Retrieve the graph
-        retrieved_graph = EntityRegistry.get_stored_graph(self.root.ecs_id)
+        # Retrieve the tree
+        retrieved_tree = EntityRegistry.get_stored_tree(self.root.ecs_id)
         
-        # Check that the correct graph was retrieved
+        # Check that the correct tree was retrieved
         # With immutability, we get a new copy with the same ecs_ids but different live_ids
-        self.assertEqual(retrieved_graph.root_ecs_id, self.root_graph.root_ecs_id)
-        self.assertEqual(retrieved_graph.lineage_id, self.root_graph.lineage_id)
-        self.assertNotEqual(retrieved_graph, self.root_graph)  # Should be different objects
+        self.assertEqual(retrieved_tree.root_ecs_id, self.root_tree.root_ecs_id)
+        self.assertEqual(retrieved_tree.lineage_id, self.root_tree.lineage_id)
+        self.assertNotEqual(retrieved_tree, self.root_tree)  # Should be different objects
         
-        # Test retrieving a non-existent graph
+        # Test retrieving a non-existent tree
         non_existent_id = uuid4()
-        self.assertIsNone(EntityRegistry.get_stored_graph(non_existent_id))
+        self.assertIsNone(EntityRegistry.get_stored_tree(non_existent_id))
 
     def test_get_stored_entity(self):
         """Test retrieving a stored entity."""
-        # Register the nested graph (contains multiple entities)
-        EntityRegistry.register_entity_graph(self.nested_graph)
+        # Register the nested tree (contains multiple entities)
+        EntityRegistry.register_entity_tree(self.nested_tree)
         
         # Get the sub-entity
         sub_entity = self.nested.sub_entity
@@ -123,41 +123,41 @@ class TestEntityRegistry(unittest.TestCase):
         # Check that the correct entity was retrieved
         self.assertEqual(retrieved_entity, sub_entity)
         
-        # Test retrieving an entity that doesn't exist in the graph
+        # Test retrieving an entity that doesn't exist in the tree
         non_existent_id = uuid4()
         with self.assertRaises(ValueError):
-            # Graph doesn't exist, should raise error
+            # Tree doesn't exist, should raise error
             EntityRegistry.get_stored_entity(non_existent_id, self.nested.ecs_id)
             
-        # Graph exists but entity doesn't
+        # Tree exists but entity doesn't
         self.assertIsNone(EntityRegistry.get_stored_entity(self.nested.ecs_id, non_existent_id))
 
-    def test_get_stored_graph_from_entity(self):
-        """Test retrieving a graph from an entity."""
-        # Register the graph
-        EntityRegistry.register_entity_graph(self.nested_graph)
+    def test_get_stored_tree_from_entity(self):
+        """Test retrieving a tree from an entity."""
+        # Register the tree
+        EntityRegistry.register_entity_tree(self.nested_tree)
         
         # Get the sub-entity and ensure it has the root_ecs_id set
         sub_entity = self.nested.sub_entity
         sub_entity.root_ecs_id = self.nested.ecs_id
         
-        # Retrieve the graph from the sub-entity
-        retrieved_graph = EntityRegistry.get_stored_graph_from_entity(sub_entity)
+        # Retrieve the tree from the sub-entity
+        retrieved_tree = EntityRegistry.get_stored_tree_from_entity(sub_entity)
         
-        # Check that the correct graph was retrieved
+        # Check that the correct tree was retrieved
         # With the new immutability implementation, we get a copy with same ecs_ids but different live_ids
-        self.assertEqual(retrieved_graph.root_ecs_id, self.nested_graph.root_ecs_id)
-        self.assertEqual(retrieved_graph.lineage_id, self.nested_graph.lineage_id)
+        self.assertEqual(retrieved_tree.root_ecs_id, self.nested_tree.root_ecs_id)
+        self.assertEqual(retrieved_tree.lineage_id, self.nested_tree.lineage_id)
         
-        # Test retrieving a graph for an entity without root_ecs_id
+        # Test retrieving a tree for an entity without root_ecs_id
         entity_without_root = Entity()
         with self.assertRaises(ValueError):
-            EntityRegistry.get_stored_graph_from_entity(entity_without_root)
+            EntityRegistry.get_stored_tree_from_entity(entity_without_root)
 
     def test_get_live_entity(self):
         """Test retrieving a live entity by its live_id."""
-        # Register the nested graph
-        EntityRegistry.register_entity_graph(self.nested_graph)
+        # Register the nested tree
+        EntityRegistry.register_entity_tree(self.nested_tree)
         
         # Get the sub-entity
         sub_entity = self.nested.sub_entity
@@ -174,8 +174,8 @@ class TestEntityRegistry(unittest.TestCase):
 
     def test_get_live_root_from_entity(self):
         """Test retrieving a live root entity from a sub-entity."""
-        # Register the nested graph
-        EntityRegistry.register_entity_graph(self.nested_graph)
+        # Register the nested tree
+        EntityRegistry.register_entity_tree(self.nested_tree)
         
         # Get the sub-entity
         sub_entity = self.nested.sub_entity
@@ -261,7 +261,7 @@ class TestEntityRegistry(unittest.TestCase):
         self.assertIn(self.nested.lineage_id, EntityRegistry.lineage_registry)
         lineage = EntityRegistry.lineage_registry[self.nested.lineage_id]
         
-        # Verify the graph was registered
+        # Verify the tree was registered
         self.assertTrue(len(lineage) >= 1)
         
         # Check root_ecs_id relationship is maintained
@@ -343,7 +343,7 @@ class TestEntityRegistry(unittest.TestCase):
     def test_type_registry(self):
         """Test the type registry functionality."""
         # Clear existing registry state
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -375,8 +375,8 @@ class TestEntityRegistry(unittest.TestCase):
         self.assertIn(entity3.lineage_id, EntityRegistry.type_registry[EntityinList])
 
 
-    def test_complex_entity_graph(self):
-        """Test a complex entity graph with multiple levels and container types."""
+    def test_complex_entity_tree(self):
+        """Test a complex entity tree with multiple levels and container types."""
         # Create a complex entity structure using the class from entity.py
         root = HierachicalEntity()
         root.root_ecs_id = root.ecs_id

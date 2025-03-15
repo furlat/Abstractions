@@ -7,8 +7,8 @@ from uuid import UUID
 
 from abstractions.ecs.entity import (
     Entity, 
-    EntityGraph, 
-    build_entity_graph, 
+    EntityTree, 
+    build_entity_tree, 
     generate_mermaid_diagram,
     EntityinEntity,
     EntityinList
@@ -39,28 +39,28 @@ class TestMermaidDiagram(unittest.TestCase):
         self.list_entity.entities.append(Entity())
         self.list_entity.entities.append(Entity())
 
-    def test_empty_graph(self):
-        """Test generating a diagram for an empty graph."""
-        empty_graph = EntityGraph(
+    def test_empty_tree(self):
+        """Test generating a diagram for an empty tree."""
+        empty_tree = EntityTree(
             root_ecs_id=UUID('00000000-0000-0000-0000-000000000000'),
             lineage_id=UUID('00000000-0000-0000-0000-000000000000')
         )
         
-        diagram = generate_mermaid_diagram(empty_graph)
+        diagram = generate_mermaid_diagram(empty_tree)
         
         self.assertIn("```mermaid", diagram)
-        self.assertIn("Empty Graph", diagram)
+        self.assertIn("Empty Tree", diagram)
         self.assertIn("```", diagram)
 
     def test_simple_entity_diagram(self):
         """Test generating a diagram for a simple entity."""
-        graph = build_entity_graph(self.simple_entity)
+        tree = build_entity_tree(self.simple_entity)
         
-        diagram = generate_mermaid_diagram(graph)
+        diagram = generate_mermaid_diagram(tree)
         
         # Basic structure checks
         self.assertIn("```mermaid", diagram)
-        self.assertIn("graph TD", diagram)
+        self.assertIn("tree TD", diagram)
         self.assertIn(str(self.simple_entity.ecs_id), diagram)
         self.assertIn("Entity", diagram)
         self.assertIn("rootNode", diagram)
@@ -71,20 +71,20 @@ class TestMermaidDiagram(unittest.TestCase):
         self.assertRegex(diagram, node_pattern)
         
         # Only one node, no edges
-        self.assertEqual(1, graph.node_count)
-        self.assertEqual(0, graph.edge_count)
+        self.assertEqual(1, tree.node_count)
+        self.assertEqual(0, tree.edge_count)
 
     def test_nested_entity_diagram(self):
         """Test generating a diagram for a nested entity."""
-        graph = build_entity_graph(self.nested_entity)
+        tree = build_entity_tree(self.nested_entity)
         
-        diagram = generate_mermaid_diagram(graph)
+        diagram = generate_mermaid_diagram(tree)
         
         # Should have two nodes
-        self.assertEqual(2, graph.node_count)
+        self.assertEqual(2, tree.node_count)
         
         # Should have one edge
-        self.assertEqual(1, graph.edge_count)
+        self.assertEqual(1, tree.edge_count)
         
         # Should have hierarchical edge
         self.assertIn("hierarchicalEdge", diagram)
@@ -94,15 +94,15 @@ class TestMermaidDiagram(unittest.TestCase):
 
     def test_list_entity_diagram(self):
         """Test generating a diagram for an entity with a list."""
-        graph = build_entity_graph(self.list_entity)
+        tree = build_entity_tree(self.list_entity)
         
-        diagram = generate_mermaid_diagram(graph)
+        diagram = generate_mermaid_diagram(tree)
         
         # Should have three nodes
-        self.assertEqual(3, graph.node_count)
+        self.assertEqual(3, tree.node_count)
         
         # Should have two edges
-        self.assertEqual(2, graph.edge_count)
+        self.assertEqual(2, tree.edge_count)
         
         # Should have indexed list items
         self.assertIn("|entities[0]|", diagram)
@@ -110,9 +110,9 @@ class TestMermaidDiagram(unittest.TestCase):
 
     def test_include_attributes(self):
         """Test generating a diagram with entity attributes."""
-        graph = build_entity_graph(self.nested_entity)
+        tree = build_entity_tree(self.nested_entity)
         
-        diagram = generate_mermaid_diagram(graph, include_attributes=True)
+        diagram = generate_mermaid_diagram(tree, include_attributes=True)
         
         # Should include ecs_id
         self.assertIn("ecs_id:", diagram)

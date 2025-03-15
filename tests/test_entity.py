@@ -5,7 +5,7 @@ import unittest
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_graph
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree
 from typing import Optional
 
 
@@ -16,7 +16,7 @@ class TestParentEntity(Entity):
 
 
 class TestEntityBasics(unittest.TestCase):
-    """Test basic Entity functionality excluding graph operations."""
+    """Test basic Entity functionality excluding tree operations."""
 
     def test_entity_initialization(self):
         """Test that Entity initializes with correct default values."""
@@ -149,7 +149,7 @@ class TestEntityBasics(unittest.TestCase):
     def test_detach(self):
         """Test detach method."""
         # Clear registry for clean test
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -169,13 +169,13 @@ class TestEntityBasics(unittest.TestCase):
         # This is normally done by setting a field on the parent
         # For test purposes, we're just updating the entity's metadata
         
-        # Manually add child to root's graph after it's built
+        # Manually add child to root's tree after it's built
         root.child = child  # Simulate physical attachment
         
-        # Force rebuild the graph to include the child
-        root_graph = build_entity_graph(root)
+        # Force rebuild the tree to include the child
+        root_tree = build_entity_tree(root)
         
-        # Re-register the root entity with the updated graph
+        # Re-register the root entity with the updated tree
         EntityRegistry.version_entity(root, force_versioning=True)
         
         old_ecs_id = child.ecs_id
@@ -203,12 +203,12 @@ class TestEntityBasics(unittest.TestCase):
         self.assertEqual(child.old_ecs_id, old_ecs_id)
         
         # Check that the entity is registered
-        self.assertIn(child.ecs_id, EntityRegistry.graph_registry)
+        self.assertIn(child.ecs_id, EntityRegistry.tree_registry)
 
     def test_attach(self):
         """Test attach method."""
         # Clear registry for clean test
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -232,10 +232,10 @@ class TestEntityBasics(unittest.TestCase):
         # Physical attachment
         host.child = entity  # Simulate physical attachment
         
-        # Force rebuild the graph to include the entity
-        host_graph = build_entity_graph(host)
+        # Force rebuild the tree to include the entity
+        host_tree = build_entity_tree(host)
         
-        # Re-register the host with the updated graph
+        # Re-register the host with the updated tree
         EntityRegistry.version_entity(host, force_versioning=True)
         
         # Now call attach to update metadata
@@ -278,7 +278,7 @@ class TestEntityBasics(unittest.TestCase):
     def test_attach_detach_workflow(self):
         """Test a complete attach/detach workflow using the two-phase approach."""
         # Clear registry for clean test
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -304,10 +304,10 @@ class TestEntityBasics(unittest.TestCase):
         entity.root_ecs_id = root1.ecs_id
         entity.root_live_id = root1.live_id
         
-        # Force rebuild root1's graph to include entity
-        root1_graph = build_entity_graph(root1)
+        # Force rebuild root1's tree to include entity
+        root1_tree = build_entity_tree(root1)
         
-        # Re-register the root1 entity with the updated graph
+        # Re-register the root1 entity with the updated tree
         EntityRegistry.version_entity(root1, force_versioning=True)
         
         original_ecs_id = entity.ecs_id
@@ -332,10 +332,10 @@ class TestEntityBasics(unittest.TestCase):
         # Simulate root2.child = entity
         root2.child = entity
         
-        # Force rebuild root2's graph
-        root2_graph = build_entity_graph(root2)
+        # Force rebuild root2's tree
+        root2_tree = build_entity_tree(root2)
         
-        # Re-register root2 with the updated graph
+        # Re-register root2 with the updated tree
         EntityRegistry.version_entity(root2, force_versioning=True)
         
         # Step 5: Metadata update via attach()

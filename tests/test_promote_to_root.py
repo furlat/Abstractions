@@ -12,7 +12,7 @@ class TestPromoteToRoot(unittest.TestCase):
     def setUp(self):
         """Reset the EntityRegistry before each test"""
         # Clear the registry between tests
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -47,7 +47,7 @@ class TestPromoteToRoot(unittest.TestCase):
         self.assertNotEqual(entity.ecs_id, original_ecs_id)
         
         # Verify entity is registered
-        self.assertIn(entity.ecs_id, EntityRegistry.graph_registry)
+        self.assertIn(entity.ecs_id, EntityRegistry.tree_registry)
 
     def test_update_ecs_ids_for_root(self):
         """Test that update_ecs_ids updates root_ecs_id for root entities"""

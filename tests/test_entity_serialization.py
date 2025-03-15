@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 from abstractions.ecs.entity import (
-    Entity, EntityGraph, EntityRegistry, build_entity_graph, find_modified_entities,
+    Entity, EntityTree, EntityRegistry, build_entity_tree, find_modified_entities,
     EntityinEntity, EntityinList, EntityinDict, EntityinTuple, EntityinSet,
     EntityWithPrimitives, EntityWithContainersOfPrimitives, 
     EntityWithMixedContainers, EntityWithNestedContainers,
@@ -25,7 +25,7 @@ class TestEntitySerialization(unittest.TestCase):
     def setUp(self):
         """Set up test entities and reset the registry for each test."""
         # Clear registry state before each test
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -236,12 +236,12 @@ class TestEntitySerialization(unittest.TestCase):
         with self.assertRaises(ValueError):
             EntityRegistry.register_entity(new_entity)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.root)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.root)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
 
     def test_nested_entity_serialization(self):
@@ -267,12 +267,12 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.sub_entity.root_ecs_id, self.nested.sub_entity.root_ecs_id)
         self.assertEqual(new_entity.sub_entity.root_live_id, self.nested.sub_entity.root_live_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.nested)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.nested)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
 
     def test_list_entity_serialization(self):
@@ -298,12 +298,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.assertEqual(entity.root_ecs_id, self.list_entity.entities[i].root_ecs_id)
             self.assertEqual(entity.root_live_id, self.list_entity.entities[i].root_live_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.list_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.list_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
         
     def test_dict_entity_serialization(self):
@@ -329,12 +329,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.assertEqual(entity.root_ecs_id, self.dict_entity.entities[key].root_ecs_id)
             self.assertEqual(entity.root_live_id, self.dict_entity.entities[key].root_live_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.dict_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.dict_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
         
     def test_json_serialization(self):
@@ -357,12 +357,12 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.sub_entity.ecs_id, self.nested.sub_entity.ecs_id)
         self.assertEqual(new_entity.sub_entity.live_id, self.nested.sub_entity.live_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.nested)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.nested)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
         
     def test_versioned_entity_serialization(self):
@@ -390,12 +390,12 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.old_ecs_id, self.root.old_ecs_id)
         self.assertEqual(new_entity.previous_ecs_id, self.root.previous_ecs_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.root)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.root)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
         
     def test_complex_entity_serialization(self):
@@ -440,43 +440,43 @@ class TestEntitySerialization(unittest.TestCase):
         # Create a new entity from the serialized data
         new_entity = HierachicalEntity.model_validate(entity_dict)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(root)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(root)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
         
-    def test_entity_graph_serialization(self):
-        """Test that serialization and deserialization preserves graph structure."""
+    def test_entity_tree_serialization(self):
+        """Test that serialization and deserialization preserves tree structure."""
         # Register the entity
         EntityRegistry.register_entity(self.root)  # Use simple Entity for cleaner test
         
-        # Build the original graph
-        original_graph = build_entity_graph(self.root)
+        # Build the original tree
+        original_tree = build_entity_tree(self.root)
         
         # Serialize the entity to dict and back
         entity_dict = self.root.model_dump()
         deserialized_entity = Entity.model_validate(entity_dict)
         
-        # Build a new graph from the deserialized entity
-        new_graph = build_entity_graph(deserialized_entity)
+        # Build a new tree from the deserialized entity
+        new_tree = build_entity_tree(deserialized_entity)
         
-        # Use our graph diffing function to check for any differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
-        self.assertEqual(len(modified_entities), 0, "Graphs should be identical after serialization")
+        # Use our tree diffing function to check for any differences
+        modified_entities = find_modified_entities(original_tree, new_tree)
+        self.assertEqual(len(modified_entities), 0, "Trees should be identical after serialization")
         
         # Verify key properties match exactly
-        self.assertEqual(original_graph.root_ecs_id, new_graph.root_ecs_id)
-        self.assertEqual(original_graph.lineage_id, new_graph.lineage_id)
-        self.assertEqual(len(original_graph.nodes), len(new_graph.nodes))
-        self.assertEqual(len(original_graph.edges), len(new_graph.edges))
+        self.assertEqual(original_tree.root_ecs_id, new_tree.root_ecs_id)
+        self.assertEqual(original_tree.lineage_id, new_tree.lineage_id)
+        self.assertEqual(len(original_tree.nodes), len(new_tree.nodes))
+        self.assertEqual(len(original_tree.edges), len(new_tree.edges))
         
         # Check that serialization also worked for more complex properties
-        self.assertEqual(set(original_graph.nodes.keys()), set(new_graph.nodes.keys()))
-        self.assertEqual(set(original_graph.edges.keys()), set(new_graph.edges.keys()))
-        self.assertEqual(original_graph.ancestry_paths, new_graph.ancestry_paths)
+        self.assertEqual(set(original_tree.nodes.keys()), set(new_tree.nodes.keys()))
+        self.assertEqual(set(original_tree.edges.keys()), set(new_tree.edges.keys()))
+        self.assertEqual(original_tree.ancestry_paths, new_tree.ancestry_paths)
 
 
     def test_tuple_entity_serialization(self):
@@ -497,12 +497,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.assertEqual(entity.live_id, self.tuple_entity.entities[i].live_id)
             self.assertEqual(entity.root_ecs_id, self.tuple_entity.entities[i].root_ecs_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.tuple_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.tuple_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_set_entity_in_registry(self):
@@ -556,12 +556,12 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.float_value, self.primitive_entity.float_value)
         self.assertEqual(new_entity.bool_value, self.primitive_entity.bool_value)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.primitive_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.primitive_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_container_primitive_entity_serialization(self):
@@ -581,12 +581,12 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.float_tuple, self.container_primitive_entity.float_tuple)
         self.assertEqual(new_entity.bool_set, self.container_primitive_entity.bool_set)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.container_primitive_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.container_primitive_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_mixed_container_entity_serialization(self):
@@ -612,12 +612,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.assertIsInstance(entity, Entity)
             self.assertEqual(entity.ecs_id, self.mixed_container_entity.mixed_dict[key].ecs_id)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.mixed_container_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.mixed_container_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_nested_container_entity_serialization(self):
@@ -654,12 +654,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.nested_container_entity.list_of_dicts[1]["key2"].ecs_id
         )
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.nested_container_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.nested_container_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_optional_entity_serialization(self):
@@ -692,12 +692,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.optional_entity.optional_entity_dict["key"].ecs_id
         )
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.optional_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.optional_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_base_model_entity_serialization(self):
@@ -719,12 +719,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.base_model_entity.base_model.entity.ecs_id
         )
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.base_model_entity)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.base_model_entity)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_hierarchical_entity_serialization(self):
@@ -760,12 +760,12 @@ class TestEntitySerialization(unittest.TestCase):
             self.hierarchical.entity_of_entity_of_entity.entity_of_entity.sub_entity.ecs_id
         )
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.hierarchical)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.hierarchical)
+        new_tree = build_entity_tree(new_entity)
         
         # Use the entity diffing function to check for differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0)
     
     def test_json_serialization_all_types(self):
@@ -780,12 +780,12 @@ class TestEntitySerialization(unittest.TestCase):
         entity_dict = json.loads(entity_json)
         new_entity = HierachicalEntity.model_validate(entity_dict)
         
-        # Build graphs and check for differences
-        original_graph = build_entity_graph(self.hierarchical)
-        new_graph = build_entity_graph(new_entity)
+        # Build trees and check for differences
+        original_tree = build_entity_tree(self.hierarchical)
+        new_tree = build_entity_tree(new_entity)
         
         # Check that the entire structure matches with zero differences
-        modified_entities = find_modified_entities(original_graph, new_graph)
+        modified_entities = find_modified_entities(original_tree, new_tree)
         self.assertEqual(len(modified_entities), 0, "JSON serialization should preserve all entity relationships")
     
     def test_update_ecs_ids_serialization(self):
@@ -821,7 +821,7 @@ class TestEntitySerialization(unittest.TestCase):
         self.assertEqual(new_entity.old_ids, entity.old_ids)
         
         # Try with the registry workflow
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}

@@ -1,5 +1,5 @@
 """
-Test the immutability behavior of entity graph retrieval from EntityRegistry.
+Test the immutability behavior of entity tree retrieval from EntityRegistry.
 """
 import unittest
 from uuid import UUID, uuid4
@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from abstractions.ecs.entity import (
     Entity, 
     EntityRegistry, 
-    build_entity_graph,
+    build_entity_tree,
     EntityinList,
     EntityinDict
 )
@@ -22,13 +22,13 @@ class TestImmutability(unittest.TestCase):
 
     def setUp(self):
         """Reset the EntityRegistry before each test."""
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
     
     def test_basic_immutability(self):
-        """Test that retrieving the same graph twice returns different copies with different live_ids."""
+        """Test that retrieving the same tree twice returns different copies with different live_ids."""
         # Create and register a root entity
         root = Entity()
         root.root_ecs_id = root.ecs_id
@@ -59,7 +59,7 @@ class TestImmutability(unittest.TestCase):
         self.assertEqual(copy2.untyped_data, "original value")
     
     def test_hierarchical_immutability(self):
-        """Test that retrieving a graph with child entities maintains proper structure with new live_ids."""
+        """Test that retrieving a tree with child entities maintains proper structure with new live_ids."""
         # Create a parent entity with a child
         parent = TestParentEntity()
         parent.root_ecs_id = parent.ecs_id

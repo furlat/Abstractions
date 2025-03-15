@@ -5,7 +5,7 @@ from typing import Optional, Dict, List, Any
 from abstractions.ecs.entity import (
     Entity, 
     EntityRegistry,
-    build_entity_graph,
+    build_entity_tree,
     EntityinEntity,
     EntityinList
 )
@@ -32,7 +32,7 @@ class TestEntityMovement(unittest.TestCase):
     def setUp(self):
         """Reset the EntityRegistry before each test"""
         # Clear the registry between tests
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -75,7 +75,7 @@ class TestEntityMovement(unittest.TestCase):
         self.assertNotEqual(entity.ecs_id, original_ecs_id)
         
         # Verify entity is registered
-        self.assertIn(entity.ecs_id, EntityRegistry.graph_registry)
+        self.assertIn(entity.ecs_id, EntityRegistry.tree_registry)
 
     def test_detach_orphan_entity(self):
         """Test detaching an orphan entity (should promote to root)"""
@@ -94,7 +94,7 @@ class TestEntityMovement(unittest.TestCase):
         self.assertNotEqual(entity.ecs_id, original_ecs_id)
         
         # 3. It's registered in the registry
-        self.assertIn(entity.ecs_id, EntityRegistry.graph_registry)
+        self.assertIn(entity.ecs_id, EntityRegistry.tree_registry)
 
     def test_detach_root_entity(self):
         """Test detaching a root entity (should just version it)"""
@@ -123,7 +123,7 @@ class TestEntityMovement(unittest.TestCase):
         self.assertIn(original_ecs_id, root.old_ids)
         
         # 4. The new version is registered in the registry
-        self.assertIn(root.ecs_id, EntityRegistry.graph_registry)
+        self.assertIn(root.ecs_id, EntityRegistry.tree_registry)
 
     def test_complete_entity_movement(self):
         """Test the complete workflow of detaching and attaching entities"""
@@ -170,8 +170,8 @@ class TestEntityMovement(unittest.TestCase):
         # STEP 3: Attach to parent2
         parent2.child = child  # Physical attachment
         
-        # Force rebuild the graph
-        new_graph = build_entity_graph(parent2)
+        # Force rebuild the tree
+        new_tree = build_entity_tree(parent2)
         
         # Manually update metadata in way that avoids registry conflicts
         old_root_entity = child.get_live_root_entity()
@@ -279,7 +279,7 @@ class TestEntityMovement(unittest.TestCase):
         
         with self.assertRaises(ValueError) as context:
             root_entity.attach(parent)
-        self.assertTrue("not in the graph" in str(context.exception).lower())
+        self.assertTrue("not in the tree" in str(context.exception).lower())
 
 if __name__ == "__main__":
     unittest.main()

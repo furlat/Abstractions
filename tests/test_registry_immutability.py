@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from abstractions.ecs.entity import (
     Entity, 
     EntityRegistry, 
-    build_entity_graph,
+    build_entity_tree,
     EntityinList
 )
 
@@ -21,13 +21,13 @@ class TestRegistryImmutability(unittest.TestCase):
 
     def setUp(self):
         """Reset the EntityRegistry before each test."""
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
     
-    def test_stored_graph_immutability(self):
-        """Test that each call to get_stored_graph returns a new copy with new live_ids."""
+    def test_stored_tree_immutability(self):
+        """Test that each call to get_stored_tree returns a new copy with new live_ids."""
         # Create a simple entity hierarchy
         root = TestParentEntity()
         root.name = "Root"
@@ -47,14 +47,14 @@ class TestRegistryImmutability(unittest.TestCase):
         original_child_ecs_id = child.ecs_id
         original_child_live_id = child.live_id
         
-        # Get the graph directly from registry - first copy
-        graph1 = EntityRegistry.get_stored_graph(root.ecs_id)
-        root1 = graph1.get_entity(root.ecs_id)
+        # Get the tree directly from registry - first copy
+        tree1 = EntityRegistry.get_stored_tree(root.ecs_id)
+        root1 = tree1.get_entity(root.ecs_id)
         child1 = root1.child
         
-        # Get the graph again - second copy
-        graph2 = EntityRegistry.get_stored_graph(root.ecs_id)
-        root2 = graph2.get_entity(root.ecs_id)
+        # Get the tree again - second copy
+        tree2 = EntityRegistry.get_stored_tree(root.ecs_id)
+        root2 = tree2.get_entity(root.ecs_id)
         child2 = root2.child
         
         # Verify persistence IDs (ecs_id) are preserved
@@ -90,11 +90,11 @@ class TestRegistryImmutability(unittest.TestCase):
         original_ecs_id = root.ecs_id
         
         # Get two copies from the registry
-        graph1 = EntityRegistry.get_stored_graph(root.ecs_id)
-        root1 = graph1.get_entity(root.ecs_id)
+        tree1 = EntityRegistry.get_stored_tree(root.ecs_id)
+        root1 = tree1.get_entity(root.ecs_id)
         
-        graph2 = EntityRegistry.get_stored_graph(root.ecs_id)
-        root2 = graph2.get_entity(root.ecs_id)
+        tree2 = EntityRegistry.get_stored_tree(root.ecs_id)
+        root2 = tree2.get_entity(root.ecs_id)
         
         # Verify they have different live_ids
         self.assertNotEqual(root1.live_id, root2.live_id)
@@ -120,8 +120,8 @@ class TestRegistryImmutability(unittest.TestCase):
         branch_data = set()
         for version_id in versions:
             if version_id != original_ecs_id:  # Skip the original
-                graph = EntityRegistry.get_stored_graph(version_id)
-                entity = graph.get_entity(version_id)
+                tree = EntityRegistry.get_stored_tree(version_id)
+                entity = tree.get_entity(version_id)
                 branch_data.add(entity.untyped_data)
         
         # Verify both modifications were preserved
@@ -145,11 +145,11 @@ class TestRegistryImmutability(unittest.TestCase):
         EntityRegistry.register_entity(container)
         
         # Get two copies from the registry
-        graph1 = EntityRegistry.get_stored_graph(container.ecs_id)
-        container1 = graph1.get_entity(container.ecs_id)
+        tree1 = EntityRegistry.get_stored_tree(container.ecs_id)
+        container1 = tree1.get_entity(container.ecs_id)
         
-        graph2 = EntityRegistry.get_stored_graph(container.ecs_id)
-        container2 = graph2.get_entity(container.ecs_id)
+        tree2 = EntityRegistry.get_stored_tree(container.ecs_id)
+        container2 = tree2.get_entity(container.ecs_id)
         
         # Verify the containers have different live_ids
         self.assertNotEqual(container1.live_id, container2.live_id)

@@ -1,12 +1,12 @@
 """
-Tests for the process_entity_reference function that handles entity references during graph building.
+Tests for the process_entity_reference function that handles entity references during tree building.
 """
 import unittest
 from uuid import uuid4
 from collections import deque
 
 from abstractions.ecs.entity import (
-    Entity, EntityGraph, process_entity_reference, EdgeType
+    Entity, EntityTree, process_entity_reference, EdgeType
 )
 
 
@@ -22,20 +22,20 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         self.source_entity = Entity()
         self.target_entity = Entity()
         
-        self.graph = EntityGraph(
+        self.tree = EntityTree(
             root_ecs_id=self.root_entity.ecs_id,
             lineage_id=self.root_entity.lineage_id
         )
         
-        # Add source and target to graph
-        self.graph.add_entity(self.source_entity)
-        self.graph.add_entity(self.target_entity)
+        # Add source and target to tree
+        self.tree.add_entity(self.source_entity)
+        self.tree.add_entity(self.target_entity)
 
     def test_direct_reference(self):
         """Test processing a direct entity reference."""
         # Process a direct reference
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="test_field"
@@ -43,10 +43,10 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Check edge creation
         edge_key = (self.source_entity.ecs_id, self.target_entity.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
+        self.assertIn(edge_key, self.tree.edges)
         
         # Check edge attributes
-        edge = self.graph.edges[edge_key]
+        edge = self.tree.edges[edge_key]
         self.assertEqual(edge.edge_type, EdgeType.DIRECT)
         self.assertEqual(edge.field_name, "test_field")
         self.assertIsNone(edge.container_index)
@@ -56,7 +56,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         """Test processing a list entity reference."""
         # Process a list reference
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="list_field",
@@ -65,10 +65,10 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Check edge creation
         edge_key = (self.source_entity.ecs_id, self.target_entity.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
+        self.assertIn(edge_key, self.tree.edges)
         
         # Check edge attributes
-        edge = self.graph.edges[edge_key]
+        edge = self.tree.edges[edge_key]
         self.assertEqual(edge.edge_type, EdgeType.LIST)
         self.assertEqual(edge.field_name, "list_field")
         self.assertEqual(edge.container_index, 3)
@@ -78,7 +78,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         """Test processing a dictionary entity reference."""
         # Process a dict reference
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="dict_field",
@@ -87,10 +87,10 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Check edge creation
         edge_key = (self.source_entity.ecs_id, self.target_entity.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
+        self.assertIn(edge_key, self.tree.edges)
         
         # Check edge attributes
-        edge = self.graph.edges[edge_key]
+        edge = self.tree.edges[edge_key]
         self.assertEqual(edge.edge_type, EdgeType.DICT)
         self.assertEqual(edge.field_name, "dict_field")
         self.assertIsNone(edge.container_index)
@@ -100,7 +100,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         """Test processing a tuple entity reference."""
         # Process a tuple reference
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="tuple_field",
@@ -109,10 +109,10 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Check edge creation
         edge_key = (self.source_entity.ecs_id, self.target_entity.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
+        self.assertIn(edge_key, self.tree.edges)
         
         # Check edge attributes
-        edge = self.graph.edges[edge_key]
+        edge = self.tree.edges[edge_key]
         self.assertEqual(edge.edge_type, EdgeType.TUPLE)
         self.assertEqual(edge.field_name, "tuple_field")
         self.assertEqual(edge.container_index, 2)
@@ -125,7 +125,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Process reference with distance map
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="test_field",
@@ -138,14 +138,14 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Test finding a shorter path
         source2 = Entity()
-        self.graph.add_entity(source2)
+        self.tree.add_entity(source2)
         
         # Set source2 to have a shorter distance
         distance_map[source2.ecs_id] = 2
         
         # Process reference from source2
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=source2,
             target=self.target_entity,
             field_name="shorter_path",
@@ -162,7 +162,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         
         # Process reference with queue
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="test_field",
@@ -184,7 +184,7 @@ class TestEntityReferenceProcessing(unittest.TestCase):
         # Clear queue and process again
         to_process.clear()
         process_entity_reference(
-            graph=self.graph,
+            tree=self.tree,
             source=self.source_entity,
             target=self.target_entity,
             field_name="test_field",

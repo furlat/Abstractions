@@ -7,13 +7,13 @@ from pydantic import Field
 
 from abstractions.ecs.entity import (
     Entity, 
-    EntityGraph,
+    EntityTree,
     EntityWithPrimitives,
     EntityinList,
     EntityinDict,
     EntityInEntityInEntity,
     HierachicalEntity,
-    build_entity_graph,
+    build_entity_tree,
     find_modified_entities,
     get_non_entity_attributes,
     compare_non_entity_attributes
@@ -124,8 +124,8 @@ class TestEntityDiff(unittest.TestCase):
         root1.root_ecs_id = root1.ecs_id
         root1.root_live_id = root1.live_id
         
-        # Build the graph
-        graph1 = build_entity_graph(root1)
+        # Build the tree
+        tree1 = build_entity_tree(root1)
         
         # Create a second version with the same structure but different attribute values
         root2 = EntityWithPrimitives()
@@ -137,11 +137,11 @@ class TestEntityDiff(unittest.TestCase):
         root2.root_ecs_id = root1.root_ecs_id
         root2.root_live_id = root1.root_live_id
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # We should detect the root entity as modified
         self.assertIn(root2.ecs_id, modified_entities)
@@ -163,8 +163,8 @@ class TestEntityDiff(unittest.TestCase):
         parent.root_ecs_id = parent.ecs_id
         parent.root_live_id = parent.live_id
         
-        # Build the first graph
-        graph1 = build_entity_graph(parent)
+        # Build the first tree
+        tree1 = build_entity_tree(parent)
         
         # Create a second version with a change in the child entity
         child2 = TestEntity()
@@ -182,11 +182,11 @@ class TestEntityDiff(unittest.TestCase):
         parent2.root_ecs_id = parent.root_ecs_id
         parent2.root_live_id = parent.root_live_id
         
-        # Build the second graph
-        graph2 = build_entity_graph(parent2)
+        # Build the second tree
+        tree2 = build_entity_tree(parent2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Both child and parent should be marked as modified
         # The child because its attributes changed
@@ -208,8 +208,8 @@ class TestEntityDiff(unittest.TestCase):
         # First version has an empty list
         list_entity1.entities = []
         
-        # Build the first graph
-        graph1 = build_entity_graph(list_entity1)
+        # Build the first tree
+        tree1 = build_entity_tree(list_entity1)
         
         # Create a second entity with the same ID but with an entity in the list
         list_entity2 = EntityinList()
@@ -223,11 +223,11 @@ class TestEntityDiff(unittest.TestCase):
         child = Entity()
         list_entity2.entities = [child]
         
-        # Build the second graph
-        graph2 = build_entity_graph(list_entity2)
+        # Build the second tree
+        tree2 = build_entity_tree(list_entity2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # We should detect the list entity as structurally changed
         # because it has a new entity in its list
@@ -249,8 +249,8 @@ class TestEntityDiff(unittest.TestCase):
         dict_entity1.root_live_id = dict_entity1.live_id
         dict_entity1.entities = {"key": entity1}
         
-        # Build the first graph
-        graph1 = build_entity_graph(dict_entity1)
+        # Build the first tree
+        tree1 = build_entity_tree(dict_entity1)
         
         # Create a second version with the same structure but different entity in the dict
         dict_entity2 = EntityinDict()
@@ -261,11 +261,11 @@ class TestEntityDiff(unittest.TestCase):
         dict_entity2.root_live_id = dict_entity1.root_live_id
         dict_entity2.entities = {"key": entity2}  # Different entity
         
-        # Build the second graph
-        graph2 = build_entity_graph(dict_entity2)
+        # Build the second tree
+        tree2 = build_entity_tree(dict_entity2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # We should detect both the dict_entity and entity2 as modified
         self.assertIn(dict_entity2.ecs_id, modified_entities)
@@ -284,8 +284,8 @@ class TestEntityDiff(unittest.TestCase):
         deep_entity.root_ecs_id = deep_entity.ecs_id
         deep_entity.root_live_id = deep_entity.live_id
         
-        # Build the graph
-        graph1 = build_entity_graph(deep_entity)
+        # Build the tree
+        tree1 = build_entity_tree(deep_entity)
         
         # Create a deep copy with the same structure and values
         deep_entity2 = copy.deepcopy(deep_entity)
@@ -308,11 +308,11 @@ class TestEntityDiff(unittest.TestCase):
         deep_entity2.entity_of_entity.sub_entity.live_id = deep_entity.entity_of_entity.sub_entity.live_id
         deep_entity2.entity_of_entity.sub_entity.lineage_id = deep_entity.entity_of_entity.sub_entity.lineage_id
         
-        # Build the second graph
-        graph2 = build_entity_graph(deep_entity2)
+        # Build the second tree
+        tree2 = build_entity_tree(deep_entity2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Should be no changes
         self.assertEqual(len(modified_entities), 0)
@@ -328,8 +328,8 @@ class TestEntityDiff(unittest.TestCase):
         # Add some non-entity data to the leaf
         deep_entity.entity_of_entity.sub_entity.untyped_data = "original"
         
-        # Build the graph
-        graph1 = build_entity_graph(deep_entity)
+        # Build the tree
+        tree1 = build_entity_tree(deep_entity)
         
         # Create a deep copy
         deep_entity2 = copy.deepcopy(deep_entity)
@@ -355,11 +355,11 @@ class TestEntityDiff(unittest.TestCase):
         # Modify the leaf entity
         deep_entity2.entity_of_entity.sub_entity.untyped_data = "modified"
         
-        # Build the second graph
-        graph2 = build_entity_graph(deep_entity2)
+        # Build the second tree
+        tree2 = build_entity_tree(deep_entity2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Should have identified changes in all three entities
         # The leaf node should be detected as changed due to its attribute
@@ -392,8 +392,8 @@ class TestEntityDiff(unittest.TestCase):
         root.primitive_data.string_value = "string value"
         root.primitive_data.int_value = 42
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a deep copy
         root2 = copy.deepcopy(root)
@@ -421,11 +421,11 @@ class TestEntityDiff(unittest.TestCase):
         # Change only one branch
         root2.entity_of_entity_2.sub_entity.untyped_data = "MODIFIED branch 2 leaf data"
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Should have identified changes in only the modified branch
         self.assertIn(root2.ecs_id, modified_entities)  # Root
@@ -472,13 +472,13 @@ class TestEntityDiff(unittest.TestCase):
         root.child2.branch2 = TestEntity()
         root.child2.branch2.test_value = "L2-B2-2"
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a deep copy for the second version
         root2 = copy.deepcopy(root)
         
-        # Restore identity fields to create an identical graph
+        # Restore identity fields to create an identical tree
         # Helper function to restore identity across all entities
         def restore_identity(original, copied):
             # Restore the entity's identity fields
@@ -498,16 +498,16 @@ class TestEntityDiff(unittest.TestCase):
         # Perform the identity restoration
         restore_identity(root, root2)
         
-        # Now modify a leaf node in the second graph
+        # Now modify a leaf node in the second tree
         # We'll modify the test_value of a leaf entity
         leaf_entity = root2.child2.branch2
         leaf_entity.test_value = "MODIFIED VALUE"
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Verify results
         # The leaf entity and its ancestors should be modified
@@ -523,8 +523,8 @@ class TestEntityDiff(unittest.TestCase):
         total_entities = 7  # root + 2 level1 + 4 level2
         self.assertLessEqual(debug_info["comparison_count"], total_entities)
 
-    def test_diff_entity_moved_within_graph(self):
-        """Test diffing when an entity is moved from one parent to another within the same graph"""
+    def test_diff_entity_moved_within_tree(self):
+        """Test diffing when an entity is moved from one parent to another within the same tree"""
         # Create a hierarchy with two branches
         root = ComplexTestEntity()
         root.value = 100
@@ -547,8 +547,8 @@ class TestEntityDiff(unittest.TestCase):
         # Initially attach to branch1
         branch1.branch1 = movable_entity
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a deep copy for the second version
         root2 = copy.deepcopy(root)
@@ -587,11 +587,11 @@ class TestEntityDiff(unittest.TestCase):
         # Add to branch2
         branch2_copy.branch3 = moved_entity
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Print debugging info for reference
         print("Modified entities:", modified_entities)
@@ -625,8 +625,8 @@ class TestEntityDiff(unittest.TestCase):
         root.root_ecs_id = root.ecs_id
         root.root_live_id = root.live_id
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a second version where we'll add a new field
         root2 = copy.deepcopy(root)
@@ -639,11 +639,11 @@ class TestEntityDiff(unittest.TestCase):
         # Add a new non-entity field that didn't exist in the first version
         root2.untyped_data = "Added untyped data" 
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # The root should be modified since it has a new field
         self.assertIn(root2.ecs_id, modified_entities)
@@ -660,8 +660,8 @@ class TestEntityDiff(unittest.TestCase):
         
         # Initially, no branch entities are set
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a second version where we'll add a new entity
         root2 = copy.deepcopy(root)
@@ -675,11 +675,11 @@ class TestEntityDiff(unittest.TestCase):
         new_child = Entity()
         root2.branch1 = new_child
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Print debug info
         print("Modified entities:", modified_entities)
@@ -703,8 +703,8 @@ class TestEntityDiff(unittest.TestCase):
         parent.root_ecs_id = parent.ecs_id
         parent.root_live_id = parent.live_id
         
-        # Build the first graph
-        graph1 = build_entity_graph(parent)
+        # Build the first tree
+        tree1 = build_entity_tree(parent)
         
         # Create a second version with the optional entity set to None
         parent2 = copy.deepcopy(parent)
@@ -718,11 +718,11 @@ class TestEntityDiff(unittest.TestCase):
         removedChild = parent2.child
         parent2.child = None
         
-        # Build the second graph
-        graph2 = build_entity_graph(parent2)
+        # Build the second tree
+        tree2 = build_entity_tree(parent2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Verify:
         # 1. The parent should be marked as modified
@@ -754,8 +754,8 @@ class TestEntityDiff(unittest.TestCase):
         child_entity.test_value = "Child to be reassigned"
         middle_entity1.branch1 = child_entity  # Initially attached to middle_entity1
         
-        # Build the first graph
-        graph1 = build_entity_graph(root)
+        # Build the first tree
+        tree1 = build_entity_tree(root)
         
         # Create a second version with restructured hierarchy
         root2 = copy.deepcopy(root)
@@ -786,11 +786,11 @@ class TestEntityDiff(unittest.TestCase):
         # 2. Reassign child_entity to middle_entity2
         middle_entity2_copy.branch2 = child_entity_copy
         
-        # Build the second graph
-        graph2 = build_entity_graph(root2)
+        # Build the second tree
+        tree2 = build_entity_tree(root2)
         
         # Find modified entities
-        modified_entities, debug_info = find_modified_entities(graph2, graph1, debug=True)
+        modified_entities, debug_info = find_modified_entities(tree2, tree1, debug=True)
         
         # Print debug info
         print("Modified entities:", modified_entities)

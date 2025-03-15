@@ -1,5 +1,5 @@
 """ Implementing step by step the entity system from
-source docs:  /Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/ecs/graph_entity.md"""
+source docs:  /Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/ecs/tree_entity.md"""
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -27,7 +27,7 @@ class EdgeType(str, Enum):
 
 # Edge representation
 class EntityEdge(BaseModel):
-    """Edge between two entities in the graph"""
+    """Edge between two entities in the tree"""
     source_id: UUID
     target_id: UUID
     edge_type: EdgeType                   # The container type (DIRECT, LIST, DICT, etc.)
@@ -40,18 +40,18 @@ class EntityEdge(BaseModel):
     def __hash__(self):
         return hash((self.source_id, self.target_id, self.field_name))
 
-# The main EntityGraph class
-class EntityGraph(BaseModel):
+# The main EntityTree class
+class EntityTree(BaseModel):
     """
-    A graph of entities with optimized structure for versioning operations.
+    A tree of entities with optimized structure for versioning operations.
     
     Maintains:
-    - Complete collection of entities in the graph
+    - Complete collection of entities in the tree
     - Edge relationships between entities
     - Ancestry paths from each entity to the root
     - Root entity information
     """
-    # Basic graph info
+    # Basic tree info
     root_ecs_id: UUID
     lineage_id: UUID
     
@@ -80,14 +80,14 @@ class EntityGraph(BaseModel):
 
     # Methods for adding entities and edges
     def add_entity(self, entity: "Entity") -> None:
-        """Add an entity to the graph"""
+        """Add an entity to the tree"""
         if entity.ecs_id not in self.nodes:
             self.nodes[entity.ecs_id] = entity
             self.live_id_to_ecs_id[entity.live_id] = entity.ecs_id
             self.node_count += 1
     
     def add_edge(self, edge: EntityEdge) -> None:
-        """Add an edge to the graph"""
+        """Add an edge to the tree"""
         edge_key = (edge.source_id, edge.target_id)
         if edge_key not in self.edges:
             self.edges[edge_key] = edge
@@ -205,7 +205,7 @@ class EntityGraph(BaseModel):
         path = self.ancestry_paths.get(entity_id, [])
         return len(path)
     
-    # Convenience methods for graph analysis
+    # Convenience methods for tree analysis
     def is_hierarchical_edge(self, source_id: UUID, target_id: UUID) -> bool:
         """Check if the edge is a hierarchical (ownership) edge"""
         edge_key = (source_id, target_id)
@@ -229,11 +229,11 @@ class EntityGraph(BaseModel):
         return children
     
     def update_live_ids(self) -> None:
-        """ update the live id of all nodes in the graph used when a stored graph is loaded from the registry to enforce immutability
+        """ update the live id of all nodes in the tree used when a stored tree is loaded from the registry to enforce immutability
         and map them to the new live id """
         root_node = self.get_entity(self.root_ecs_id)
         if root_node is None:
-            raise ValueError("root node not found in graph")
+            raise ValueError("root node not found in tree")
         old_root_live_id = root_node.live_id
         new_root_live_id = uuid4()
         root_node.live_id = new_root_live_id
@@ -258,7 +258,7 @@ class EntityGraph(BaseModel):
         # This will be implemented for efficient serialization
         return super().model_dump(*args, **kwargs)
 
-# Functions to build the entity graph
+# Functions to build the entity tree
 
 def get_field_ownership(entity: "Entity", field_name: str) -> bool:
     """
@@ -470,7 +470,7 @@ def get_pydantic_field_type_entities(entity: "Entity", field_name: str, detect_n
     return None
 
 def process_entity_reference(
-    graph: EntityGraph,
+    tree: EntityTree,
     source: "Entity",
     target: "Entity",
     field_name: str,
@@ -480,27 +480,27 @@ def process_entity_reference(
     to_process: Optional[deque] = None,
     distance_map: Optional[Dict[UUID, int]] = None
 ):
-    """Process a single entity reference, updating the graph"""
+    """Process a single entity reference, updating the tree"""
     # Get ownership information from the field
     ownership = get_field_ownership(source, field_name)
     
     # Add the appropriate edge type
     if list_index is not None:
-        graph.add_list_edge(source, target, field_name, list_index, ownership)
+        tree.add_list_edge(source, target, field_name, list_index, ownership)
     elif dict_key is not None:
-        graph.add_dict_edge(source, target, field_name, dict_key, ownership)
+        tree.add_dict_edge(source, target, field_name, dict_key, ownership)
     elif tuple_index is not None:
-        graph.add_tuple_edge(source, target, field_name, tuple_index, ownership)
+        tree.add_tuple_edge(source, target, field_name, tuple_index, ownership)
     else:
-        graph.add_direct_edge(source, target, field_name, ownership)
+        tree.add_direct_edge(source, target, field_name, ownership)
     
     # Set the edge type immediately based on ownership
     edge_key = (source.ecs_id, target.ecs_id)
-    if edge_key in graph.edges:
+    if edge_key in tree.edges:
         if ownership:
-            graph.mark_edge_as_hierarchical(source.ecs_id, target.ecs_id)
+            tree.mark_edge_as_hierarchical(source.ecs_id, target.ecs_id)
         else:
-            graph.mark_edge_as_reference(source.ecs_id, target.ecs_id)
+            tree.mark_edge_as_reference(source.ecs_id, target.ecs_id)
     
     # Update distance map for shortest path tracking
     if distance_map is not None:
@@ -517,7 +517,7 @@ def process_entity_reference(
         to_process.append(target)
 
 def process_field_value(
-    graph: EntityGraph,
+    tree: EntityTree,
     entity: "Entity",
     field_name: str,
     value: Any,
@@ -526,10 +526,10 @@ def process_field_value(
     distance_map: Optional[Dict[UUID, int]]
 ) -> None:
     """
-    Process an entity field value and add any contained entities to the graph.
+    Process an entity field value and add any contained entities to the tree.
     
     Args:
-        graph: The entity graph to update
+        tree: The entity tree to update
         entity: The source entity containing the field
         field_name: The name of the field being processed
         value: The field value to process
@@ -540,7 +540,7 @@ def process_field_value(
     # Direct entity reference
     if isinstance(value, Entity):
         process_entity_reference(
-            graph=graph,
+            tree=tree,
             source=entity,
             target=value,
             field_name=field_name,
@@ -553,7 +553,7 @@ def process_field_value(
         for i, item in enumerate(value):
             if isinstance(item, Entity):
                 process_entity_reference(
-                    graph=graph,
+                    tree=tree,
                     source=entity,
                     target=item,
                     field_name=field_name,
@@ -567,7 +567,7 @@ def process_field_value(
         for k, v in value.items():
             if isinstance(v, Entity):
                 process_entity_reference(
-                    graph=graph,
+                    tree=tree,
                     source=entity,
                     target=v,
                     field_name=field_name,
@@ -581,7 +581,7 @@ def process_field_value(
         for i, item in enumerate(value):
             if isinstance(item, Entity):
                 process_entity_reference(
-                    graph=graph,
+                    tree=tree,
                     source=entity,
                     target=item,
                     field_name=field_name,
@@ -595,7 +595,7 @@ def process_field_value(
         for item in value:
             if isinstance(item, Entity):
                 process_entity_reference(
-                    graph=graph,
+                    tree=tree,
                     source=entity,
                     target=item,
                     field_name=field_name,
@@ -603,24 +603,24 @@ def process_field_value(
                     distance_map=distance_map
                 )
 
-def build_entity_graph(root_entity: "Entity") -> EntityGraph:
+def build_entity_tree(root_entity: "Entity") -> EntityTree:
     """
-    Build a complete entity graph from a root entity in a single pass.
+    Build a complete entity tree from a root entity in a single pass.
     
     This algorithm:
-    1. Builds the graph structure and ancestry paths in a single traversal
+    1. Builds the tree structure and ancestry paths in a single traversal
     2. Immediately classifies edges based on ownership
     3. Maintains shortest paths for each entity
     4. Creates ancestry paths for path-based diffing on-the-fly
     
     Args:
-        root_entity: The root entity of the graph
+        root_entity: The root entity of the tree
         
     Returns:
-        EntityGraph: A complete graph of the entity hierarchy
+        EntityTree: A complete tree of the entity hierarchy
     """
-    # Initialize the graph
-    graph = EntityGraph(
+    # Initialize the tree
+    tree = EntityTree(
         root_ecs_id=root_entity.ecs_id,
         lineage_id=root_entity.lineage_id
     )
@@ -637,9 +637,9 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     # Set of processed entities to avoid cycles
     processed = set()
     
-    # Add root entity to graph
-    graph.add_entity(root_entity)
-    graph.set_ancestry_path(root_entity.ecs_id, [root_entity.ecs_id])
+    # Add root entity to tree
+    tree.add_entity(root_entity)
+    tree.set_ancestry_path(root_entity.ecs_id, [root_entity.ecs_id])
     
     # Process all entities
     while to_process:
@@ -661,9 +661,9 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
         if parent_id is not None:
             # Update the edge's hierarchical status - all edges are hierarchical for now
             edge_key = (parent_id, entity.ecs_id)
-            if edge_key in graph.edges:
+            if edge_key in tree.edges:
                 # Always mark as hierarchical (since we're not handling circular references yet)
-                graph.mark_edge_as_hierarchical(parent_id, entity.ecs_id)
+                tree.mark_edge_as_hierarchical(parent_id, entity.ecs_id)
                 
                 # Update ancestry path
                 if parent_id in ancestry_paths:
@@ -673,7 +673,7 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
                     # If we have no path yet or found a shorter path
                     if entity.ecs_id not in ancestry_paths or len(entity_path) < len(ancestry_paths[entity.ecs_id]):
                         ancestry_paths[entity.ecs_id] = entity_path
-                        graph.set_ancestry_path(entity.ecs_id, entity_path)
+                        tree.set_ancestry_path(entity.ecs_id, entity_path)
         
         # If we've already processed this entity's fields, skip to the next one
         if not entity_needs_processing:
@@ -692,13 +692,13 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             
             # Direct entity reference
             if isinstance(value, Entity):
-                # Add entity to graph if not already present
-                if value.ecs_id not in graph.nodes:
-                    graph.add_entity(value)
+                # Add entity to tree if not already present
+                if value.ecs_id not in tree.nodes:
+                    tree.add_entity(value)
                 
                 # Add the appropriate edge type
                 process_entity_reference(
-                    graph=graph,
+                    tree=tree,
                     source=entity,
                     target=value,
                     field_name=field_name,
@@ -713,13 +713,13 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             elif isinstance(value, list) and field_type:
                 for i, item in enumerate(value):
                     if isinstance(item, Entity):
-                        # Add entity to graph if not already present
-                        if item.ecs_id not in graph.nodes:
-                            graph.add_entity(item)
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
                         
                         # Add the appropriate edge type
                         process_entity_reference(
-                            graph=graph,
+                            tree=tree,
                             source=entity,
                             target=item,
                             field_name=field_name,
@@ -735,13 +735,13 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             elif isinstance(value, dict) and field_type:
                 for k, v in value.items():
                     if isinstance(v, Entity):
-                        # Add entity to graph if not already present
-                        if v.ecs_id not in graph.nodes:
-                            graph.add_entity(v)
+                        # Add entity to tree if not already present
+                        if v.ecs_id not in tree.nodes:
+                            tree.add_entity(v)
                         
                         # Add the appropriate edge type
                         process_entity_reference(
-                            graph=graph,
+                            tree=tree,
                             source=entity,
                             target=v,
                             field_name=field_name,
@@ -757,13 +757,13 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             elif isinstance(value, tuple) and field_type:
                 for i, item in enumerate(value):
                     if isinstance(item, Entity):
-                        # Add entity to graph if not already present
-                        if item.ecs_id not in graph.nodes:
-                            graph.add_entity(item)
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
                         
                         # Add the appropriate edge type
                         process_entity_reference(
-                            graph=graph,
+                            tree=tree,
                             source=entity,
                             target=item,
                             field_name=field_name,
@@ -779,13 +779,13 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
             elif isinstance(value, set) and field_type:
                 for item in value:
                     if isinstance(item, Entity):
-                        # Add entity to graph if not already present
-                        if item.ecs_id not in graph.nodes:
-                            graph.add_entity(item)
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
                         
                         # Add the appropriate edge type
                         process_entity_reference(
-                            graph=graph,
+                            tree=tree,
                             source=entity,
                             target=item,
                             field_name=field_name,
@@ -798,11 +798,11 @@ def build_entity_graph(root_entity: "Entity") -> EntityGraph:
     
     # Ensure all entities have an ancestry path
     # This is just a safety check - all entities should have paths by now
-    for entity_id in graph.nodes:
+    for entity_id in tree.nodes:
         if entity_id not in ancestry_paths:
             raise ValueError(f"Entity {entity_id} does not have an ancestry path")
     
-    return graph
+    return tree
 
 def get_non_entity_attributes(entity: "Entity") -> Dict[str, Any]:
     """
@@ -864,13 +864,13 @@ def compare_non_entity_attributes(entity1: "Entity", entity2: "Entity") -> bool:
 
 
 def find_modified_entities(
-    new_graph: EntityGraph,
-    old_graph: EntityGraph,
+    new_tree: EntityTree,
+    old_tree: EntityTree,
     greedy: bool = True,
     debug: bool = False
 ) -> Union[Set[UUID], Tuple[Set[UUID], Dict[str, Any]]]:
     """
-    Find entities that have been modified between two graphs.
+    Find entities that have been modified between two trees.
     
     Uses a set-based approach to identify changes:
     1. Compares node sets to identify added/removed entities
@@ -878,8 +878,8 @@ def find_modified_entities(
     3. Checks attribute changes only for entities not already marked for versioning
     
     Args:
-        new_graph: The new entity graph
-        old_graph: The old graph (from storage)
+        new_tree: The new entity tree
+        old_tree: The old tree (from storage)
         greedy: If True, stops checking parents once an entity is marked for change
         debug: If True, collects and returns debugging information
         
@@ -898,8 +898,8 @@ def find_modified_entities(
     unchanged_entities = set()
     
     # Step 1: Compare node sets to identify added/removed entities
-    new_entity_ids = set(new_graph.nodes.keys())
-    old_entity_ids = set(old_graph.nodes.keys())
+    new_entity_ids = set(new_tree.nodes.keys())
+    old_entity_ids = set(old_tree.nodes.keys())
     
     added_entities = new_entity_ids - old_entity_ids
     removed_entities = old_entity_ids - new_entity_ids
@@ -907,30 +907,30 @@ def find_modified_entities(
     
     # Mark all added entities and their ancestry paths for versioning
     for entity_id in added_entities:
-        path = new_graph.get_ancestry_path(entity_id)
+        path = new_tree.get_ancestry_path(entity_id)
         modified_entities.update(path)
     
     # Step 2: Compare edge sets to identify moved entities
-    # Collect all parent-child relationships in both graphs
+    # Collect all parent-child relationships in both trees
     new_edges = set()
     old_edges = set()
     
-    for (source_id, target_id), edge in new_graph.edges.items():
+    for (source_id, target_id), edge in new_tree.edges.items():
         new_edges.add((source_id, target_id))
         
-    for (source_id, target_id), edge in old_graph.edges.items():
+    for (source_id, target_id), edge in old_tree.edges.items():
         old_edges.add((source_id, target_id))
     
-    # Find edges that exist in new graph but not in old graph
+    # Find edges that exist in new tree but not in old tree
     added_edges = new_edges - old_edges
-    # Find edges that exist in old graph but not in new graph
+    # Find edges that exist in old tree but not in new tree
     removed_edges = old_edges - new_edges
     
     # Identify moved entities - common entities with different connections
     for source_id, target_id in added_edges:
         # If target is a common entity but has a new connection
         if target_id in common_entities:
-            # Check if this entity has a different parent in the old graph
+            # Check if this entity has a different parent in the old tree
             old_parents = set()
             for old_source_id, old_target_id in old_edges:
                 if old_target_id == target_id:
@@ -946,7 +946,7 @@ def find_modified_entities(
                 moved_entities.add(target_id)
                 
                 # Mark the entire path for the moved entity for versioning
-                path = new_graph.get_ancestry_path(target_id)
+                path = new_tree.get_ancestry_path(target_id)
                 modified_entities.update(path)
     
     # Step 3: Check attribute changes for remaining common entities
@@ -956,7 +956,7 @@ def find_modified_entities(
     for entity_id in common_entities:
         if entity_id not in modified_entities and entity_id not in moved_entities:
             # Get path length as priority (longer paths = higher priority)
-            path_length = len(new_graph.get_ancestry_path(entity_id))
+            path_length = len(new_tree.get_ancestry_path(entity_id))
             remaining_entities.append((path_length, entity_id))
     
     # Sort by path length (descending) - process leaf nodes first
@@ -969,13 +969,13 @@ def find_modified_entities(
             continue
         
         # Get the entities to compare
-        new_entity = new_graph.get_entity(entity_id)
-        old_entity = old_graph.get_entity(entity_id)
+        new_entity = new_tree.get_entity(entity_id)
+        old_entity = old_tree.get_entity(entity_id)
         
         # Ensure both entities are not None before comparing
         if new_entity is None or old_entity is None:
             # If either entity is None, mark as changed
-            path = new_graph.get_ancestry_path(entity_id)
+            path = new_tree.get_ancestry_path(entity_id)
             modified_entities.update(path)
             continue
             
@@ -985,7 +985,7 @@ def find_modified_entities(
         
         if has_changes:
             # Mark the entire path as changed
-            path = new_graph.get_ancestry_path(entity_id)
+            path = new_tree.get_ancestry_path(entity_id)
             modified_entities.update(path)
             
             # If greedy, we can skip processing parents now
@@ -1008,14 +1008,14 @@ def find_modified_entities(
     return modified_entities
 
 def update_entity_versions(
-    graph: EntityGraph,
+    tree: EntityTree,
     entities_to_version: Set[UUID]
 ) -> None:
     """
     Update ecs_ids for entities that need new versions.
     
     Args:
-        graph: The entity graph
+        tree: The entity tree
         entities_to_version: Set of entity ecs_ids that need new versions
     """
     # This is just a stub for now
@@ -1023,24 +1023,24 @@ def update_entity_versions(
     pass
 
 
-def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = False) -> str:
+def generate_mermaid_diagram(tree: EntityTree, include_attributes: bool = False) -> str:
     """
-    Generate a Mermaid diagram from an EntityGraph.
+    Generate a Mermaid diagram from an EntityTree.
     
     Args:
-        graph: The entity graph to visualize
+        tree: The entity tree to visualize
         include_attributes: Whether to include entity attributes in the diagram
         
     Returns:
         A string containing the Mermaid diagram code
     """
-    if not graph.nodes:
-        return "```mermaid\ngraph TD\n  Empty[Empty Graph]\n```"
+    if not tree.nodes:
+        return "```mermaid\ntree TD\n  Empty[Empty Tree]\n```"
         
-    lines = ["```mermaid", "graph TD"]
+    lines = ["```mermaid", "tree TD"]
     
     # Entity nodes
-    for entity_id, entity in graph.nodes.items():
+    for entity_id, entity in tree.nodes.items():
         # Use a shortened version of ID for display
         short_id = str(entity_id)[-8:]
         
@@ -1064,13 +1064,13 @@ def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = Fals
         lines.append(f"  {entity_id}[\"{node_label}\"]")
     
     # Root node styling
-    lines.append(f"  {graph.root_ecs_id}:::rootNode")
+    lines.append(f"  {tree.root_ecs_id}:::rootNode")
     
     # Add edges
-    for edge_key, edge in graph.edges.items():
+    for edge_key, edge in tree.edges.items():
         source_id, target_id = edge_key
         
-        # All edges are hierarchical since we don't support circular graphs yet
+        # All edges are hierarchical since we don't support circular trees yet
         edge_style = "-->"
         
         # Add edge label based on field name and container info
@@ -1095,50 +1095,50 @@ def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = Fals
     return "\n".join(lines)
 
 class EntityRegistry():
-    """ A registry for graph entities, is mantains a versioned collection of all entities in the system
+    """ A registry for tree entities, is mantains a versioned collection of all entities in the system
     it mantains 
-    1) a graphregistry indexed by root_ecs_id UUID --> EntityGraph
+    1) a treeregistry indexed by root_ecs_id UUID --> EntityTree
     2) a lineage registry indexed by lineage_id UUID --> List[root_ecs_id UUID]
-    3) a live_id registry indexed by live_id UUID --> Entity [this is used to navigate from live python entity to their root entity when recosntructing a graph from a sub-entity]
+    3) a live_id registry indexed by live_id UUID --> Entity [this is used to navigate from live python entity to their root entity when recosntructing a tree from a sub-entity]
     4) a type_registry indexed by entity_type --> List[lineage_id UUID] which is used to get all entities of a given type
     """
-    graph_registry: Dict[UUID, EntityGraph] = Field(default_factory=dict)
+    tree_registry: Dict[UUID, EntityTree] = Field(default_factory=dict)
     lineage_registry: Dict[UUID, List[UUID]] = Field(default_factory=dict)
     live_id_registry: Dict[UUID, "Entity"] = Field(default_factory=dict)
     type_registry: Dict[Type["Entity"], List[UUID]] = Field(default_factory=dict)
     @classmethod
-    def register_entity_graph(cls, entity_graph: EntityGraph) -> None:
-        """ Register an entity graph in the registry when an entity graph is registered in the graph registry its
+    def register_entity_tree(cls, entity_tree: EntityTree) -> None:
+        """ Register an entity tree in the registry when an entity tree is registered in the tree registry its
         1) its root_ecs_id is added to the lineage_history
-        2) the entities in the graph are referenced by their live id in the live_id_registry 
-        3) the graph is added to the graph_registry with its root_ecs_id as key
+        2) the entities in the tree are referenced by their live id in the live_id_registry 
+        3) the tree is added to the tree_registry with its root_ecs_id as key
         """
-        if entity_graph.root_ecs_id in cls.graph_registry:
-            raise ValueError("entity graph already registered")
+        if entity_tree.root_ecs_id in cls.tree_registry:
+            raise ValueError("entity tree already registered")
         
-        cls.graph_registry[entity_graph.root_ecs_id] = entity_graph
-        for sub_entity in entity_graph.nodes.values():
+        cls.tree_registry[entity_tree.root_ecs_id] = entity_tree
+        for sub_entity in entity_tree.nodes.values():
             cls.live_id_registry[sub_entity.live_id] = sub_entity
-        if entity_graph.lineage_id not in cls.lineage_registry:
-            cls.lineage_registry[entity_graph.lineage_id] = [entity_graph.root_ecs_id]
+        if entity_tree.lineage_id not in cls.lineage_registry:
+            cls.lineage_registry[entity_tree.lineage_id] = [entity_tree.root_ecs_id]
         else:
-            cls.lineage_registry[entity_graph.lineage_id].append(entity_graph.root_ecs_id)
-        root_entity = entity_graph.get_entity(entity_graph.root_ecs_id)
+            cls.lineage_registry[entity_tree.lineage_id].append(entity_tree.root_ecs_id)
+        root_entity = entity_tree.get_entity(entity_tree.root_ecs_id)
         if root_entity is not None:
             if root_entity.__class__ not in cls.type_registry:
-                cls.type_registry[root_entity.__class__] = [entity_graph.lineage_id]
+                cls.type_registry[root_entity.__class__] = [entity_tree.lineage_id]
             else:
-                cls.type_registry[root_entity.__class__].append(entity_graph.lineage_id)
+                cls.type_registry[root_entity.__class__].append(entity_tree.lineage_id)
         else:
-            raise ValueError("root entity not found in entity graph")
+            raise ValueError("root entity not found in entity tree")
 
 
     @classmethod
     def register_entity(cls, entity: "Entity") -> None:
-        """ Register an entity in the registry when an entity is registered in the graph registry its
-         1) its graph is constructed and indexed by the root_ecs_id
-         2) the entiteis in the graph are referenced by their live id in the live_id_registry 
-         3) the graph is deepcopied and the deepcopy is added to graph_registy with its root_ecs_id as key
+        """ Register an entity in the registry when an entity is registered in the tree registry its
+         1) its tree is constructed and indexed by the root_ecs_id
+         2) the entiteis in the tree are referenced by their live id in the live_id_registry 
+         3) the tree is deepcopied and the deepcopy is added to tree_registy with its root_ecs_id as key
          3) the root_ecs_id is added to the lineage_history
           we can only register root entities for now """
         
@@ -1147,38 +1147,38 @@ class EntityRegistry():
         elif not entity.is_root_entity():
             raise ValueError("can only register root entities for now")
         
-        entity_graph = build_entity_graph(entity)
-        cls.register_entity_graph(entity_graph)
+        entity_tree = build_entity_tree(entity)
+        cls.register_entity_tree(entity_tree)
 
     @classmethod            
-    def get_stored_graph(cls, root_ecs_id: UUID) -> Optional[EntityGraph]:
-        """ Get the graph for a given root_ecs_id """
-        stored_graph= cls.graph_registry.get(root_ecs_id, None)
-        if stored_graph is None:
+    def get_stored_tree(cls, root_ecs_id: UUID) -> Optional[EntityTree]:
+        """ Get the tree for a given root_ecs_id """
+        stored_tree= cls.tree_registry.get(root_ecs_id, None)
+        if stored_tree is None:
             return None
         else:
-            new_graph = stored_graph.model_copy(deep=True)
-            new_graph.update_live_ids() #this are new python objects with new live ids
-            return new_graph
+            new_tree = stored_tree.model_copy(deep=True)
+            new_tree.update_live_ids() #this are new python objects with new live ids
+            return new_tree
             
     @classmethod
     def get_stored_entity(cls, root_ecs_id: UUID, ecs_id: UUID) -> Optional["Entity"]:
         """ Get the entity for a given root_ecs_id and ecs_id """
-        graph = cls.get_stored_graph(root_ecs_id)
-        if graph is None:
-            raise ValueError("graph not registered")
-        entity = graph.get_entity(ecs_id)
+        tree = cls.get_stored_tree(root_ecs_id)
+        if tree is None:
+            raise ValueError("tree not registered")
+        entity = tree.get_entity(ecs_id)
         if entity is None:
             return None
         else:
             return entity
         
     @classmethod
-    def get_stored_graph_from_entity(cls, entity: "Entity") -> Optional[EntityGraph]:
-        """ Get the graph for a given entity """
+    def get_stored_tree_from_entity(cls, entity: "Entity") -> Optional[EntityTree]:
+        """ Get the tree for a given entity """
         if not entity.root_ecs_id:
             raise ValueError("entity has no root_ecs_id")
-        return cls.get_stored_graph(entity.root_ecs_id)
+        return cls.get_stored_tree(entity.root_ecs_id)
         
     @classmethod
     def get_live_entity(cls, live_id: UUID) -> Optional["Entity"]:
@@ -1205,64 +1205,64 @@ class EntityRegistry():
     def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
         """ Core function to version an entity, currently working only for root entities, what this function does is:
         1) check if function is registered , if not delegate to reigister()
-        2) get the stored graph snapshot for the entity 
-        3) compute the new graph 
-        4) compute the diff between the two graphs if no diff return False
-        5) update the ecs_id for all changed entities in the graph, update their root_ecs_id, 
-        6) register the new graph in the graph_registry under the new root_ecs_id key mantaining the lineage intact"""
+        2) get the stored tree snapshot for the entity 
+        3) compute the new tree 
+        4) compute the diff between the two trees if no diff return False
+        5) update the ecs_id for all changed entities in the tree, update their root_ecs_id, 
+        6) register the new tree in the tree_registry under the new root_ecs_id key mantaining the lineage intact"""
         """ Version an entity """
         if not entity.root_ecs_id:
             raise ValueError("entity has no root_ecs_id for versioning we only support versioning of root entities for now")
         
-        old_graph = cls.get_stored_graph(entity.root_ecs_id)
-        if old_graph is None:
+        old_tree = cls.get_stored_tree(entity.root_ecs_id)
+        if old_tree is None:
             cls.register_entity(entity)
             return True
         else:
-            new_graph = build_entity_graph(entity)
+            new_tree = build_entity_tree(entity)
             if force_versioning:
-                modified_entities = new_graph.nodes.keys()
+                modified_entities = new_tree.nodes.keys()
             else:
-                modified_entities = list(find_modified_entities(new_graph=new_graph, old_graph=old_graph))
+                modified_entities = list(find_modified_entities(new_tree=new_tree, old_tree=old_tree))
         
             typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
             
             if len(typed_entities) > 0:
-                if new_graph.root_ecs_id not in typed_entities:
+                if new_tree.root_ecs_id not in typed_entities:
                     raise ValueError("if any entity is modified the root entity must be modified something went wrong")
                 # first we fork the root entity
                 # forking the root entity will create a new root_ecs_id then we fork all the modified entities with the new root_ecs_id as input
-                current_root_ecs_id = new_graph.root_ecs_id
-                root_entity = new_graph.get_entity(current_root_ecs_id)
+                current_root_ecs_id = new_tree.root_ecs_id
+                root_entity = new_tree.get_entity(current_root_ecs_id)
                 if root_entity is None:
-                    raise ValueError("root entity not found in new graph, something went very wrong")
+                    raise ValueError("root entity not found in new tree, something went very wrong")
                 root_entity.update_ecs_ids()
                 new_root_ecs_id = root_entity.ecs_id
                 root_entity_live_id = root_entity.live_id
                 assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
                 
                 # Update the nodes dictionary to use the new root entity ID
-                new_graph.nodes.pop(current_root_ecs_id)
-                new_graph.nodes[new_root_ecs_id] = root_entity
+                new_tree.nodes.pop(current_root_ecs_id)
+                new_tree.nodes[new_root_ecs_id] = root_entity
                 
                 # now we fork all the modified entities with the new root_ecs_id as input
                 #remove the old root_ecs_id from the typed_entities
                 typed_entities.remove(current_root_ecs_id)
                 for modified_entity_id in typed_entities:
-                    modified_entity = new_graph.get_entity(modified_entity_id)
+                    modified_entity = new_tree.get_entity(modified_entity_id)
                     if modified_entity is not None:
-                        #here we could have some modified entitiyes being entities that have been removed from the graph so we get nones
+                        #here we could have some modified entitiyes being entities that have been removed from the tree so we get nones
                         modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
                     else:
-                        #later here we will handle the case where the entity has been moved to a different graph or prompoted to it's own graph
-                        print(f"modified entity {modified_entity_id} not found in new graph, something went wrong")
+                        #later here we will handle the case where the entity has been moved to a different tree or prompoted to it's own tree
+                        print(f"modified entity {modified_entity_id} not found in new tree, something went wrong")
                 
-                # Update the graph's root_ecs_id and lineage_id to match the updated root entity
-                # This is critical to avoid the "entity graph already registered" error
-                new_graph.root_ecs_id = new_root_ecs_id
-                new_graph.lineage_id = root_entity.lineage_id
+                # Update the tree's root_ecs_id and lineage_id to match the updated root entity
+                # This is critical to avoid the "entity tree already registered" error
+                new_tree.root_ecs_id = new_root_ecs_id
+                new_tree.lineage_id = root_entity.lineage_id
                 
-                cls.register_entity_graph(new_graph)
+                cls.register_entity_tree(new_tree)
             return True            
 
 
@@ -1279,8 +1279,8 @@ class Entity(BaseModel):
     lineage_id: UUID = Field(default_factory=uuid4)
     old_ids: List[UUID] = Field(default_factory=list)
     old_ecs_id: Optional[UUID] = Field(default=None, description="Last ecs_id before forking")  # Added this field
-    root_ecs_id: Optional[UUID] = Field(default=None, description="The ecs_id of the root entity of this entity's graph")
-    root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's graph")
+    root_ecs_id: Optional[UUID] = Field(default=None, description="The ecs_id of the root entity of this entity's tree")
+    root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's tree")
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
     untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
     attribute_source: Dict[str, Union[Optional[UUID], List[Optional[UUID]],List[None], Dict[str, Optional[UUID]]]] = Field(
@@ -1390,7 +1390,7 @@ class Entity(BaseModel):
     
     def is_root_entity(self) -> bool:
         """
-        Check if the entity is the root of its graph.
+        Check if the entity is the root of its tree.
         """
         return self.root_ecs_id == self.ecs_id
     
@@ -1428,7 +1428,7 @@ class Entity(BaseModel):
     
     def get_live_root_entity(self) -> Optional["Entity"]: 
         """
-        This method will use the registry to get the live python object of the root entity of the graph
+        This method will use the registry to get the live python object of the root entity of the tree
         """
         if self.is_root_entity():
             return self
@@ -1439,7 +1439,7 @@ class Entity(BaseModel):
     
     def get_stored_root_entity(self) -> Optional["Entity"]: 
         """
-        This method will use the registry to get the stored reference of the root entity of the graph
+        This method will use the registry to get the stored reference of the root entity of the tree
         """
         if self.is_root_entity():
             return self
@@ -1458,28 +1458,28 @@ class Entity(BaseModel):
         else:
             return EntityRegistry.get_stored_entity(self.root_ecs_id,self.ecs_id)
 
-    def get_graph(self, recompute: bool = False) -> Optional[EntityGraph]: 
+    def get_tree(self, recompute: bool = False) -> Optional[EntityTree]: 
         """
-        This method will use the registry to get the whole graph of the entity if 
-        recompute is True it will recompute the graph from the live root entity, this is different then versioning
-        otherwise it will return the cached graph based on the ecs_id of the root entity
+        This method will use the registry to get the whole tree of the entity if 
+        recompute is True it will recompute the tree from the live root entity, this is different then versioning
+        otherwise it will return the cached tree based on the ecs_id of the root entity
         """
         if recompute and self.is_root_entity():
-            return build_entity_graph(self)
+            return build_entity_tree(self)
         elif recompute and not self.is_root_entity() and self.root_live_id is not None:
             live_root_entity = self.get_live_root_entity()
             if live_root_entity is None:
                 raise ValueError("live root entity not found")
-            return build_entity_graph(live_root_entity)
+            return build_entity_tree(live_root_entity)
         elif self.root_ecs_id is not None:
-            return EntityRegistry.get_stored_graph(self.root_ecs_id)
+            return EntityRegistry.get_stored_tree(self.root_ecs_id)
         else:
             return None
   
 
     def promote_to_root(self) -> None:
         """
-        Promote the entity to the root of its graph
+        Promote the entity to the root of its tree
         """
         self.root_ecs_id = self.ecs_id
         self.root_live_id = self.live_id
@@ -1492,9 +1492,9 @@ class Entity(BaseModel):
         the scenarios are that 
         1) entity is already a root entity and nothing has to be done, trigger versioning
         2) the entity is currently already has root_ecs_id and root_live_id  set to None--> promote to root and register 
-        3) the graph does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
-        3) the entity has root_ecs_id and root_live_id but is not present in the graph --> physically is detached from the graph, we only need to update the ecs_id and register
-        4) the entity has root_ecs_id and root_live_id and is present in the graph --> do nothing python has to physically remove the entity from the parent object
+        3) the tree does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+        3) the entity has root_ecs_id and root_live_id but is not present in the tree --> physically is detached from the tree, we only need to update the ecs_id and register
+        4) the entity has root_ecs_id and root_live_id and is present in the tree --> do nothing python has to physically remove the entity from the parent object
         We leave out the case where the entity is a sub entity of a new root entity which is not the root_entity of the current entity. In that case the attach method should be used instead. 
         """
         if self.is_root_entity():
@@ -1504,19 +1504,19 @@ class Entity(BaseModel):
             #case 2 the entity is not attached to anything and we can just update the ecs_id and register
             self.promote_to_root()
         else:
-            graph = self.get_graph(recompute=True)
+            tree = self.get_tree(recompute=True)
             
-            if graph is None:
-                #case 3 the graph does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+            if tree is None:
+                #case 3 the tree does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
                 self.promote_to_root()
             else:
-                graph_root_entity = graph.get_entity(self.root_ecs_id)
-                if self.ecs_id not in graph.nodes:
-                    #case 4 the entity is not present in the graph and we can just update the ecs_id and register
+                tree_root_entity = tree.get_entity(self.root_ecs_id)
+                if self.ecs_id not in tree.nodes:
+                    #case 4 the entity is not present in the tree and we can just update the ecs_id and register
                     self.promote_to_root()
-                if graph_root_entity is not None:
-                    #we version teh graph root entity to ensure that its' lates version is stored
-                    EntityRegistry.version_entity(graph_root_entity) 
+                if tree_root_entity is not None:
+                    #we version teh tree root entity to ensure that its' lates version is stored
+                    EntityRegistry.version_entity(tree_root_entity) 
   
         #thi
         
@@ -1530,12 +1530,12 @@ class Entity(BaseModel):
         3) if it is a container we need plan forr adding to the container
         4) if it is an entity we need to check if there already is an entity in the field we are moving to and detach if detach_target is True
         5) if copy is True we need to version self root entity and get the copy to attach from this versioned entity from the storage
-        6) if copy is False we ned to pop the entity from its parent in the graph (or from the container)
+        6) if copy is False we ned to pop the entity from its parent in the tree (or from the container)
         6) we detach our working object (self or the copy) and set the new entity to the field and update its source to the new entity
         7) if copy is False we version the old root entity and the new entity otherwise only the new entity
         """
 
-    def borrow_attribute(self, new_entity: "Entity", target_field: str, self_field: str) -> None:
+    def borrow_attribute_from(self, new_entity: "Entity", target_field: str, self_field: str) -> None:
         """
         just a stub for now
         This method will borrow the attribute from the new entity and set it to the self field and update the attribute_source to reflect the new entity
@@ -1558,10 +1558,10 @@ class Entity(BaseModel):
         else:
             live_root_entity = new_root_entity
 
-        graph = live_root_entity.get_graph(recompute=True)
-        assert graph is not None
-        if self.ecs_id not in graph.nodes:
-            raise ValueError("Cannot attach an entity that is not in the graph")
+        tree = live_root_entity.get_tree(recompute=True)
+        assert tree is not None
+        if self.ecs_id not in tree.nodes:
+            raise ValueError("Cannot attach an entity that is not in the tree")
         
         if self.root_ecs_id == live_root_entity.ecs_id and self.root_live_id == live_root_entity.live_id and self.lineage_id == live_root_entity.lineage_id:
             #only versioning is needed

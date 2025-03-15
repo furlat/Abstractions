@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 from abstractions.ecs.entity import (
     Entity, 
     EntityRegistry,
-    build_entity_graph
+    build_entity_tree
 )
 
 class TestParentEntity(Entity):
@@ -25,7 +25,7 @@ class TestEntityAttachDetach(unittest.TestCase):
     def setUp(self):
         """Reset the EntityRegistry before each test"""
         # Clear the registry between tests
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -107,10 +107,10 @@ class TestEntityAttachDetach(unittest.TestCase):
         parent2.child = child
         
         # STEP 4: Update the metadata manually
-        # First register the updated graph
-        new_graph = build_entity_graph(parent2)
+        # First register the updated tree
+        new_tree = build_entity_tree(parent2)
         try:
-            EntityRegistry.register_entity_graph(new_graph)
+            EntityRegistry.register_entity_tree(new_tree)
         except ValueError as e:
             if "already registered" not in str(e):
                 raise
@@ -153,7 +153,7 @@ class TestEntityAttachDetach(unittest.TestCase):
             child.attach(parent)
         self.assertIn("can only attach", str(context.exception).lower())
         
-        # Test 2: Can't attach to something without being physically in its graph
+        # Test 2: Can't attach to something without being physically in its tree
         root_entity = Entity()
         root_entity.root_ecs_id = root_entity.ecs_id
         root_entity.root_live_id = root_entity.live_id
@@ -161,7 +161,7 @@ class TestEntityAttachDetach(unittest.TestCase):
         
         with self.assertRaises(ValueError) as context:
             root_entity.attach(parent)
-        self.assertIn("not in the graph", str(context.exception).lower())
+        self.assertIn("not in the tree", str(context.exception).lower())
 
     def test_moving_entity_preserves_fields(self):
         """Test that entity field values are preserved during movement"""
@@ -206,9 +206,9 @@ class TestEntityAttachDetach(unittest.TestCase):
         
         # Attach to parent2
         parent2.child = child
-        new_graph = build_entity_graph(parent2)
+        new_tree = build_entity_tree(parent2)
         try:
-            EntityRegistry.register_entity_graph(new_graph)
+            EntityRegistry.register_entity_tree(new_tree)
         except ValueError as e:
             if "already registered" not in str(e):
                 raise

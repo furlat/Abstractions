@@ -1,5 +1,5 @@
 """
-Tests for ancestry path construction in entity graphs.
+Tests for ancestry path construction in entity trees.
 """
 import unittest
 from uuid import UUID
@@ -9,8 +9,8 @@ from pydantic import Field
 
 from abstractions.ecs.entity import (
     Entity, 
-    EntityGraph, 
-    build_entity_graph,
+    EntityTree, 
+    build_entity_tree,
     get_field_ownership
 )
 
@@ -97,7 +97,7 @@ class MultiPathEntity(Entity):
 
 
 class TestAncestryPaths(unittest.TestCase):
-    """Test the ancestry path construction in entity graphs."""
+    """Test the ancestry path construction in entity trees."""
 
     def test_simple_entity_path(self):
         """Test ancestry path for a simple entity."""
@@ -105,11 +105,11 @@ class TestAncestryPaths(unittest.TestCase):
         entity.root_ecs_id = entity.ecs_id
         entity.root_live_id = entity.live_id
         
-        graph = build_entity_graph(entity)
+        tree = build_entity_tree(entity)
         
         # Only the root should have a path to itself
-        self.assertEqual(len(graph.ancestry_paths), 1)
-        self.assertEqual(graph.ancestry_paths[entity.ecs_id], [entity.ecs_id])
+        self.assertEqual(len(tree.ancestry_paths), 1)
+        self.assertEqual(tree.ancestry_paths[entity.ecs_id], [entity.ecs_id])
 
     def test_parent_child_path(self):
         """Test ancestry paths for parent-child relationship."""
@@ -120,15 +120,15 @@ class TestAncestryPaths(unittest.TestCase):
         # Child entity is automatically created by default_factory
         child = parent.child
         
-        graph = build_entity_graph(parent)
+        tree = build_entity_tree(parent)
         
         # Check paths
-        self.assertEqual(len(graph.ancestry_paths), 2)
-        self.assertEqual(graph.ancestry_paths[parent.ecs_id], [parent.ecs_id])
-        self.assertEqual(graph.ancestry_paths[child.ecs_id], [parent.ecs_id, child.ecs_id])
+        self.assertEqual(len(tree.ancestry_paths), 2)
+        self.assertEqual(tree.ancestry_paths[parent.ecs_id], [parent.ecs_id])
+        self.assertEqual(tree.ancestry_paths[child.ecs_id], [parent.ecs_id, child.ecs_id])
         
         # Check hierarchy
-        self.assertTrue(graph.is_hierarchical_edge(parent.ecs_id, child.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(parent.ecs_id, child.ecs_id))
 
     def test_owned_vs_referenced_paths(self):
         """Test ancestry paths with both owned and referenced entities."""
@@ -139,21 +139,21 @@ class TestAncestryPaths(unittest.TestCase):
         owned = parent.owned_child
         referenced = parent.referenced_child
         
-        graph = build_entity_graph(parent)
+        tree = build_entity_tree(parent)
         
         # Check paths
-        self.assertEqual(len(graph.ancestry_paths), 3)
+        self.assertEqual(len(tree.ancestry_paths), 3)
         
         # Owned child should have a path through parent
-        self.assertEqual(graph.ancestry_paths[owned.ecs_id], [parent.ecs_id, owned.ecs_id])
+        self.assertEqual(tree.ancestry_paths[owned.ecs_id], [parent.ecs_id, owned.ecs_id])
         
         # Referenced child should also have a path through parent
         # (We're now treating all edges as hierarchical until we implement circular reference handling)
-        self.assertEqual(graph.ancestry_paths[referenced.ecs_id], [parent.ecs_id, referenced.ecs_id])
+        self.assertEqual(tree.ancestry_paths[referenced.ecs_id], [parent.ecs_id, referenced.ecs_id])
         
         # Check edge types - both are hierarchical for now
-        self.assertTrue(graph.is_hierarchical_edge(parent.ecs_id, owned.ecs_id))
-        self.assertTrue(graph.is_hierarchical_edge(parent.ecs_id, referenced.ecs_id))  # Now all edges are hierarchical
+        self.assertTrue(tree.is_hierarchical_edge(parent.ecs_id, owned.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(parent.ecs_id, referenced.ecs_id))  # Now all edges are hierarchical
 
     def test_deep_nesting_paths(self):
         """Test ancestry paths with deeply nested entities."""
@@ -175,12 +175,12 @@ class TestAncestryPaths(unittest.TestCase):
             current = current.child
             path_entities.append(current)
         
-        # Build the graph
-        graph = build_entity_graph(root)
+        # Build the tree
+        tree = build_entity_tree(root)
         
         # Print nodes to understand what's being created
-        print("\nNodes in graph:")
-        for node_id, node in graph.nodes.items():
+        print("\nNodes in tree:")
+        for node_id, node in tree.nodes.items():
             print(f"Node {node_id}: {node.__class__.__name__}")
         
         # We're actually getting 7 nodes because:
@@ -189,33 +189,33 @@ class TestAncestryPaths(unittest.TestCase):
         # 3-6. Four more ParentEntity instances for levels 2-5
         # 7. The default Entity created by default_factory for the last level's child
         expected_nodes = 1 + depth + 1  # Root + levels + last level's default child
-        self.assertEqual(len(graph.nodes), expected_nodes, 
-                         f"Expected {expected_nodes} nodes, got {len(graph.nodes)}")
+        self.assertEqual(len(tree.nodes), expected_nodes, 
+                         f"Expected {expected_nodes} nodes, got {len(tree.nodes)}")
         
-        # Verify all path entities are in the graph
+        # Verify all path entities are in the tree
         for entity in path_entities:
-            self.assertIn(entity.ecs_id, graph.nodes, 
-                          f"Entity {entity.ecs_id} missing from graph")
+            self.assertIn(entity.ecs_id, tree.nodes, 
+                          f"Entity {entity.ecs_id} missing from tree")
         
         # Construct the expected ancestry path as we traced it
         expected_path = [entity.ecs_id for entity in path_entities]
         
         # Check the ancestry path of the deepest entity
         deepest_id = path_entities[-1].ecs_id
-        self.assertEqual(graph.ancestry_paths[deepest_id], expected_path,
+        self.assertEqual(tree.ancestry_paths[deepest_id], expected_path,
                          "Ancestry path doesn't match expected path")
         
         # Each entity should have a hierarchical edge to its child
         for i in range(len(path_entities) - 1):
             parent = path_entities[i]
             child = path_entities[i + 1]
-            self.assertTrue(graph.is_hierarchical_edge(parent.ecs_id, child.ecs_id),
+            self.assertTrue(tree.is_hierarchical_edge(parent.ecs_id, child.ecs_id),
                            f"Edge from {parent.ecs_id} to {child.ecs_id} should be hierarchical")
         
         # The max depth will be one more than our expected path length 
         # because of the default child entity of the last level
         expected_max_depth = len(expected_path) + 1
-        self.assertEqual(graph.max_depth, expected_max_depth)
+        self.assertEqual(tree.max_depth, expected_max_depth)
 
     def test_multiple_paths_without_cycles(self):
         """Test ancestry paths with multiple paths to separate entities."""
@@ -245,29 +245,29 @@ class TestAncestryPaths(unittest.TestCase):
         leaf1 = branch1.child
         leaf2 = branch2.child
         
-        # Build the graph
-        graph = build_entity_graph(root)
+        # Build the tree
+        tree = build_entity_tree(root)
         
         # We should have 5 entities: root, 2 branches, 2 leaves
         expected_nodes = 5
-        self.assertEqual(len(graph.nodes), expected_nodes, 
-                         f"Expected {expected_nodes} nodes, got {len(graph.nodes)}")
+        self.assertEqual(len(tree.nodes), expected_nodes, 
+                         f"Expected {expected_nodes} nodes, got {len(tree.nodes)}")
         
         # Check paths for each leaf
-        self.assertEqual(graph.ancestry_paths[leaf1.ecs_id], [root.ecs_id, branch1.ecs_id, leaf1.ecs_id])
-        self.assertEqual(graph.ancestry_paths[leaf2.ecs_id], [root.ecs_id, branch2.ecs_id, leaf2.ecs_id])
+        self.assertEqual(tree.ancestry_paths[leaf1.ecs_id], [root.ecs_id, branch1.ecs_id, leaf1.ecs_id])
+        self.assertEqual(tree.ancestry_paths[leaf2.ecs_id], [root.ecs_id, branch2.ecs_id, leaf2.ecs_id])
         
         # Check paths for branches
-        self.assertEqual(graph.ancestry_paths[branch1.ecs_id], [root.ecs_id, branch1.ecs_id])
-        self.assertEqual(graph.ancestry_paths[branch2.ecs_id], [root.ecs_id, branch2.ecs_id])
+        self.assertEqual(tree.ancestry_paths[branch1.ecs_id], [root.ecs_id, branch1.ecs_id])
+        self.assertEqual(tree.ancestry_paths[branch2.ecs_id], [root.ecs_id, branch2.ecs_id])
         
         # Both branches should have hierarchical edges to their leaves
-        self.assertTrue(graph.is_hierarchical_edge(branch1.ecs_id, leaf1.ecs_id))
-        self.assertTrue(graph.is_hierarchical_edge(branch2.ecs_id, leaf2.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(branch1.ecs_id, leaf1.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(branch2.ecs_id, leaf2.ecs_id))
         
         # Root should have hierarchical edges to both branches
-        self.assertTrue(graph.is_hierarchical_edge(root.ecs_id, branch1.ecs_id))
-        self.assertTrue(graph.is_hierarchical_edge(root.ecs_id, branch2.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(root.ecs_id, branch1.ecs_id))
+        self.assertTrue(tree.is_hierarchical_edge(root.ecs_id, branch2.ecs_id))
 
 
 if __name__ == '__main__':

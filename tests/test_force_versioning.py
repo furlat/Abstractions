@@ -11,7 +11,7 @@ class TestForceVersioning(unittest.TestCase):
     
     def setUp(self):
         """Reset the registry before each test"""
-        EntityRegistry.graph_registry = {}
+        EntityRegistry.tree_registry = {}
         EntityRegistry.lineage_registry = {}
         EntityRegistry.live_id_registry = {}
         EntityRegistry.type_registry = {}
@@ -39,7 +39,7 @@ class TestForceVersioning(unittest.TestCase):
         print(f"\nBefore force_versioning:")
         print(f"entity.ecs_id: {entity.ecs_id}")
         print(f"entity.root_ecs_id: {entity.root_ecs_id}")
-        print(f"entity in registry: {entity.ecs_id in EntityRegistry.graph_registry}")
+        print(f"entity in registry: {entity.ecs_id in EntityRegistry.tree_registry}")
         
         # Use a try-except to catch and examine the error
         try:
@@ -49,19 +49,19 @@ class TestForceVersioning(unittest.TestCase):
             print(f"\nAfter force_versioning (success):")
             print(f"entity.ecs_id: {entity.ecs_id}")
             print(f"entity.root_ecs_id: {entity.root_ecs_id}")
-            print(f"entity in registry: {entity.ecs_id in EntityRegistry.graph_registry}")
+            print(f"entity in registry: {entity.ecs_id in EntityRegistry.tree_registry}")
             
             # The ID should have changed now
             self.assertNotEqual(entity.ecs_id, second_ecs_id)
             
             # Check that the entity is properly registered with the new ID
-            self.assertIn(entity.ecs_id, EntityRegistry.graph_registry)
+            self.assertIn(entity.ecs_id, EntityRegistry.tree_registry)
         except Exception as e:
             # Print detailed debug info if there's an error
             print(f"\nError during force_versioning: {str(e)}")
             print(f"entity.ecs_id: {entity.ecs_id}")
             print(f"entity.root_ecs_id: {entity.root_ecs_id}")
-            print(f"Keys in graph_registry: {list(EntityRegistry.graph_registry.keys())}")
+            print(f"Keys in tree_registry: {list(EntityRegistry.tree_registry.keys())}")
             
             # Re-raise the exception to make the test fail as before
             raise

@@ -1,11 +1,11 @@
 """
-Tests for the basic building blocks of the entity graph system.
-Tests EntityEdge and basic EntityGraph functionality.
+Tests for the basic building blocks of the entity tree system.
+Tests EntityEdge and basic EntityTree functionality.
 """
 import unittest
 from uuid import UUID, uuid4
 
-from abstractions.ecs.entity import EntityEdge, EdgeType, EntityGraph, Entity
+from abstractions.ecs.entity import EntityEdge, EdgeType, EntityTree, Entity
 
 
 class TestEntityEdge(unittest.TestCase):
@@ -98,74 +98,74 @@ class TestEntityEdge(unittest.TestCase):
         self.assertIn(edge3, edge_set)
 
 
-class TestEntityGraphBasics(unittest.TestCase):
-    """Test the basic EntityGraph functionality."""
+class TestEntityTreeBasics(unittest.TestCase):
+    """Test the basic EntityTree functionality."""
 
     def setUp(self):
         """Set up test data."""
         self.root_ecs_id = uuid4()
         self.lineage_id = uuid4()
-        self.graph = EntityGraph(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
+        self.tree = EntityTree(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
         
         # Create some test entities
         self.entity1 = Entity()
         self.entity2 = Entity()
         self.entity3 = Entity()
 
-    def test_graph_initialization(self):
-        """Test EntityGraph initialization."""
-        self.assertEqual(self.graph.root_ecs_id, self.root_ecs_id)
-        self.assertEqual(self.graph.lineage_id, self.lineage_id)
+    def test_tree_initialization(self):
+        """Test EntityTree initialization."""
+        self.assertEqual(self.tree.root_ecs_id, self.root_ecs_id)
+        self.assertEqual(self.tree.lineage_id, self.lineage_id)
         
         # Collections should be empty
-        self.assertEqual(len(self.graph.nodes), 0)
-        self.assertEqual(len(self.graph.edges), 0)
-        self.assertEqual(len(self.graph.outgoing_edges), 0)
-        self.assertEqual(len(self.graph.incoming_edges), 0)
-        self.assertEqual(len(self.graph.ancestry_paths), 0)
-        self.assertEqual(len(self.graph.live_id_to_ecs_id), 0)
+        self.assertEqual(len(self.tree.nodes), 0)
+        self.assertEqual(len(self.tree.edges), 0)
+        self.assertEqual(len(self.tree.outgoing_edges), 0)
+        self.assertEqual(len(self.tree.incoming_edges), 0)
+        self.assertEqual(len(self.tree.ancestry_paths), 0)
+        self.assertEqual(len(self.tree.live_id_to_ecs_id), 0)
         
         # Counters should be zero
-        self.assertEqual(self.graph.node_count, 0)
-        self.assertEqual(self.graph.edge_count, 0)
-        self.assertEqual(self.graph.max_depth, 0)
+        self.assertEqual(self.tree.node_count, 0)
+        self.assertEqual(self.tree.edge_count, 0)
+        self.assertEqual(self.tree.max_depth, 0)
 
     def test_add_entity(self):
-        """Test adding entities to the graph."""
+        """Test adding entities to the tree."""
         # Add an entity
-        self.graph.add_entity(self.entity1)
+        self.tree.add_entity(self.entity1)
         
         # Check that entity was added
-        self.assertEqual(self.graph.node_count, 1)
-        self.assertIn(self.entity1.ecs_id, self.graph.nodes)
-        self.assertEqual(self.graph.nodes[self.entity1.ecs_id], self.entity1)
+        self.assertEqual(self.tree.node_count, 1)
+        self.assertIn(self.entity1.ecs_id, self.tree.nodes)
+        self.assertEqual(self.tree.nodes[self.entity1.ecs_id], self.entity1)
         
         # Check live_id mapping
-        self.assertIn(self.entity1.live_id, self.graph.live_id_to_ecs_id)
-        self.assertEqual(self.graph.live_id_to_ecs_id[self.entity1.live_id], self.entity1.ecs_id)
+        self.assertIn(self.entity1.live_id, self.tree.live_id_to_ecs_id)
+        self.assertEqual(self.tree.live_id_to_ecs_id[self.entity1.live_id], self.entity1.ecs_id)
         
         # Add more entities
-        self.graph.add_entity(self.entity2)
-        self.graph.add_entity(self.entity3)
+        self.tree.add_entity(self.entity2)
+        self.tree.add_entity(self.entity3)
         
         # Check counts
-        self.assertEqual(self.graph.node_count, 3)
-        self.assertEqual(len(self.graph.nodes), 3)
-        self.assertEqual(len(self.graph.live_id_to_ecs_id), 3)
+        self.assertEqual(self.tree.node_count, 3)
+        self.assertEqual(len(self.tree.nodes), 3)
+        self.assertEqual(len(self.tree.live_id_to_ecs_id), 3)
         
         # Check entity retrieval
-        self.assertEqual(self.graph.get_entity(self.entity2.ecs_id), self.entity2)
-        self.assertEqual(self.graph.get_entity_by_live_id(self.entity3.live_id), self.entity3)
+        self.assertEqual(self.tree.get_entity(self.entity2.ecs_id), self.entity2)
+        self.assertEqual(self.tree.get_entity_by_live_id(self.entity3.live_id), self.entity3)
         
         # Add duplicate entity (should not increase count)
-        self.graph.add_entity(self.entity1)
-        self.assertEqual(self.graph.node_count, 3)
+        self.tree.add_entity(self.entity1)
+        self.assertEqual(self.tree.node_count, 3)
 
     def test_add_edge(self):
-        """Test adding edges to the graph."""
+        """Test adding edges to the tree."""
         # Add entities first
-        self.graph.add_entity(self.entity1)
-        self.graph.add_entity(self.entity2)
+        self.tree.add_entity(self.entity1)
+        self.tree.add_entity(self.entity2)
         
         # Create an edge
         edge = EntityEdge(
@@ -176,103 +176,103 @@ class TestEntityGraphBasics(unittest.TestCase):
         )
         
         # Add the edge
-        self.graph.add_edge(edge)
+        self.tree.add_edge(edge)
         
         # Check that edge was added
-        self.assertEqual(self.graph.edge_count, 1)
+        self.assertEqual(self.tree.edge_count, 1)
         edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
-        self.assertEqual(self.graph.edges[edge_key], edge)
+        self.assertIn(edge_key, self.tree.edges)
+        self.assertEqual(self.tree.edges[edge_key], edge)
         
         # Check outgoing/incoming edge mappings
-        self.assertIn(self.entity2.ecs_id, self.graph.outgoing_edges[self.entity1.ecs_id])
-        self.assertIn(self.entity1.ecs_id, self.graph.incoming_edges[self.entity2.ecs_id])
+        self.assertIn(self.entity2.ecs_id, self.tree.outgoing_edges[self.entity1.ecs_id])
+        self.assertIn(self.entity1.ecs_id, self.tree.incoming_edges[self.entity2.ecs_id])
         
         # Add duplicate edge (should not increase count)
-        self.graph.add_edge(edge)
-        self.assertEqual(self.graph.edge_count, 1)
+        self.tree.add_edge(edge)
+        self.assertEqual(self.tree.edge_count, 1)
         
         # Add edge between different entities
-        self.graph.add_entity(self.entity3)
+        self.tree.add_entity(self.entity3)
         edge2 = EntityEdge(
             source_id=self.entity2.ecs_id,
             target_id=self.entity3.ecs_id,
             edge_type=EdgeType.DIRECT,
             field_name="another_field"
         )
-        self.graph.add_edge(edge2)
+        self.tree.add_edge(edge2)
         
         # Check counts and relationships
-        self.assertEqual(self.graph.edge_count, 2)
-        self.assertEqual(len(self.graph.edges), 2)
-        self.assertEqual(len(self.graph.outgoing_edges[self.entity2.ecs_id]), 1)
-        self.assertEqual(len(self.graph.incoming_edges[self.entity3.ecs_id]), 1)
+        self.assertEqual(self.tree.edge_count, 2)
+        self.assertEqual(len(self.tree.edges), 2)
+        self.assertEqual(len(self.tree.outgoing_edges[self.entity2.ecs_id]), 1)
+        self.assertEqual(len(self.tree.incoming_edges[self.entity3.ecs_id]), 1)
 
     def test_edge_type_methods(self):
         """Test methods for adding specific edge types."""
         # Add entities
-        self.graph.add_entity(self.entity1)
-        self.graph.add_entity(self.entity2)
+        self.tree.add_entity(self.entity1)
+        self.tree.add_entity(self.entity2)
         
         # Add direct edge
-        self.graph.add_direct_edge(self.entity1, self.entity2, "direct_field")
+        self.tree.add_direct_edge(self.entity1, self.entity2, "direct_field")
         
         # Check edge was added with correct type
         edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        self.assertIn(edge_key, self.graph.edges)
-        edge = self.graph.edges[edge_key]
+        self.assertIn(edge_key, self.tree.edges)
+        edge = self.tree.edges[edge_key]
         self.assertEqual(edge.edge_type, EdgeType.DIRECT)
         self.assertEqual(edge.field_name, "direct_field")
         
-        # Create a new graph for each edge type
-        list_graph = EntityGraph(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
-        list_graph.add_entity(self.entity1)
-        list_graph.add_entity(self.entity2)
+        # Create a new tree for each edge type
+        list_tree = EntityTree(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
+        list_tree.add_entity(self.entity1)
+        list_tree.add_entity(self.entity2)
         
         # Add list edge
-        list_graph.add_list_edge(self.entity1, self.entity2, "list_field", 3)
+        list_tree.add_list_edge(self.entity1, self.entity2, "list_field", 3)
         
         # Check list edge
         list_edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        list_edge = list_graph.edges[list_edge_key]
+        list_edge = list_tree.edges[list_edge_key]
         self.assertEqual(list_edge.edge_type, EdgeType.LIST)
         self.assertEqual(list_edge.field_name, "list_field")
         self.assertEqual(list_edge.container_index, 3)
         
         # Test dict edge
-        dict_graph = EntityGraph(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
-        dict_graph.add_entity(self.entity1)
-        dict_graph.add_entity(self.entity2)
+        dict_tree = EntityTree(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
+        dict_tree.add_entity(self.entity1)
+        dict_tree.add_entity(self.entity2)
         
-        dict_graph.add_dict_edge(self.entity1, self.entity2, "dict_field", "key1")
+        dict_tree.add_dict_edge(self.entity1, self.entity2, "dict_field", "key1")
         
         dict_edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        dict_edge = dict_graph.edges[dict_edge_key]
+        dict_edge = dict_tree.edges[dict_edge_key]
         self.assertEqual(dict_edge.edge_type, EdgeType.DICT)
         self.assertEqual(dict_edge.field_name, "dict_field")
         self.assertEqual(dict_edge.container_key, "key1")
         
         # Test set edge
-        set_graph = EntityGraph(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
-        set_graph.add_entity(self.entity1)
-        set_graph.add_entity(self.entity2)
+        set_tree = EntityTree(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
+        set_tree.add_entity(self.entity1)
+        set_tree.add_entity(self.entity2)
         
-        set_graph.add_set_edge(self.entity1, self.entity2, "set_field")
+        set_tree.add_set_edge(self.entity1, self.entity2, "set_field")
         
         set_edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        set_edge = set_graph.edges[set_edge_key]
+        set_edge = set_tree.edges[set_edge_key]
         self.assertEqual(set_edge.edge_type, EdgeType.SET)
         self.assertEqual(set_edge.field_name, "set_field")
         
         # Test tuple edge
-        tuple_graph = EntityGraph(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
-        tuple_graph.add_entity(self.entity1)
-        tuple_graph.add_entity(self.entity2)
+        tuple_tree = EntityTree(root_ecs_id=self.root_ecs_id, lineage_id=self.lineage_id)
+        tuple_tree.add_entity(self.entity1)
+        tuple_tree.add_entity(self.entity2)
         
-        tuple_graph.add_tuple_edge(self.entity1, self.entity2, "tuple_field", 2)
+        tuple_tree.add_tuple_edge(self.entity1, self.entity2, "tuple_field", 2)
         
         tuple_edge_key = (self.entity1.ecs_id, self.entity2.ecs_id)
-        tuple_edge = tuple_graph.edges[tuple_edge_key]
+        tuple_edge = tuple_tree.edges[tuple_edge_key]
         self.assertEqual(tuple_edge.edge_type, EdgeType.TUPLE)
         self.assertEqual(tuple_edge.field_name, "tuple_field")
         self.assertEqual(tuple_edge.container_index, 2)
@@ -280,62 +280,62 @@ class TestEntityGraphBasics(unittest.TestCase):
     def test_ancestry_methods(self):
         """Test methods for managing ancestry paths and edge classification."""
         # Add entities
-        self.graph.add_entity(self.entity1)
-        self.graph.add_entity(self.entity2)
-        self.graph.add_entity(self.entity3)
+        self.tree.add_entity(self.entity1)
+        self.tree.add_entity(self.entity2)
+        self.tree.add_entity(self.entity3)
         
         # Create edges
-        self.graph.add_direct_edge(self.entity1, self.entity2, "field1")
-        self.graph.add_direct_edge(self.entity2, self.entity3, "field2")
+        self.tree.add_direct_edge(self.entity1, self.entity2, "field1")
+        self.tree.add_direct_edge(self.entity2, self.entity3, "field2")
         
         # Set ancestry paths
         path1 = [self.entity1.ecs_id]
         path2 = [self.entity1.ecs_id, self.entity2.ecs_id]
         path3 = [self.entity1.ecs_id, self.entity2.ecs_id, self.entity3.ecs_id]
         
-        self.graph.set_ancestry_path(self.entity1.ecs_id, path1)
-        self.graph.set_ancestry_path(self.entity2.ecs_id, path2)
-        self.graph.set_ancestry_path(self.entity3.ecs_id, path3)
+        self.tree.set_ancestry_path(self.entity1.ecs_id, path1)
+        self.tree.set_ancestry_path(self.entity2.ecs_id, path2)
+        self.tree.set_ancestry_path(self.entity3.ecs_id, path3)
         
         # Check paths were set
-        self.assertEqual(self.graph.get_ancestry_path(self.entity1.ecs_id), path1)
-        self.assertEqual(self.graph.get_ancestry_path(self.entity2.ecs_id), path2)
-        self.assertEqual(self.graph.get_ancestry_path(self.entity3.ecs_id), path3)
+        self.assertEqual(self.tree.get_ancestry_path(self.entity1.ecs_id), path1)
+        self.assertEqual(self.tree.get_ancestry_path(self.entity2.ecs_id), path2)
+        self.assertEqual(self.tree.get_ancestry_path(self.entity3.ecs_id), path3)
         
         # Check max depth
-        self.assertEqual(self.graph.max_depth, 3)
+        self.assertEqual(self.tree.max_depth, 3)
         
         # Check path distances
-        self.assertEqual(self.graph.get_path_distance(self.entity1.ecs_id), 1)
-        self.assertEqual(self.graph.get_path_distance(self.entity2.ecs_id), 2)
-        self.assertEqual(self.graph.get_path_distance(self.entity3.ecs_id), 3)
+        self.assertEqual(self.tree.get_path_distance(self.entity1.ecs_id), 1)
+        self.assertEqual(self.tree.get_path_distance(self.entity2.ecs_id), 2)
+        self.assertEqual(self.tree.get_path_distance(self.entity3.ecs_id), 3)
         
         # Test edge classification
         # Initially edges should not be hierarchical
-        self.assertFalse(self.graph.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
-        self.assertFalse(self.graph.is_hierarchical_edge(self.entity2.ecs_id, self.entity3.ecs_id))
+        self.assertFalse(self.tree.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
+        self.assertFalse(self.tree.is_hierarchical_edge(self.entity2.ecs_id, self.entity3.ecs_id))
         
         # Mark edges as hierarchical
-        self.graph.mark_edge_as_hierarchical(self.entity1.ecs_id, self.entity2.ecs_id)
-        self.graph.mark_edge_as_hierarchical(self.entity2.ecs_id, self.entity3.ecs_id)
+        self.tree.mark_edge_as_hierarchical(self.entity1.ecs_id, self.entity2.ecs_id)
+        self.tree.mark_edge_as_hierarchical(self.entity2.ecs_id, self.entity3.ecs_id)
         
         # Check edges are now hierarchical
-        self.assertTrue(self.graph.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
-        self.assertTrue(self.graph.is_hierarchical_edge(self.entity2.ecs_id, self.entity3.ecs_id))
+        self.assertTrue(self.tree.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
+        self.assertTrue(self.tree.is_hierarchical_edge(self.entity2.ecs_id, self.entity3.ecs_id))
         
         # Check hierarchical relationships
-        self.assertEqual(self.graph.get_hierarchical_parent(self.entity2.ecs_id), self.entity1.ecs_id)
-        self.assertEqual(self.graph.get_hierarchical_parent(self.entity3.ecs_id), self.entity2.ecs_id)
+        self.assertEqual(self.tree.get_hierarchical_parent(self.entity2.ecs_id), self.entity1.ecs_id)
+        self.assertEqual(self.tree.get_hierarchical_parent(self.entity3.ecs_id), self.entity2.ecs_id)
         
-        children = self.graph.get_hierarchical_children(self.entity1.ecs_id)
+        children = self.tree.get_hierarchical_children(self.entity1.ecs_id)
         self.assertEqual(len(children), 1)
         self.assertIn(self.entity2.ecs_id, children)
         
         # Mark an edge as reference
-        self.graph.mark_edge_as_reference(self.entity1.ecs_id, self.entity2.ecs_id)
+        self.tree.mark_edge_as_reference(self.entity1.ecs_id, self.entity2.ecs_id)
         
         # Check edge is now a reference
-        self.assertFalse(self.graph.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
+        self.assertFalse(self.tree.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
         
 
 if __name__ == '__main__':
