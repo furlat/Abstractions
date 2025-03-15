@@ -1070,6 +1070,163 @@ def generate_mermaid_diagram(graph: EntityGraph, include_attributes: bool = Fals
     lines.append("```")
     return "\n".join(lines)
 
+class EntityRegistry():
+    """ A registry for graph entities, is mantains a versioned collection of all entities in the system
+    it mantains 
+    1) a graphregistry indexed by root_ecs_id UUID --> EntityGraph
+    2) a lineage registry indexed by lineage_id UUID --> List[root_ecs_id UUID]
+    3) a live_id registry indexed by live_id UUID --> Entity [this is used to navigate from live python entity to their root entity when recosntructing a graph from a sub-entity]
+    4) a type_registry indexed by entity_type --> List[lineage_id UUID] which is used to get all entities of a given type
+    """
+    graph_registry: Dict[UUID, EntityGraph] = Field(default_factory=dict)
+    lineage_registry: Dict[UUID, List[UUID]] = Field(default_factory=dict)
+    live_id_registry: Dict[UUID, "Entity"] = Field(default_factory=dict)
+    type_registry: Dict[Type["Entity"], List[UUID]] = Field(default_factory=dict)
+    @classmethod
+    def register_entity_graph(cls, entity_graph: EntityGraph) -> None:
+        """ Register an entity graph in the registry when an entity graph is registered in the graph registry its
+        1) its root_ecs_id is added to the lineage_history
+        2) the entities in the graph are referenced by their live id in the live_id_registry 
+        3) the graph is added to the graph_registry with its root_ecs_id as key
+        """
+        if entity_graph.root_ecs_id in cls.graph_registry:
+            raise ValueError("entity graph already registered")
+        
+        cls.graph_registry[entity_graph.root_ecs_id] = entity_graph
+        for sub_entity in entity_graph.nodes.values():
+            cls.live_id_registry[sub_entity.live_id] = sub_entity
+        if entity_graph.lineage_id not in cls.lineage_registry:
+            cls.lineage_registry[entity_graph.lineage_id] = [entity_graph.root_ecs_id]
+        else:
+            cls.lineage_registry[entity_graph.lineage_id].append(entity_graph.root_ecs_id)
+        root_entity = entity_graph.get_entity(entity_graph.root_ecs_id)
+        if root_entity is not None:
+            if root_entity.__class__ not in cls.type_registry:
+                cls.type_registry[root_entity.__class__] = [entity_graph.lineage_id]
+            else:
+                cls.type_registry[root_entity.__class__].append(entity_graph.lineage_id)
+        else:
+            raise ValueError("root entity not found in entity graph")
+
+
+    @classmethod
+    def register_entity(cls, entity: "Entity") -> None:
+        """ Register an entity in the registry when an entity is registered in the graph registry its
+         1) its graph is constructed and indexed by the root_ecs_id
+         2) the entiteis in the graph are referenced by their live id in the live_id_registry 
+         3) the graph is deepcopied and the deepcopy is added to graph_registy with its root_ecs_id as key
+         3) the root_ecs_id is added to the lineage_history
+          we can only register root entities for now """
+        
+        if entity.root_ecs_id is  None:
+            raise ValueError("can only register root entities with a root_ecs_id for now")
+        elif not entity.is_root_entity():
+            raise ValueError("can only register root entities for now")
+        
+        entity_graph = build_entity_graph(entity)
+        cls.register_entity_graph(entity_graph)
+
+    @classmethod            
+    def get_stored_graph(cls, root_ecs_id: UUID) -> Optional[EntityGraph]:
+        """ Get the graph for a given root_ecs_id """
+        return cls.graph_registry.get(root_ecs_id, None)
+    @classmethod
+    def get_stored_entity(cls, root_ecs_id: UUID, ecs_id: UUID) -> Optional["Entity"]:
+        """ Get the entity for a given root_ecs_id and ecs_id """
+        graph = cls.get_stored_graph(root_ecs_id)
+        if graph is None:
+            raise ValueError("graph not registered")
+        entity = graph.get_entity(ecs_id)
+        if entity is None:
+            return None
+        else:
+            return entity
+        
+    @classmethod
+    def get_stored_graph_from_entity(cls, entity: "Entity") -> Optional[EntityGraph]:
+        """ Get the graph for a given entity """
+        if not entity.root_ecs_id:
+            raise ValueError("entity has no root_ecs_id")
+        return cls.get_stored_graph(entity.root_ecs_id)
+        
+    @classmethod
+    def get_live_entity(cls, live_id: UUID) -> Optional["Entity"]:
+        """ Get the entity for a given live_id """
+        return cls.live_id_registry.get(live_id, None)
+    
+    @classmethod
+    def get_live_root_from_entity(cls, entity: "Entity") -> Optional["Entity"]:
+        """ Get the root entity for a given entity """
+        if not entity.root_live_id:
+            raise ValueError("entity has no root_live_id")
+        return cls.get_live_entity(entity.root_live_id)
+    
+    @classmethod
+    def get_live_root_from_live_id(cls, live_id: UUID) -> Optional["Entity"]:
+        """ Get the root entity for a given live_id """
+        entity = cls.get_live_entity(live_id)
+        if entity is None:
+            return None
+        else:
+            return cls.get_live_root_from_entity(entity)
+        
+    @classmethod
+    def version_entity(cls, entity: "Entity") -> bool:
+        """ Core function to version an entity, currently working only for root entities, what this function does is:
+        1) check if function is registered , if not delegate to reigister()
+        2) get the stored graph snapshot for the entity 
+        3) compute the new graph 
+        4) compute the diff between the two graphs if no diff return False
+        5) update the ecs_id for all changed entities in the graph, update their root_ecs_id, 
+        6) register the new graph in the graph_registry under the new root_ecs_id key mantaining the lineage intact"""
+        """ Version an entity """
+        if not entity.root_ecs_id:
+            raise ValueError("entity has no root_ecs_id for versioning we only support versioning of root entities for now")
+        
+        old_graph = cls.get_stored_graph(entity.root_ecs_id)
+        if old_graph is None:
+            cls.register_entity(entity)
+            return True
+        else:
+            new_graph = build_entity_graph(entity)
+            diff = (old_graph, new_graph)
+            if diff is None:
+                return False
+            else:
+                modified_entities = list(find_modified_entities(old_graph, new_graph))
+                typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
+                
+                if len(typed_entities) > 0:
+                    if new_graph.root_ecs_id not in typed_entities:
+                        raise ValueError("if any entity is modified the root entity must be modified something went wrong")
+                    # first we fork the root entity
+                    # forking the root entity will create a new root_ecs_id then we fork all the modified entities with the new root_ecs_id as input
+                    current_root_ecs_id = new_graph.root_ecs_id
+                    root_entity = new_graph.get_entity(current_root_ecs_id)
+                    if root_entity is None:
+                        raise ValueError("root entity not found in new graph, something went very wrong")
+                    root_entity.update_ecs_ids()
+                    new_root_ecs_id = root_entity.ecs_id
+                    root_entity_live_id = root_entity.live_id
+                    assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
+                    # now we fork all the modified entities with the new root_ecs_id as input
+                    
+                    for modified_entity_id in typed_entities:
+                        modified_entity = new_graph.get_entity(modified_entity_id)
+                        if modified_entity is not None:
+                            #here we could have some modified entitiyes being entities that have been removed from the graph so we get nones
+                            modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
+                        else:
+                            #later here we will handle the case where the entity has been moved to a different graph or prompoted to it's own graph
+                            print(f"modified entity {modified_entity_id} not found in new graph, something went wrong")
+
+                    cls.register_entity_graph(new_graph)
+                return True            
+
+
+
+
+
 
 class Entity(BaseModel):
     ecs_id: UUID = Field(default_factory=uuid4, description="Unique identifier")
@@ -1193,14 +1350,14 @@ class Entity(BaseModel):
         return self.root_ecs_id is None or self.root_live_id is None
         
     
-    def fork(self, new_root_ecs_id: Optional[UUID] = None) -> None:
+    def update_ecs_ids(self, new_root_ecs_id: Optional[UUID] = None, root_entity_live_id: Optional[UUID] = None) -> None:
         """
-        Fork the entity.
         Assign new ecs_id 
         Assign a forked_at timestamp
         Updates previous_ecs_id to the previous ecs_id
         Adds the previous ecs_id to old_ids
         If new_root_ecs_id is provided, updates root_ecs_id to the new value
+        If root_entity_live_id is provided, updates root_live_id to the new value this requires new_root_ecs_id to be provided
         """
         old_ecs_id = self.ecs_id
         new_ecs_id = uuid4()
@@ -1211,27 +1368,64 @@ class Entity(BaseModel):
         self.old_ids.append(old_ecs_id)
         if new_root_ecs_id:
             self.root_ecs_id = new_root_ecs_id
+        if root_entity_live_id and not new_root_ecs_id:
+            raise ValueError("if root_entity_live_id is provided new_root_ecs_id must be provided")
+        elif root_entity_live_id:
+            self.root_live_id = root_entity_live_id
+        if self.is_root_entity():
+            self.root_ecs_id = new_ecs_id
     
-    def get_root_entity(self) -> "Entity": #type: ignore
+    def get_live_root_entity(self) -> Optional["Entity"]: 
         """
         This method will use the registry to get the live python object of the root entity of the graph
         """
-        pass
-
-    def get_graph(self, recompute: bool = False) -> "EntityGraph": #type: ignore
+        if self.is_root_entity():
+            return self
+        elif self.root_live_id is None:
+            return None
+        else:
+            return EntityRegistry.get_live_entity(self.root_live_id)
+    
+    def get_stored_root_entity(self) -> Optional["Entity"]: 
         """
-        This method will use the registry to get the whole graph of the entity if 
-        recompute is True it will recompute the graph from the live root entity
-        otherwise it will return the cached graph based on the ecs_id of the root entity
+        This method will use the registry to get the stored reference of the root entity of the graph
         """
-        pass
-
-    def get_stored_reference(self) -> "Entity": #type: ignore
+        if self.is_root_entity():
+            return self
+        elif self.root_ecs_id is None:
+            return None
+        else:
+            return EntityRegistry.get_stored_entity(self.root_ecs_id,self.root_ecs_id)
+        
+    def get_stored_version(self) -> Optional["Entity"]:
         """
         This method will use the registry to get the stored reference of the entity using the
         ecs_id and root_ecs_id of the entity, this may differet from the carrent live object
         """
-        pass
+        if not self.root_ecs_id:
+            return None
+        else:
+            return EntityRegistry.get_stored_entity(self.root_ecs_id,self.ecs_id)
+
+    def get_graph(self, recompute: bool = False) -> Optional[EntityGraph]: 
+        """
+        This method will use the registry to get the whole graph of the entity if 
+        recompute is True it will recompute the graph from the live root entity, this is different then versioning
+        otherwise it will return the cached graph based on the ecs_id of the root entity
+        """
+        if recompute and self.is_root_entity():
+            return build_entity_graph(self)
+        elif recompute and not self.is_root_entity() and self.root_live_id is not None:
+            live_root_entity = self.get_live_root_entity()
+            if live_root_entity is None:
+                raise ValueError("live root entity not found")
+            return build_entity_graph(live_root_entity)
+        elif self.root_ecs_id is not None:
+            return EntityRegistry.get_stored_graph(self.root_ecs_id)
+        else:
+            return None
+  
+
     
     def prevalidate_detach(self) -> None:
         """
@@ -1243,6 +1437,7 @@ class Entity(BaseModel):
     
     def detach(self, promote_to_root: bool = False) -> None:
         """
+        Mostly a stub for now not really implemented
         Detach the entity from its graph due to disconnection from the root entity.
         Sets the entity root to either None or promotes the entity to the root of its graph. And then forks the entity.
         If the entity is to be promoted the forks happens first so that the root is directly assigned to the new self ecs id
@@ -1259,7 +1454,7 @@ class Entity(BaseModel):
         self.root_ecs_id = None
         self.root_live_id = None
         #forks the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
-        self.fork()
+        self.update_ecs_ids()
         if promote_to_root:
             #if promoting to root, set the new root to the new ecs_id
             self.root_ecs_id = self.ecs_id
@@ -1277,6 +1472,7 @@ class Entity(BaseModel):
 
     def attach(self, new_entity: "Entity") -> None:
         """
+        Just a stub for now not really implemented
         Attach the entity to a new entity.
         """
         #check that the new entity is not an orphan
@@ -1296,7 +1492,7 @@ class Entity(BaseModel):
         self.root_live_id = new_entity.root_live_id
         self.lineage_id = new_entity.lineage_id
         #fork the entity to assign a new ecs_id and update the old_ecs_id to the previous ecs_id and adds the previous ecs_id to old_ids
-        self.fork()
+        self.update_ecs_ids()
 
 
 # Example hierarchical entities
