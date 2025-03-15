@@ -101,13 +101,13 @@ class TestEntityBasics(unittest.TestCase):
         entity.root_live_id = uuid4()
         self.assertFalse(entity.is_orphan())
 
-    def test_fork(self):
-        """Test the fork method."""
+    def test_update_ecs_ids(self):
+        """Test the update_ecs_ids method."""
         entity = Entity()
         old_ecs_id = entity.ecs_id
         
-        # Fork without specifying new root
-        entity.fork()
+        # Update IDs without specifying new root
+        entity.update_ecs_ids()
         
         # Check that ecs_id changed
         self.assertNotEqual(entity.ecs_id, old_ecs_id)
@@ -121,10 +121,10 @@ class TestEntityBasics(unittest.TestCase):
         # Check that forked_at is set
         self.assertIsNotNone(entity.forked_at)
         
-        # Fork with new root
+        # Update IDs with new root
         second_ecs_id = entity.ecs_id
         new_root_id = uuid4()
-        entity.fork(new_root_ecs_id=new_root_id)
+        entity.update_ecs_ids(new_root_ecs_id=new_root_id)
         
         # Check that ecs_id changed again
         self.assertNotEqual(entity.ecs_id, second_ecs_id)

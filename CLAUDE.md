@@ -22,11 +22,13 @@ python -m unittest tests/test_entity.py
 - **Basic Entity**: Fully implemented with hashability support for collections
 - **EntityGraph**: Core structure implemented with node and edge management
 - **Graph Construction**: Single-pass algorithm for efficient graph and ancestry path building
-- **Entity Operations**: Support for fork, attach, and detach operations
+- **Entity Operations**: Support for update_ecs_ids, attach, and detach operations
 - **Edge Classification**: Simple hierarchical edge marking for all edges (reference edges will be added later)
 - **Circular References**: Error detection for circular entity references
 - **Visualization**: Mermaid diagram generation for entity graphs
 - **Ancestry Paths**: On-the-fly construction during graph traversal
+- **Entity Registry**: Core EntityRegistry implementation with storage and retrieval
+- **Versioning System**: Set-based diffing with hierarchical propagation for efficient versioning
 
 ## Implementation Status
 1. **Field Type Detection**: The `get_pydantic_field_type_entities` function has been enhanced to:
@@ -92,6 +94,25 @@ python -m unittest tests/test_entity.py
   - Optional entity fields (setting to None)
   - Deep and complex entity hierarchies
   - Reassigning children of removed entities
+- EntityRegistry thoroughly tested with coverage for:
+  - Basic registration of entities and graphs
+  - Retrieval operations for graphs and entities
+  - Versioning with attribute changes
+  - Versioning of nested entity structures
+  - Complex hierarchical entity versioning
+  - Multi-version lineage tracking
+  - Container entity versioning
+  - Type registry functionality
+  - Entity serialization and deserialization with comprehensive coverage:
+    - Basic entity serialization/deserialization
+    - Nested entity structures serialization
+    - Container types (lists, dictionaries, tuples, sets)
+    - JSON serialization and persistence
+    - Primitive value serialization
+    - Complex nested container serialization
+    - Optional entity fields
+    - Entity versioning serialization
+    - Graph structure preservation
 
 ## Next Development Steps
 1. **✅ Improved Field Type Detection**: Successfully enhanced to handle container fields and empty containers
@@ -100,12 +121,26 @@ python -m unittest tests/test_entity.py
 4. **✅ Refined Edge Classification**: Implemented ownership-based edge classification using Pydantic field metadata
 5. **✅ Graph Visualization**: Added Mermaid diagram generation for entity graphs
 6. **✅ Single-Pass Graph Construction**: Implemented the algorithm from the addendum for efficient graph building
-
-Next priorities:
 7. **✅ Entity Graph Diffing Algorithm**: Implemented efficient set-based approach for detecting entity changes
 8. **✅ Graph Diffing Tests**: Added comprehensive tests for detecting various entity change scenarios
-9. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
-10. **Add Circular Reference Tests**: Once circular reference handling is implemented, add specific tests
+9. **✅ Entity Registry Implementation**: Added registry for entity graph storage and retrieval
+10. **✅ Entity Versioning System**: Implemented versioning with ecs_id management
+11. **✅ Registry Test Coverage**: Added comprehensive tests for registry operations including storage, retrieval, and versioning
+12. **✅ Serialization Tests**: Added tests for entity and graph serialization/deserialization with JSON support
+
+Completed features:
+13. **✅ Entity Serialization Tests**: Implemented comprehensive tests for entity and graph serialization
+
+Current priorities:
+14. **Subentity Attachment/Detachment**: Complete the implementation for attaching and detaching subentities
+15. **Entity Movement**: Implement functionality to move subentities between parent entities
+16. **Attachment/Detachment Testing**: Add comprehensive tests for entity movement operations
+
+Future work:
+17. **Performance Optimization**: Improve performance of graph operations and versioning for large entity structures
+18. **Registry Persistence**: Implement persistent storage for the registry to survive application restarts
+19. **Circular Reference Handling**: Implement proper handling of circular references instead of raising errors
+20. **Direct Entity References**: Support for direct entity references without requiring root entities
 
 ## Code Style Guidelines
 - **Python Version**: 3.9+ (use type hints extensively)
@@ -157,6 +192,34 @@ The implementation uses an efficient set-based approach to identify entities tha
    - Detects when optional entities are set to None
 
 The algorithm is optimized to minimize comparisons while ensuring all relevant entities are properly versioned.
+
+## Entity Registry System
+
+The EntityRegistry provides a complete versioning and storage system for entity graphs:
+
+1. **Multi-dimensional Indexing**:
+   - Stores graphs by root_ecs_id for direct lookup
+   - Maps lineage_id to lists of root_ecs_id to track versions
+   - Maps live_id to entities for quick in-memory reference lookup
+   - Organizes entities by type for type-based queries
+
+2. **Storage Operations**:
+   - `register_entity`: Stores a root entity and its entire graph
+   - `register_entity_graph`: Registers a pre-built entity graph
+   - `version_entity`: Computes differences and updates entity versions
+
+3. **Retrieval Operations**:
+   - `get_stored_graph`: Retrieves a graph by root_ecs_id
+   - `get_stored_entity`: Gets an entity from a specific graph
+   - `get_live_entity`: Retrieves an entity by its live_id
+   - `get_live_root_from_entity`: Finds a root entity from any sub-entity
+   - `get_stored_graph_from_entity`: Gets the graph containing a specific entity
+
+4. **Versioning Process**:
+   - Detects modified entities using graph comparison
+   - Updates entity ecs_ids while preserving lineage
+   - Maintains history through old_ids tracking
+   - Propagates root_ecs_id updates through the entire graph
 
 ## Graph Visualization Example
 

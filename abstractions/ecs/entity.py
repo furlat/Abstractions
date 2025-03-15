@@ -1189,39 +1189,36 @@ class EntityRegistry():
             return True
         else:
             new_graph = build_entity_graph(entity)
-            diff = (old_graph, new_graph)
-            if diff is None:
-                return False
-            else:
-                modified_entities = list(find_modified_entities(old_graph, new_graph))
-                typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
+        
+            modified_entities = list(find_modified_entities(new_graph=new_graph, old_graph=old_graph))
+            typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
+            
+            if len(typed_entities) > 0:
+                if new_graph.root_ecs_id not in typed_entities:
+                    raise ValueError("if any entity is modified the root entity must be modified something went wrong")
+                # first we fork the root entity
+                # forking the root entity will create a new root_ecs_id then we fork all the modified entities with the new root_ecs_id as input
+                current_root_ecs_id = new_graph.root_ecs_id
+                root_entity = new_graph.get_entity(current_root_ecs_id)
+                if root_entity is None:
+                    raise ValueError("root entity not found in new graph, something went very wrong")
+                root_entity.update_ecs_ids()
+                new_root_ecs_id = root_entity.ecs_id
+                root_entity_live_id = root_entity.live_id
+                assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
+                # now we fork all the modified entities with the new root_ecs_id as input
                 
-                if len(typed_entities) > 0:
-                    if new_graph.root_ecs_id not in typed_entities:
-                        raise ValueError("if any entity is modified the root entity must be modified something went wrong")
-                    # first we fork the root entity
-                    # forking the root entity will create a new root_ecs_id then we fork all the modified entities with the new root_ecs_id as input
-                    current_root_ecs_id = new_graph.root_ecs_id
-                    root_entity = new_graph.get_entity(current_root_ecs_id)
-                    if root_entity is None:
-                        raise ValueError("root entity not found in new graph, something went very wrong")
-                    root_entity.update_ecs_ids()
-                    new_root_ecs_id = root_entity.ecs_id
-                    root_entity_live_id = root_entity.live_id
-                    assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
-                    # now we fork all the modified entities with the new root_ecs_id as input
-                    
-                    for modified_entity_id in typed_entities:
-                        modified_entity = new_graph.get_entity(modified_entity_id)
-                        if modified_entity is not None:
-                            #here we could have some modified entitiyes being entities that have been removed from the graph so we get nones
-                            modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
-                        else:
-                            #later here we will handle the case where the entity has been moved to a different graph or prompoted to it's own graph
-                            print(f"modified entity {modified_entity_id} not found in new graph, something went wrong")
+                for modified_entity_id in typed_entities:
+                    modified_entity = new_graph.get_entity(modified_entity_id)
+                    if modified_entity is not None:
+                        #here we could have some modified entitiyes being entities that have been removed from the graph so we get nones
+                        modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
+                    else:
+                        #later here we will handle the case where the entity has been moved to a different graph or prompoted to it's own graph
+                        print(f"modified entity {modified_entity_id} not found in new graph, something went wrong")
 
-                    cls.register_entity_graph(new_graph)
-                return True            
+                cls.register_entity_graph(new_graph)
+            return True            
 
 
 
