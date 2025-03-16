@@ -7,7 +7,7 @@ from uuid import UUID
 from abstractions.ecs.entity import (
     Entity, EntityinEntity, EntityinList, EntityinDict, 
     EntityinTuple, EntityinSet, EntityinBaseModel, 
-    EntityInEntityInEntity, HierachicalEntity
+    EntityInEntityInEntity, HierarchicalEntity
 )
 
 
@@ -141,8 +141,8 @@ class TestEntityContainers(unittest.TestCase):
         self.assertNotEqual(container.entity_of_entity.ecs_id, container.entity_of_entity.sub_entity.ecs_id)
 
     def test_hierarchical_entity(self):
-        """Test HierachicalEntity - multiple entity relationships."""
-        container = HierachicalEntity()
+        """Test HierarchicalEntity - multiple entity relationships."""
+        container = HierarchicalEntity()
         
         # Check all entities were created
         self.assertIsNotNone(container.entity_of_entity_1)

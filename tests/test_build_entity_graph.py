@@ -8,7 +8,7 @@ from collections import deque
 from abstractions.ecs.entity import (
     Entity, EntityTree, build_entity_tree, EdgeType,
     EntityinEntity, EntityinList, EntityinDict, EntityinTuple, EntityinSet,
-    EntityInEntityInEntity, HierachicalEntity
+    EntityInEntityInEntity, HierarchicalEntity
 )
 
 
@@ -188,7 +188,7 @@ class TestBuildEntityTree(unittest.TestCase):
     def test_nested_entity_tree(self):
         """Test building a tree with deeply nested entities."""
         # Create a hierarchical entity with multiple levels
-        root = HierachicalEntity()
+        root = HierarchicalEntity()
         root.root_ecs_id = root.ecs_id
         root.root_live_id = root.live_id
         

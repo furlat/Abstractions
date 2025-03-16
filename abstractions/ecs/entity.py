@@ -996,20 +996,7 @@ def find_modified_entities(
     
     return modified_entities
 
-def update_entity_versions(
-    tree: EntityTree,
-    entities_to_version: Set[UUID]
-) -> None:
-    """
-    Update ecs_ids for entities that need new versions.
-    
-    Args:
-        tree: The entity tree
-        entities_to_version: Set of entity ecs_ids that need new versions
-    """
-    # This is just a stub for now
-    # The real implementation will follow the algorithm in the design doc
-    pass
+
 
 
 def generate_mermaid_diagram(tree: EntityTree, include_attributes: bool = False) -> str:
@@ -1664,9 +1651,9 @@ class OptionalEntityContainers(Entity):
     optional_entity_list: Optional[List[Entity]] = None
     optional_entity_dict: Optional[Dict[str, Entity]] = None
 
-# Hierachical entities
+# Hierarchical entities
 
-class HierachicalEntity(Entity):
+class HierarchicalEntity(Entity):
     """
     A hierachical entity.
     """

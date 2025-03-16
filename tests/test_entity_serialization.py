@@ -15,7 +15,7 @@ from abstractions.ecs.entity import (
     EntityinEntity, EntityinList, EntityinDict, EntityinTuple, EntityinSet,
     EntityWithPrimitives, EntityWithContainersOfPrimitives, 
     EntityWithMixedContainers, EntityWithNestedContainers,
-    OptionalEntityContainers, HierachicalEntity, BaseModelWithEntity, EntityinBaseModel
+    OptionalEntityContainers, HierarchicalEntity, BaseModelWithEntity, EntityinBaseModel
 )
 
 
@@ -186,7 +186,7 @@ class TestEntitySerialization(unittest.TestCase):
         self.base_model_entity.base_model.entity.root_live_id = self.base_model_entity.live_id
         
         # Hierarchical entity
-        self.hierarchical = HierachicalEntity()
+        self.hierarchical = HierarchicalEntity()
         self.hierarchical.root_ecs_id = self.hierarchical.ecs_id
         self.hierarchical.root_live_id = self.hierarchical.live_id
         
@@ -401,7 +401,7 @@ class TestEntitySerialization(unittest.TestCase):
     def test_complex_entity_serialization(self):
         """Test serialization and deserialization of a complex entity structure."""
         # Create a hierarchical entity
-        root = HierachicalEntity()
+        root = HierarchicalEntity()
         root.root_ecs_id = root.ecs_id
         root.root_live_id = root.live_id
         
@@ -438,7 +438,7 @@ class TestEntitySerialization(unittest.TestCase):
         entity_dict = root.model_dump()
         
         # Create a new entity from the serialized data
-        new_entity = HierachicalEntity.model_validate(entity_dict)
+        new_entity = HierarchicalEntity.model_validate(entity_dict)
         
         # Build trees and check for differences
         original_tree = build_entity_tree(root)
@@ -736,7 +736,7 @@ class TestEntitySerialization(unittest.TestCase):
         entity_dict = self.hierarchical.model_dump()
         
         # Create a new entity from the serialized data
-        new_entity = HierachicalEntity.model_validate(entity_dict)
+        new_entity = HierarchicalEntity.model_validate(entity_dict)
         
         # Check all the complex structure was properly serialized and deserialized
         # This is the most comprehensive test of deeply nested entity structures
@@ -778,7 +778,7 @@ class TestEntitySerialization(unittest.TestCase):
         
         # Deserialize from JSON
         entity_dict = json.loads(entity_json)
-        new_entity = HierachicalEntity.model_validate(entity_dict)
+        new_entity = HierarchicalEntity.model_validate(entity_dict)
         
         # Build trees and check for differences
         original_tree = build_entity_tree(self.hierarchical)

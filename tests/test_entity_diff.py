@@ -12,7 +12,7 @@ from abstractions.ecs.entity import (
     EntityinList,
     EntityinDict,
     EntityInEntityInEntity,
-    HierachicalEntity,
+    HierarchicalEntity,
     build_entity_tree,
     find_modified_entities,
     get_non_entity_attributes,
@@ -376,7 +376,7 @@ class TestEntityDiff(unittest.TestCase):
     def test_diff_multi_branch_structure_isolated_change(self):
         """Test diffing on a multi-branch structure with a change in only one branch"""
         # Create a hierarchical entity with multiple branches
-        root = HierachicalEntity()
+        root = HierarchicalEntity()
         root.root_ecs_id = root.ecs_id
         root.root_live_id = root.live_id
         

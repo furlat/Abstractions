@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from abstractions.ecs.entity import (
     Entity, EntityTree, EntityRegistry, build_entity_tree,
-    EntityinEntity, EntityinList, EntityinDict, HierachicalEntity
+    EntityinEntity, EntityinList, EntityinDict, HierarchicalEntity
 )
 
 
@@ -378,7 +378,7 @@ class TestEntityRegistry(unittest.TestCase):
     def test_complex_entity_tree(self):
         """Test a complex entity tree with multiple levels and container types."""
         # Create a complex entity structure using the class from entity.py
-        root = HierachicalEntity()
+        root = HierarchicalEntity()
         root.root_ecs_id = root.ecs_id
         root.root_live_id = root.live_id
         
