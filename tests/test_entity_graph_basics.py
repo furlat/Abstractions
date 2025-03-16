@@ -331,11 +331,8 @@ class TestEntityTreeBasics(unittest.TestCase):
         self.assertEqual(len(children), 1)
         self.assertIn(self.entity2.ecs_id, children)
         
-        # Mark an edge as reference
-        self.tree.mark_edge_as_reference(self.entity1.ecs_id, self.entity2.ecs_id)
-        
-        # Check edge is now a reference
-        self.assertFalse(self.tree.is_hierarchical_edge(self.entity1.ecs_id, self.entity2.ecs_id))
+        # Reference edges are no longer supported in hierarchical tree model
+        # We no longer test for them
         
 
 if __name__ == '__main__':

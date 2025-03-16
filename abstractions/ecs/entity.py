@@ -23,7 +23,6 @@ class EdgeType(str, Enum):
     SET = "set"               # Entity in a set
     TUPLE = "tuple"           # Entity in a tuple
     HIERARCHICAL = "hierarchical"  # Main ownership path
-    REFERENCE = "reference"   # Secondary reference path
 
 # Edge representation
 class EntityEdge(BaseModel):
@@ -165,12 +164,7 @@ class EntityTree(BaseModel):
             edge = self.edges[edge_key]
             edge.is_hierarchical = True
     
-    def mark_edge_as_reference(self, source_id: UUID, target_id: UUID) -> None:
-        """Mark an edge as a reference (non-ownership) edge"""
-        edge_key = (source_id, target_id)
-        if edge_key in self.edges:
-            edge = self.edges[edge_key]
-            edge.is_hierarchical = False
+
     
     def get_entity(self, entity_id: UUID) -> Optional["Entity"]:
         """Get an entity by its ID"""
@@ -253,10 +247,7 @@ class EntityTree(BaseModel):
                     self.live_id_to_ecs_id.pop(old_node_live_id)
 
         # Serialization/deserialization helpers
-    def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
-        """Custom dump method to handle circular references"""
-        # This will be implemented for efficient serialization
-        return super().model_dump(*args, **kwargs)
+
 
 # Functions to build the entity tree
 
@@ -482,7 +473,7 @@ def process_entity_reference(
 ):
     """Process a single entity reference, updating the tree"""
     # Get ownership information from the field
-    ownership = get_field_ownership(source, field_name)
+    ownership = True
     
     # Add the appropriate edge type
     if list_index is not None:
@@ -499,9 +490,7 @@ def process_entity_reference(
     if edge_key in tree.edges:
         if ownership:
             tree.mark_edge_as_hierarchical(source.ecs_id, target.ecs_id)
-        else:
-            tree.mark_edge_as_reference(source.ecs_id, target.ecs_id)
-    
+
     # Update distance map for shortest path tracking
     if distance_map is not None:
         source_distance = distance_map.get(source.ecs_id, float('inf'))
@@ -648,7 +637,7 @@ def build_entity_tree(root_entity: "Entity") -> EntityTree:
         # Raise error if we encounter a circular reference
         # We don't allow circular entities at this stage
         if entity.ecs_id in processed and parent_id is not None:
-            raise ValueError(f"Circular entity reference detected: {entity.ecs_id}. Circular entities are not supported.")
+            raise ValueError(f"Circular entity reference detected: {entity.ecs_id}. Circular entities are not supported Entities must form hierarchical trees.")
         
         # If we've seen this entity before but now found a new parent relationship,
         # we only need to process the edge, not the entity's fields again
