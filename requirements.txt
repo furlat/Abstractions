@@ -1,4 +1,3 @@
 libcst
 pydantic
 setuptools
-sqlalchemy
