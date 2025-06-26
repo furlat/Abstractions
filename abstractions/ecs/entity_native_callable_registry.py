@@ -165,7 +165,7 @@ class EntityNativeCallableExecutor:
     """
     
     @classmethod
-    def execute(cls, function_name: str, **kwargs) -> Entity:
+    def execute(cls, func_name: str, **kwargs) -> Entity:
         """
         Execute function with complete entity system integration.
         
@@ -178,9 +178,9 @@ class EntityNativeCallableExecutor:
         """
         
         # Step 1: Get function metadata
-        metadata = EntityNativeCallableRegistry.get_metadata(function_name)
+        metadata = EntityNativeCallableRegistry.get_metadata(func_name)
         if not metadata:
-            raise ValueError(f"Function '{function_name}' not registered")
+            raise ValueError(f"Function '{func_name}' not registered")
         
         # Step 2: Create input entity with borrowing (proven pattern)
         resolver = CallableEntityResolver()
@@ -197,6 +197,9 @@ class EntityNativeCallableExecutor:
         all_dependencies = list(input_tree.nodes.keys()) if input_tree else []
         
         # Step 5: Create isolated execution copy (proven immutability)
+        if not input_entity.root_ecs_id:
+            raise ValueError("Input entity missing root_ecs_id")
+            
         execution_entity = EntityRegistry.get_stored_entity(
             input_entity.root_ecs_id, input_entity.ecs_id
         )
@@ -218,19 +221,19 @@ class EntityNativeCallableExecutor:
             else:
                 result = metadata.original_function(**function_args)
         except Exception as e:
-            cls._record_execution_failure(input_entity, function_name, str(e))
+            cls._record_execution_failure(input_entity, func_name, str(e))
             raise
         
         # Step 7: Create output entity with proper provenance
         output_entity = cls._create_output_entity_with_provenance(
-            result, metadata.output_entity_class, input_entity, function_name
+            result, metadata.output_entity_class, input_entity, func_name
         )
         
         # Step 8: Register output entity (automatic versioning)
         output_entity.promote_to_root()
         
         # Step 9: Record function execution relationship
-        cls._record_function_execution(input_entity, output_entity, function_name)
+        cls._record_function_execution(input_entity, output_entity, func_name)
         
         return output_entity
     
@@ -254,8 +257,18 @@ class EntityNativeCallableExecutor:
         elif isinstance(result, BaseModel):
             output_entity = output_entity_class(**result.model_dump())
         else:
-            # Single return value
-            output_entity = output_entity_class(result=result)
+            # Single return value - determine the correct field name from the output entity class
+            field_names = list(output_entity_class.model_fields.keys())
+            # Exclude entity system fields
+            data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
+                                                                'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                                                'root_ecs_id', 'root_live_id', 'from_storage', 
+                                                                'untyped_data', 'attribute_source'}]
+            if data_fields:
+                # Use the first available data field
+                output_entity = output_entity_class(**{data_fields[0]: result})
+            else:
+                raise ValueError(f"No data fields available in output entity class {output_entity_class.__name__}")
         
         # Set up complete provenance tracking
         for field_name in output_entity.model_fields:
@@ -352,9 +365,9 @@ class EntityNativeCallableRegistry:
         return decorator
     
     @classmethod
-    def execute(cls, name: str, **kwargs) -> Entity:
+    def execute(cls, func_name: str, **kwargs) -> Entity:
         """Execute function using entity-native patterns."""
-        return EntityNativeCallableExecutor.execute(name, **kwargs)
+        return EntityNativeCallableExecutor.execute(func_name, **kwargs)
     
     @classmethod
     def get_metadata(cls, name: str) -> Optional[FunctionMetadata]:
@@ -442,7 +455,8 @@ if __name__ == "__main__":
     
     for func_name in functions:
         info = EntityNativeCallableRegistry.get_function_info(func_name)
-        print(f"\nFunction: {info['name']}")
-        print(f"Signature: {info['signature']}")
-        print(f"Input Entity: {info['input_entity_class']}")
-        print(f"Output Entity: {info['output_entity_class']}")
+        if info:
+            print(f"\nFunction: {info['name']}")
+            print(f"Signature: {info['signature']}")
+            print(f"Input Entity: {info['input_entity_class']}")
+            print(f"Output Entity: {info['output_entity_class']}")
