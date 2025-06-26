@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from enum import Enum
 from collections import deque
 import inspect
+from abstractions.ecs.ecs_address_parser import ECSAddressParser
 
 # Edge type enum
 class EdgeType(str, Enum):
@@ -1077,11 +1078,14 @@ class EntityRegistry():
     2) a lineage registry indexed by lineage_id UUID --> List[root_ecs_id UUID]
     3) a live_id registry indexed by live_id UUID --> Entity [this is used to navigate from live python entity to their root entity when recosntructing a tree from a sub-entity]
     4) a type_registry indexed by entity_type --> List[lineage_id UUID] which is used to get all entities of a given type
+    5) a ecs_id_to_root_id registry indexed by ecs_id UUID --> root_ecs_id UUID which is used to get the root_ecs_id for any given ecs_id
     """
-    tree_registry: Dict[UUID, EntityTree] = Field(default_factory=dict)
-    lineage_registry: Dict[UUID, List[UUID]] = Field(default_factory=dict)
-    live_id_registry: Dict[UUID, "Entity"] = Field(default_factory=dict)
-    type_registry: Dict[Type["Entity"], List[UUID]] = Field(default_factory=dict)
+    tree_registry: Dict[UUID, EntityTree] = {}
+    lineage_registry: Dict[UUID, List[UUID]] = {}
+    live_id_registry: Dict[UUID, "Entity"] = {}
+    ecs_id_to_root_id: Dict[UUID, UUID] = {}
+    type_registry: Dict[Type["Entity"], List[UUID]] = {}
+    
     @classmethod
     def register_entity_tree(cls, entity_tree: EntityTree) -> None:
         """ Register an entity tree in the registry when an entity tree is registered in the tree registry its
@@ -1095,6 +1099,7 @@ class EntityRegistry():
         cls.tree_registry[entity_tree.root_ecs_id] = entity_tree
         for sub_entity in entity_tree.nodes.values():
             cls.live_id_registry[sub_entity.live_id] = sub_entity
+            cls.ecs_id_to_root_id[sub_entity.ecs_id] = entity_tree.root_ecs_id
         if entity_tree.lineage_id not in cls.lineage_registry:
             cls.lineage_registry[entity_tree.lineage_id] = [entity_tree.root_ecs_id]
         else:
@@ -1259,7 +1264,7 @@ class Entity(BaseModel):
     root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's tree")
     from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
     untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
-    attribute_source: Dict[str, Union[Optional[UUID], List[Optional[UUID]],List[None], Dict[str, Optional[UUID]]]] = Field(
+    attribute_source: Dict[str, Union[Optional[UUID], List[UUID], List[Optional[UUID]], List[None], Dict[str, Optional[UUID]]]] = Field(
         default_factory=dict, 
         description="Tracks the source entity for each attribute"
     )
@@ -1511,14 +1516,112 @@ class Entity(BaseModel):
         7) if copy is False we version the old root entity and the new entity otherwise only the new entity
         """
 
-    def borrow_attribute_from(self, new_entity: "Entity", target_field: str, self_field: str) -> None:
+    def borrow_attribute_from(self, source_entity: "Entity", target_field: str, self_field: str) -> None:
         """
-        just a stub for now
-        This method will borrow the attribute from the new entity and set it to the self field and update the attribute_source to reflect the new entity
-        we want to be sure to reference the data we do not wnat it to be modified in place by the source entity 
-        so we have to copy the data, of course we need to first validate that the data contained is of the correct type
-        we will worry later about borrowing data from a container
+        Borrow an attribute from another entity and set it to the self field with provenance tracking.
+        
+        This method implements data composition by copying data from source_entity.target_field 
+        to self.self_field, ensuring no in-place modifications and tracking provenance.
+        
+        Args:
+            source_entity: The entity to borrow from  
+            target_field: The field name in the source entity to borrow from
+            self_field: The field name in this entity to set
+            
+        Raises:
+            ValueError: If fields don't exist or type validation fails
         """
+        # Step 1: Basic validation
+        if self_field not in self.model_fields:
+            raise ValueError(f"Field '{self_field}' does not exist in {self.__class__.__name__}")
+        
+        if not hasattr(source_entity, target_field):
+            raise ValueError(f"Field '{target_field}' does not exist in {source_entity.__class__.__name__}")
+        
+        # Step 2: Get source value
+        source_value = getattr(source_entity, target_field)
+        
+        # Step 3: Safe copying with container awareness (prevent in-place modification)
+        import copy
+        if isinstance(source_value, (list, dict, set, tuple)):
+            # Deep copy containers to prevent modification of source
+            borrowed_value = copy.deepcopy(source_value)
+        elif isinstance(source_value, Entity):
+            # For entities, reference them directly (don't copy)
+            borrowed_value = source_value
+        else:
+            # For primitives, simple assignment is fine
+            borrowed_value = source_value
+        
+        # Step 4: Set the value on this entity
+        setattr(self, self_field, borrowed_value)
+        
+        # Step 5: Update attribute_source for provenance tracking
+        if isinstance(borrowed_value, list):
+            # For lists, create a source list pointing to source entity
+            self.attribute_source[self_field] = [source_entity.ecs_id] * len(borrowed_value)
+        elif isinstance(borrowed_value, dict):
+            # For dicts, create a source dict pointing to source entity  
+            self.attribute_source[self_field] = {
+                str(k): source_entity.ecs_id for k in borrowed_value.keys()
+            }
+        else:
+            # For simple fields and entities, point to source entity
+            self.attribute_source[self_field] = source_entity.ecs_id
+
+    def borrow_from_address(self, address: str, target_field: str) -> None:
+        """
+        Borrow an attribute using ECS address string syntax.
+        
+        Args:
+            address: ECS address like "@uuid.field.subfield"
+            target_field: The field name in this entity to set
+            
+        Example:
+            entity.borrow_from_address("@f65cf3bd-9392-499f-8f57-dba701f5069c.name", "student_name")
+        """
+       
+        
+        entity_id, field_path = ECSAddressParser.parse_address(address)
+        
+        # Get source entity
+        root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
+        if not root_ecs_id:
+            raise ValueError(f"Entity {entity_id} not found in registry")
+        
+        source_entity = EntityRegistry.get_stored_entity(root_ecs_id, entity_id)
+        if not source_entity:
+            raise ValueError(f"Could not retrieve entity {entity_id}")
+        
+        # For now, support only single-field borrowing (first field in path)
+        source_field = field_path[0]
+        
+        # Use existing borrow_attribute_from method
+        self.borrow_attribute_from(source_entity, source_field, target_field)
+        
+        # TODO: Support nested field paths like "record.gpa"
+
+    @classmethod
+    def create_from_address_dict(cls, address_mapping: Dict[str, str]) -> "Entity":
+        """
+        Factory method to create entity by borrowing from multiple addresses.
+        
+        Args:
+            address_mapping: Dict mapping target fields to ECS addresses
+            
+        Example:
+            Student.create_from_address_dict({
+                "name": "@student_uuid.name",
+                "age": "@student_uuid.age", 
+                "gpa": "@record_uuid.gpa"
+            })
+        """
+        instance = cls()
+        
+        for target_field, address in address_mapping.items():
+            instance.borrow_from_address(address, target_field)
+        
+        return instance
 
 
     def attach(self, new_root_entity: "Entity") -> None:
