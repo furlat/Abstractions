@@ -19,7 +19,7 @@ from uuid import uuid4
 
 # Import our entity system
 from abstractions.ecs.entity import Entity, EntityRegistry, EntityWithPrimitives
-from abstractions.ecs.entity_native_callable_registry import EntityNativeCallableRegistry
+from abstractions.ecs.callable_registry import CallableRegistry
 
 # Import our addressing system
 from abstractions.ecs.ecs_address_parser import get, is_address
@@ -59,7 +59,7 @@ async def main():
         processing_time: float
 
     # Register a sync function
-    @EntityNativeCallableRegistry.register("analyze_student_performance")
+    @CallableRegistry.register("analyze_student_performance")
     def analyze_student_performance(
         name: str, 
         age: int, 
@@ -89,7 +89,7 @@ async def main():
         )
 
     # Register an async function
-    @EntityNativeCallableRegistry.register("analyze_student_performance_async")
+    @CallableRegistry.register("analyze_student_performance_async")
     async def analyze_student_performance_async(
         name: str, 
         age: int, 
@@ -156,7 +156,7 @@ async def main():
     print("\n⚡ Executing sync function with async runtime...")
 
     # Execute sync function using async execution
-    result_entity = await EntityNativeCallableRegistry.aexecute(
+    result_entity = await CallableRegistry.aexecute(
         "analyze_student_performance",
         **{
             "name": f"@{student.ecs_id}.name",  # Borrow from student entity
@@ -176,7 +176,7 @@ async def main():
     print("\n⚡ Executing async function...")
 
     # Execute async function
-    async_result_entity = await EntityNativeCallableRegistry.aexecute(
+    async_result_entity = await CallableRegistry.aexecute(
         "analyze_student_performance_async",
         **{
             "name": f"@{student.ecs_id}.name",
@@ -213,7 +213,7 @@ async def main():
         }
     ]
 
-    batch_results = await EntityNativeCallableRegistry.execute_batch(batch_executions)
+    batch_results = await CallableRegistry.execute_batch(batch_executions)
     
     print(f"✅ Executed {len(batch_results)} functions concurrently!")
     for i, result in enumerate(batch_results):
@@ -231,9 +231,9 @@ async def main():
     print(f"Live entities in memory: {len(EntityRegistry.live_id_registry)}")
 
     print("\n🎯 Function registry info:")
-    functions = EntityNativeCallableRegistry.list_functions()
+    functions = CallableRegistry.list_functions()
     for func_name in functions:
-        info = EntityNativeCallableRegistry.get_function_info(func_name)
+        info = CallableRegistry.get_function_info(func_name)
         if info:
             print(f"Function: {info['name']}")
             print(f"  Signature: {info['signature']}")

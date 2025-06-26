@@ -1,259 +1,410 @@
 """
-Registry module for managing callable tools as versioned entities.
+Entity-Native Callable Registry: Pure Entity System Integration
 
-This module provides a global registry for managing callable functions. When a 
-function is registered, it is wrapped in a `CallableFunction` entity, which 
-stores its signature and derived JSON schemas. This entity is then registered with
-the main `EntityRegistry`, making the function's definition itself a versioned
-artifact in the system.
+This implements the design document's vision of entity-native function execution
+using all our proven patterns:
+- Entity factories with create_model
+- String addressing via @uuid.field syntax
+- Entity borrowing with borrow_from_address()
+- Automatic dependency discovery via build_entity_tree()
+- Immutable execution via get_stored_entity()
+- Complete provenance via attribute_source
 """
 
-from typing import Dict, Any, Callable, Optional, List, Union, get_type_hints, Type, Tuple, cast
+from typing import Dict, Any, Callable, Optional, List, Union, get_type_hints, Type, Set
 from pydantic import create_model, BaseModel
 from inspect import signature, iscoroutinefunction, getdoc
-import functools
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import asyncio
-import json
 from uuid import UUID
 
-from ecs.entity import Entity, EntityRegistry, build_entity_tree
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree
+from abstractions.ecs.ecs_address_parser import EntityReferenceResolver  
+from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking
+import concurrent.futures
 
-# --- Schema Derivation Helpers ---
 
-def derive_input_model(func: Callable) -> Type[BaseModel]:
-    """Derive a Pydantic model from function type hints for input validation."""
-    type_hints = get_type_hints(func)
-    sig = signature(func)
-    
-    # Remove return type for input model
-    if 'return' in type_hints:
-        del type_hints['return']
-
-    # Create a Pydantic model from the function's arguments
-    input_fields: Dict[str, Tuple[Any, Any]] = {
-        param.name: (type_hints.get(param.name, Any), param.default if param.default is not param.empty else ...)
-        for param in sig.parameters.values()
-    }
-    
-    InputModel = create_model(f"{func.__name__}Input", **cast(Any, input_fields), __module__=func.__module__)
-    return InputModel
-
-def derive_output_model(func: Callable) -> Type[BaseModel]:
-    """Derive a Pydantic model from function return type for output validation."""
-    type_hints = get_type_hints(func)
-    
-    if 'return' not in type_hints:
-        raise ValueError(f"Function {func.__name__} must have a return type hint")
-    
-    output_type = type_hints['return']
-    if isinstance(output_type, type) and issubclass(output_type, BaseModel):
-        OutputModel = output_type
-    else:
-        output_fields: Dict[str, Tuple[Any, Any]] = {"result": (output_type, ...)}
-        OutputModel = create_model(f"{func.__name__}Output", **cast(Any, output_fields), __module__=func.__module__)
-    
-    return OutputModel
-
-# --- Entity Model for Functions ---
-
-class CallableFunction(Entity):
-    """An Entity that represents a registered callable function."""
+@dataclass
+class FunctionMetadata:
+    """Clean metadata storage - leverages proven dataclass patterns."""
     name: str
     signature_str: str
-    docstring: Optional[str] = None
-    input_model_json_schema: Dict[str, Any] # Store the JSON schema for persistence
-    output_model_json_schema: Dict[str, Any] # Store the JSON schema for persistence
+    docstring: Optional[str]
     is_async: bool
+    original_function: Callable
+    
+    # Dynamic Entity classes created with create_model
+    input_entity_class: Type[Entity]
+    output_entity_class: Type[Entity]
+    
+    # For future Modal Sandbox integration
+    serializable_signature: Dict[str, Any]
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # These will be set at runtime after deserialization or during registration
-    _input_model: Optional[Type[BaseModel]] = None
-    _output_model: Optional[Type[BaseModel]] = None
 
-    def __init__(self, **data: Any):
-        super().__init__(**data)
-        # Reconstruct models if schemas are present and models are not already set
-        if self.input_model_json_schema and self._input_model is None:
-            input_fields_from_schema: Dict[str, Tuple[Any, Any]] = {
-                k: (Any, ...) for k in self.input_model_json_schema.get("properties", {}).keys()
-            }
-            self._input_model = create_model(
-                f"{self.name}Input", 
-                **cast(Any, input_fields_from_schema),
-                __module__=self.__module__
-            )
-        if self.output_model_json_schema and self._output_model is None:
-            output_fields_from_schema: Dict[str, Tuple[Any, Any]] = {
-                k: (Any, ...) for k in self.output_model_json_schema.get("properties", {}).keys()
-            }
-            self._output_model = create_model(
-                f"{self.name}Output", 
-                **cast(Any, output_fields_from_schema),
-                __module__=self.__module__
-            )
-
-    @property
-    def input_model(self) -> Type[BaseModel]:
-        if self._input_model is None:
-            raise ValueError("Input model not initialized. This should happen during registration or deserialization.")
-        return self._input_model
-
-    @property
-    def output_model(self) -> Type[BaseModel]:
-        if self._output_model is None:
-            raise ValueError("Output model not initialized. This should happen during registration or deserialization.")
-        return self._output_model
-
-# --- Entity Reference Resolution (from previous step) ---
-
-def _resolve_entity_references(data: Any) -> Any:
-    """Recursively scans a data structure and resolves any entity reference strings."""
-    if isinstance(data, dict):
-        return {k: _resolve_entity_references(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_resolve_entity_references(v) for v in data]
-    elif isinstance(data, str) and data.startswith('@'):
-        return _fetch_entity_attribute(data)
-    else:
-        return data
-
-def _fetch_entity_attribute(reference: str) -> Any:
-    """Fetches an entity or its attribute based on a reference string."""
-    try:
-        ref = reference.lstrip('@')
-        path_parts = ref.split('.')
-        ecs_id = UUID(path_parts[0])
-        attr_path = path_parts[1:]
+def create_entity_from_function_signature(
+    func: Callable,
+    entity_type: str,  # "Input" or "Output"  
+    function_name: str
+) -> Type[Entity]:
+    """
+    Entity factory using create_model - proven dynamic class creation pattern.
+    
+    Leverages:
+    - Pydantic's create_model for robust dynamic class creation
+    - Entity base class for full versioning/registry integration
+    - Proper field type preservation (no Any type degradation)
+    """
+    
+    # Step 1: Extract function signature
+    sig = signature(func)
+    type_hints = get_type_hints(func)
+    
+    # Step 2: Build field definitions for create_model
+    field_definitions: Dict[str, Any] = {}
+    
+    if entity_type == "Input":
+        # Remove return type for input entity
+        type_hints.pop('return', None)
         
-        root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(ecs_id)
-        if not root_ecs_id:
-            raise ValueError(f"Entity with ecs_id {ecs_id} not found in any registered tree.")
-
-        entity = EntityRegistry.get_stored_entity(root_ecs_id, ecs_id)
-        if not entity:
-            raise ValueError(f"Could not retrieve entity {ecs_id} from tree {root_ecs_id}")
-
-        if not attr_path:
-            return entity
+        for param in sig.parameters.values():
+            param_type = type_hints.get(param.name, Any)
+            
+            if param.default is param.empty:
+                # Required field
+                field_definitions[param.name] = (param_type, ...)
+            else:
+                # Optional field with default
+                field_definitions[param.name] = (param_type, param.default)
+                
+    elif entity_type == "Output":
+        # Handle return type
+        return_type = type_hints.get('return', Any)
         
-        return functools.reduce(getattr, attr_path, entity)
+        if isinstance(return_type, type) and issubclass(return_type, BaseModel):
+            # If return type is already a Pydantic model, extract its fields
+            for field_name, field_info in return_type.model_fields.items():
+                field_type = return_type.__annotations__.get(field_name, Any)
+                if hasattr(field_info, 'default') and field_info.default is not ...:
+                    field_definitions[field_name] = (field_type, field_info.default)
+                else:
+                    field_definitions[field_name] = (field_type, ...)
+        else:
+            # Simple return type
+            field_definitions['result'] = (return_type, ...)
+    
+    # Step 3: Create Entity subclass using create_model
+    entity_class_name = f"{function_name}{entity_type}Entity"
+    
+    EntityClass = create_model(
+        entity_class_name,
+        __base__=Entity,  # Inherit from our Entity system
+        __module__=func.__module__,
+        **field_definitions
+    )
+    
+    # Step 4: Set proper qualname for debugging
+    EntityClass.__qualname__ = f"{function_name}.{entity_class_name}"
+    
+    return EntityClass
 
-    except (ValueError, AttributeError, KeyError) as e:
-        raise ValueError(f"Failed to resolve entity reference '{reference}': {e}") from e
 
-# --- Main CallableRegistry Class ---
+
 
 class CallableRegistry:
-    """A registry for functions that are stored and versioned as Entities."""
-    _registry: Dict[str, Callable] = {}
-
+    """
+    Clean registry using proven dataclass patterns.
+    
+    No Entity inheritance - pure separation of concerns.
+    Leverages all entity system capabilities without over-engineering.
+    """
+    
+    _functions: Dict[str, FunctionMetadata] = {}
+    
     @classmethod
     def register(cls, name: str) -> Callable:
-        """A decorator to register a function, creating a versioned Entity for it."""
+        """Register function with entity factory integration."""
+        
         def decorator(func: Callable) -> Callable:
-            try:
-                # 1. Derive Pydantic models from the function
-                input_model = derive_input_model(func)
-                output_model = derive_output_model(func)
-                
-                # 2. Create a CallableFunction entity instance
-                func_entity = CallableFunction(
-                    name=name,
-                    signature_str=str(signature(func)),
-                    docstring=getdoc(func),
-                    input_model_json_schema=input_model.model_json_schema(),
-                    output_model_json_schema=output_model.model_json_schema(),
-                    is_async=iscoroutinefunction(func)
-                )
-                # Manually set the runtime models - this is the key change
-                func_entity._input_model = input_model
-                func_entity._output_model = output_model
-
-                # This makes the function entity its own root and registers it
-                func_entity.promote_to_root()
-
-                # 3. Store the raw callable for execution
-                cls._registry[name] = func
-                
-                print(f"Successfully registered '{name}'.")
-                return func
-
-            except Exception as e:
-                print(f"Failed to register function '{name}': {e}")
-                raise
-
+            # Validate function has proper type hints
+            type_hints = get_type_hints(func)
+            if 'return' not in type_hints:
+                raise ValueError(f"Function {func.__name__} must have return type hint")
+            
+            # Create Entity classes using proven factory
+            input_entity_class = create_entity_from_function_signature(
+                func, "Input", name
+            )
+            output_entity_class = create_entity_from_function_signature(
+                func, "Output", name
+            )
+            
+            # Store clean metadata
+            metadata = FunctionMetadata(
+                name=name,
+                signature_str=str(signature(func)),
+                docstring=getdoc(func),
+                is_async=iscoroutinefunction(func),
+                original_function=func,
+                input_entity_class=input_entity_class,
+                output_entity_class=output_entity_class,
+                serializable_signature=cls._create_serializable_signature(func)
+            )
+            
+            cls._functions[name] = metadata
+            
+            print(f"✅ Registered '{name}' with entity-native execution")
+            return func
+        
         return decorator
-
+    
     @classmethod
-    def get_callable(cls, name: str) -> Callable:
-        """Gets the raw callable function from the registry."""
-        if name not in cls._registry:
-            raise ValueError(f"Callable '{name}' not found.")
-        return cls._registry[name]
-
+    def execute(cls, func_name: str, **kwargs) -> Entity:
+        """Execute function using entity-native patterns (sync wrapper)."""
+        return asyncio.run(cls.aexecute(func_name, **kwargs))
+    
     @classmethod
-    def get_function_entity(cls, name: str) -> Optional[CallableFunction]:
-        """Retrieves the versioned Entity for a given function name."""
-        # This is a simplified lookup. A real implementation would need a more robust
-        # way to find the latest version of a function entity by name.
-        for tree in EntityRegistry.tree_registry.values():
-            root_entity = tree.get_entity(tree.root_ecs_id)
-            if isinstance(root_entity, CallableFunction) and root_entity.name == name:
-                return root_entity
-        return None
-
+    async def aexecute(cls, func_name: str, **kwargs) -> Entity:
+        """Execute function using entity-native patterns (async)."""
+        return await cls._execute_async(func_name, **kwargs)
+    
     @classmethod
-    def execute(cls, name: str, **kwargs: Any) -> Any:
-        """Resolves entity references and executes the callable synchronously."""
-        func = cls.get_callable(name)
+    async def _create_input_entity_with_borrowing(
+        cls,
+        input_entity_class: Type[Entity],
+        kwargs: Dict[str, Any]
+    ) -> Entity:
+        """
+        Create input entity using proven borrowing patterns.
         
-        # 1. Resolve any @... references in the input arguments
-        resolved_kwargs = _resolve_entity_references(kwargs)
-
-        # 2. Validate input using the stored Pydantic model
-        func_entity = cls.get_function_entity(name)
-        if not func_entity:
-            raise ValueError(f"Function entity for '{name}' not found in registry.")
-
+        Leverages:
+        - create_composite_entity() from functional_api.py
+        - borrow_from_address() from entity.py
+        - Automatic attribute_source tracking
+        """
+        
+        # Use proven composite entity creation
+        input_entity = create_composite_entity(
+            entity_class=input_entity_class,
+            field_mappings=kwargs,
+            register=False  # We'll register it properly below
+        )
+        
+        # Track dependencies (leverages EntityReferenceResolver)
+        _, dependencies = resolve_data_with_tracking(kwargs)
+        
+        return input_entity
+    
+    @classmethod
+    async def _execute_async(cls, func_name: str, **kwargs) -> Entity:
+        """
+        Execute function with complete entity system integration.
+        
+        Leverages proven patterns:
+        1. Composite entity creation
+        2. Automatic tree building and registration
+        3. Immutable execution boundaries
+        4. Provenance tracking
+        5. Output entity creation with proper lineage
+        """
+        
+        # Step 1: Get function metadata
+        metadata = cls.get_metadata(func_name)
+        if not metadata:
+            raise ValueError(f"Function '{func_name}' not registered")
+        
+        # Step 2: Create input entity with borrowing (proven pattern)
+        input_entity = await cls._create_input_entity_with_borrowing(
+            metadata.input_entity_class, kwargs
+        )
+        
+        # Step 3: Register input entity (leverages build_entity_tree)
+        # This automatically discovers ALL nested entity dependencies
+        input_entity.promote_to_root()
+        
+        # Step 4: Get dependency information (automatic via entity system)
+        input_tree = input_entity.get_tree()
+        all_dependencies = list(input_tree.nodes.keys()) if input_tree else []
+        
+        # Step 5: Create isolated execution copy (proven immutability)
+        if not input_entity.root_ecs_id:
+            raise ValueError("Input entity missing root_ecs_id")
+            
+        execution_entity = EntityRegistry.get_stored_entity(
+            input_entity.root_ecs_id, input_entity.ecs_id
+        )
+        
+        if not execution_entity:
+            raise ValueError("Failed to create isolated execution environment")
+        
+        # Step 6: Execute function with entity boundaries
+        function_args = execution_entity.model_dump(exclude={
+            'ecs_id', 'live_id', 'created_at', 'forked_at', 
+            'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+            'root_ecs_id', 'root_live_id', 'from_storage', 
+            'untyped_data', 'attribute_source'
+        })
+        
         try:
-            # Use the pre-derived input model for validation
-            validated_input = func_entity.input_model.model_validate(resolved_kwargs)
+            if metadata.is_async:
+                result = await metadata.original_function(**function_args)
+            else:
+                # Run sync function in executor to maintain async flow
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, lambda: metadata.original_function(**function_args))
         except Exception as e:
-            raise ValueError(f"Input validation failed for '{name}': {e}") from e
-
-        # 3. Execute the function
-        response = func(**validated_input.model_dump())
+            await cls._record_execution_failure(input_entity, func_name, str(e))
+            raise
         
-        # 4. (Optional) Validate and wrap output
-        if isinstance(response, BaseModel):
-            return response
-        return {"result": response}
-
+        # Step 7: Create output entity with proper provenance
+        output_entity = await cls._create_output_entity_with_provenance(
+            result, metadata.output_entity_class, input_entity, func_name
+        )
+        
+        # Step 8: Register output entity (automatic versioning)
+        output_entity.promote_to_root()
+        
+        # Step 9: Record function execution relationship
+        await cls._record_function_execution(input_entity, output_entity, func_name)
+        
+        return output_entity
+    
     @classmethod
-    async def aexecute(cls, name: str, **kwargs: Any) -> Any:
-        """Resolves entity references and executes the callable asynchronously."""
-        func = cls.get_callable(name)
+    async def _create_output_entity_with_provenance(
+        cls,
+        result: Any,
+        output_entity_class: Type[Entity],
+        input_entity: Entity,
+        function_name: str
+    ) -> Entity:
+        """
+        Create output entity with complete provenance tracking.
         
-        # 1. Resolve references
-        resolved_kwargs = _resolve_entity_references(kwargs)
-
-        # 2. Validate input
-        func_entity = cls.get_function_entity(name)
-        if not func_entity:
-            raise ValueError(f"Function entity for '{name}' not found in registry.")
-
-        try:
-            # Use the pre-derived input model for validation
-            validated_input = func_entity.input_model.model_validate(resolved_kwargs)
-        except Exception as e:
-            raise ValueError(f"Input validation failed for '{name}': {e}") from e
-
-        # 3. Execute function (handling both sync and async)
-        if iscoroutinefunction(func):
-            response = await func(**validated_input.model_dump())
+        Leverages attribute_source system for full audit trails.
+        """
+        
+        # Handle different result types
+        if isinstance(result, dict):
+            output_entity = output_entity_class(**result)
+        elif isinstance(result, BaseModel):
+            output_entity = output_entity_class(**result.model_dump())
         else:
-            response = await asyncio.to_thread(func, **validated_input.model_dump())
-
-        # 4. (Optional) Validate and wrap output
-        if isinstance(response, BaseModel):
-            return response
-        return {"result": response}
+            # Single return value - determine the correct field name from the output entity class
+            field_names = list(output_entity_class.model_fields.keys())
+            # Exclude entity system fields
+            data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
+                                                                'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                                                'root_ecs_id', 'root_live_id', 'from_storage', 
+                                                                'untyped_data', 'attribute_source'}]
+            if data_fields:
+                # Use the first available data field
+                output_entity = output_entity_class(**{data_fields[0]: result})
+            else:
+                raise ValueError(f"No data fields available in output entity class {output_entity_class.__name__}")
+        
+        # Set up complete provenance tracking
+        for field_name in output_entity.model_fields:
+            if field_name not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
+                                 'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                 'root_ecs_id', 'root_live_id', 'from_storage', 
+                                 'untyped_data', 'attribute_source'}:
+                
+                field_value = getattr(output_entity, field_name)
+                
+                # Container-aware provenance (leverages proven patterns)
+                if isinstance(field_value, list):
+                    output_entity.attribute_source[field_name] = [
+                        input_entity.ecs_id for _ in field_value
+                    ]
+                elif isinstance(field_value, dict):
+                    output_entity.attribute_source[field_name] = {
+                        str(k): input_entity.ecs_id for k in field_value.keys()
+                    }
+                else:
+                    output_entity.attribute_source[field_name] = input_entity.ecs_id
+        
+        return output_entity
+    
+    @classmethod
+    async def _record_function_execution(
+        cls,
+        input_entity: Entity,
+        output_entity: Entity, 
+        function_name: str
+    ) -> None:
+        """Record function execution in entity lineage."""
+        # Future enhancement: Create FunctionExecution entity
+        # For now, provenance is handled through attribute_source
+        pass
+    
+    @classmethod
+    async def _record_execution_failure(
+        cls,
+        input_entity: Entity,
+        function_name: str,
+        error_message: str
+    ) -> None:
+        """Record execution failure for audit trails."""
+        # Future enhancement: Create FailedExecution entity
+        pass
+    
+    @classmethod
+    async def execute_batch(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+        """Execute multiple functions concurrently."""
+        async def execute_single(execution_config: Dict[str, Any]) -> Entity:
+            func_name = execution_config.pop('func_name')
+            return await cls.aexecute(func_name, **execution_config)
+        
+        tasks = [execute_single(config.copy()) for config in executions]
+        return await asyncio.gather(*tasks)
+    
+    @classmethod
+    def execute_batch_sync(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+        """Execute multiple functions concurrently (sync wrapper)."""
+        return asyncio.run(cls.execute_batch(executions))
+    
+    @classmethod
+    def get_metadata(cls, name: str) -> Optional[FunctionMetadata]:
+        """Get function metadata."""
+        return cls._functions.get(name)
+    
+    @classmethod
+    def list_functions(cls) -> List[str]:
+        """List all registered functions."""
+        return list(cls._functions.keys())
+    
+    @classmethod
+    def get_function_info(cls, name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed function information."""
+        metadata = cls._functions.get(name)
+        if not metadata:
+            return None
+            
+        return {
+            'name': metadata.name,
+            'signature': metadata.signature_str,
+            'docstring': metadata.docstring,
+            'is_async': metadata.is_async,
+            'created_at': metadata.created_at,
+            'input_entity_class': metadata.input_entity_class.__name__,
+            'output_entity_class': metadata.output_entity_class.__name__
+        }
+    
+    @classmethod
+    def _create_serializable_signature(cls, func: Callable) -> Dict[str, Any]:
+        """Create serializable signature for Modal Sandbox preparation."""
+        sig = signature(func)
+        type_hints = get_type_hints(func)
+        
+        return {
+            'parameters': {
+                param.name: {
+                    'type': str(type_hints.get(param.name, 'Any')),
+                    'default': str(param.default) if param.default is not param.empty else None,
+                    'kind': param.kind.name
+                }
+                for param in sig.parameters.values()
+            },
+            'return_type': str(type_hints.get('return', 'Any'))
+        }

@@ -146,7 +146,7 @@ class CallableEntityResolver:
 ### 4. Entity-Native Execution Engine (Pure Entity System Integration)
 
 ```python
-class EntityNativeCallableExecutor:
+class CallableExecutor:
     """
     Pure entity system integration - leverages ALL our proven patterns.
     
@@ -351,7 +351,7 @@ class CallableRegistry:
     @classmethod
     def execute(cls, name: str, **kwargs) -> Entity:
         """Execute function using entity-native patterns."""
-        return EntityNativeCallableExecutor.execute(name, **kwargs)
+        return CallableExecutor.execute(name, **kwargs)
     
     @classmethod
     def get_metadata(cls, name: str) -> Optional[FunctionMetadata]:
@@ -449,7 +449,7 @@ next_result = CallableRegistry.execute("generate_report",
 1. **FunctionMetadata dataclass** - Clean replacement for CallableFunction
 2. **Entity factory with create_model** - Robust dynamic class creation
 3. **CallableEntityResolver** - Enhanced borrowing integration
-4. **Basic EntityNativeCallableExecutor** - Core execution engine
+4. **Basic CallableExecutor** - Core execution engine
 
 ### Phase 2: Advanced Integration (2-3 days)
 1. **Complete provenance tracking** - attribute_source integration

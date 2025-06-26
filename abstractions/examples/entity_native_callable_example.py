@@ -20,7 +20,7 @@ from uuid import uuid4
 
 # Import our entity system
 from abstractions.ecs.entity import Entity, EntityRegistry, EntityWithPrimitives
-from abstractions.ecs.entity_native_callable_registry import EntityNativeCallableRegistry
+from abstractions.ecs.callable_registry import CallableRegistry
 
 # Import our addressing system
 from abstractions.ecs.ecs_address_parser import get, is_address
@@ -50,7 +50,7 @@ class AnalysisResult(BaseModel):
     analysis_notes: str
 
 # Register a function with entity-native execution
-@EntityNativeCallableRegistry.register("analyze_student_performance")
+@CallableRegistry.register("analyze_student_performance")
 def analyze_student_performance(
     name: str, 
     age: int, 
@@ -108,7 +108,7 @@ print(f"Grades via address: {get(f'@{record.ecs_id}.grades')}")
 print("\n⚡ Executing function with entity-native patterns...")
 
 # Execute function using entity addressing (the revolutionary part!)
-result_entity = EntityNativeCallableRegistry.execute(
+result_entity = CallableRegistry.execute(
     "analyze_student_performance",
     **{
         "name": f"@{student.ecs_id}.name",  # Borrow from student entity
@@ -144,7 +144,7 @@ print("\n🔄 Demonstrate entity versioning through function calls...")
 
 # Execute the same function with different parameters
 print("Executing with higher threshold...")
-result2_entity = EntityNativeCallableRegistry.execute(
+result2_entity = CallableRegistry.execute(
     "analyze_student_performance",
     **{
         "name": f"@{student.ecs_id}.name",
@@ -165,9 +165,9 @@ print(f"Total lineages tracked: {len(EntityRegistry.lineage_registry)}")
 print(f"Live entities in memory: {len(EntityRegistry.live_id_registry)}")
 
 print("\n🎯 Function registry info:")
-functions = EntityNativeCallableRegistry.list_functions()
+functions = CallableRegistry.list_functions()
 for func_name in functions:
-    info = EntityNativeCallableRegistry.get_function_info(func_name)
+    info = CallableRegistry.get_function_info(func_name)
     if info:
         print(f"Function: {info['name']}")
         print(f"  Signature: {info['signature']}")
