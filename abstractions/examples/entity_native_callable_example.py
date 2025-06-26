@@ -122,11 +122,12 @@ print(f"✅ Function executed! Result entity: {result_entity.ecs_id}")
 print(f"✅ Result is registered in EntityRegistry with full versioning")
 
 print("\n📊 Function execution results:")
-print(f"Student Name: {result_entity.student_name}")
-print(f"Average Grade: {result_entity.average_grade}")
-print(f"Status: {result_entity.status}")
-print(f"Total Courses: {result_entity.total_courses}")
-print(f"Analysis Notes: {result_entity.analysis_notes}")
+if hasattr(result_entity, 'student_name'):
+    print(f"Student Name: {getattr(result_entity, 'student_name', 'N/A')}")
+    print(f"Average Grade: {getattr(result_entity, 'average_grade', 'N/A')}")
+    print(f"Status: {getattr(result_entity, 'status', 'N/A')}")
+    print(f"Total Courses: {getattr(result_entity, 'total_courses', 'N/A')}")
+    print(f"Analysis Notes: {getattr(result_entity, 'analysis_notes', 'N/A')}")
 
 print("\n🔍 Provenance tracking (attribute_source):")
 for field_name, source in result_entity.attribute_source.items():
@@ -154,7 +155,8 @@ result2_entity = EntityNativeCallableRegistry.execute(
 )
 
 print(f"✅ Second execution result: {result2_entity.ecs_id}")
-print(f"New status: {result2_entity.status}")
+if hasattr(result2_entity, 'status'):
+    print(f"New status: {getattr(result2_entity, 'status', 'N/A')}")
 print(f"Different entity ID proves versioning: {result_entity.ecs_id != result2_entity.ecs_id}")
 
 print("\n📈 Registry statistics:")

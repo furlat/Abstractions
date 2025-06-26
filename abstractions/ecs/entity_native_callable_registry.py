@@ -20,8 +20,9 @@ import asyncio
 from uuid import UUID
 
 from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree
-from abstractions.ecs.ecs_address_parser import EntityReferenceResolver
+from abstractions.ecs.ecs_address_parser import EntityReferenceResolver  
 from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking
+import concurrent.futures
 
 
 @dataclass
@@ -124,7 +125,7 @@ class CallableEntityResolver:
         self.base_resolver = EntityReferenceResolver()
         self.referenced_entities: Set[UUID] = set()
     
-    def create_input_entity_with_borrowing(
+    async def create_input_entity_with_borrowing(
         self, 
         input_entity_class: Type[Entity],
         kwargs: Dict[str, Any]
@@ -165,7 +166,7 @@ class EntityNativeCallableExecutor:
     """
     
     @classmethod
-    def execute(cls, func_name: str, **kwargs) -> Entity:
+    async def execute(cls, func_name: str, **kwargs) -> Entity:
         """
         Execute function with complete entity system integration.
         
@@ -184,7 +185,7 @@ class EntityNativeCallableExecutor:
         
         # Step 2: Create input entity with borrowing (proven pattern)
         resolver = CallableEntityResolver()
-        input_entity = resolver.create_input_entity_with_borrowing(
+        input_entity = await resolver.create_input_entity_with_borrowing(
             metadata.input_entity_class, kwargs
         )
         
@@ -217,15 +218,17 @@ class EntityNativeCallableExecutor:
         
         try:
             if metadata.is_async:
-                result = asyncio.run(metadata.original_function(**function_args))
+                result = await metadata.original_function(**function_args)
             else:
-                result = metadata.original_function(**function_args)
+                # Run sync function in executor to maintain async flow
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, lambda: metadata.original_function(**function_args))
         except Exception as e:
-            cls._record_execution_failure(input_entity, func_name, str(e))
+            await cls._record_execution_failure(input_entity, func_name, str(e))
             raise
         
         # Step 7: Create output entity with proper provenance
-        output_entity = cls._create_output_entity_with_provenance(
+        output_entity = await cls._create_output_entity_with_provenance(
             result, metadata.output_entity_class, input_entity, func_name
         )
         
@@ -233,12 +236,12 @@ class EntityNativeCallableExecutor:
         output_entity.promote_to_root()
         
         # Step 9: Record function execution relationship
-        cls._record_function_execution(input_entity, output_entity, func_name)
+        await cls._record_function_execution(input_entity, output_entity, func_name)
         
         return output_entity
     
     @classmethod
-    def _create_output_entity_with_provenance(
+    async def _create_output_entity_with_provenance(
         cls,
         result: Any,
         output_entity_class: Type[Entity],
@@ -294,7 +297,7 @@ class EntityNativeCallableExecutor:
         return output_entity
     
     @classmethod
-    def _record_function_execution(
+    async def _record_function_execution(
         cls,
         input_entity: Entity,
         output_entity: Entity, 
@@ -306,7 +309,7 @@ class EntityNativeCallableExecutor:
         pass
     
     @classmethod
-    def _record_execution_failure(
+    async def _record_execution_failure(
         cls,
         input_entity: Entity,
         function_name: str,
@@ -366,8 +369,28 @@ class EntityNativeCallableRegistry:
     
     @classmethod
     def execute(cls, func_name: str, **kwargs) -> Entity:
-        """Execute function using entity-native patterns."""
-        return EntityNativeCallableExecutor.execute(func_name, **kwargs)
+        """Execute function using entity-native patterns (sync wrapper)."""
+        return asyncio.run(cls.aexecute(func_name, **kwargs))
+    
+    @classmethod
+    async def aexecute(cls, func_name: str, **kwargs) -> Entity:
+        """Execute function using entity-native patterns (async)."""
+        return await EntityNativeCallableExecutor.execute(func_name, **kwargs)
+    
+    @classmethod
+    async def execute_batch(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+        """Execute multiple functions concurrently."""
+        async def execute_single(execution_config: Dict[str, Any]) -> Entity:
+            func_name = execution_config.pop('func_name')
+            return await cls.aexecute(func_name, **execution_config)
+        
+        tasks = [execute_single(config.copy()) for config in executions]
+        return await asyncio.gather(*tasks)
+    
+    @classmethod
+    def execute_batch_sync(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+        """Execute multiple functions concurrently (sync wrapper)."""
+        return asyncio.run(cls.execute_batch(executions))
     
     @classmethod
     def get_metadata(cls, name: str) -> Optional[FunctionMetadata]:
@@ -420,14 +443,21 @@ if __name__ == "__main__":
     from pydantic import BaseModel
     from typing import List
     
-    # Define result model
+    # Define result models
     class AnalysisResult(BaseModel):
         student_name: str
         average_grade: float
         status: str
         total_courses: int
     
-    # Register function with automatic Entity class creation
+    class AsyncAnalysisResult(BaseModel):
+        student_name: str
+        average_grade: float
+        status: str
+        total_courses: int
+        processing_time: float
+    
+    # Register sync function
     @EntityNativeCallableRegistry.register("analyze_student_performance")
     def analyze_student_performance(
         name: str, 
@@ -446,17 +476,49 @@ if __name__ == "__main__":
             total_courses=len(grades)
         )
     
-    # Print registration info
-    print("\n🚀 Entity-Native Callable Registry Demo")
-    print("=====================================")
+    # Register async function
+    @EntityNativeCallableRegistry.register("analyze_student_performance_async")
+    async def analyze_student_performance_async(
+        name: str, 
+        age: int, 
+        grades: List[float],
+        threshold: float = 3.0
+    ) -> AsyncAnalysisResult:
+        """Analyze student academic performance asynchronously."""
+        import time
+        start_time = time.time()
+        
+        # Simulate async processing
+        await asyncio.sleep(0.1)
+        
+        avg_grade = sum(grades) / len(grades)
+        status = "excellent" if avg_grade >= threshold else "needs_improvement"
+        processing_time = time.time() - start_time
+        
+        return AsyncAnalysisResult(
+            student_name=name,
+            average_grade=avg_grade,
+            status=status,
+            total_courses=len(grades),
+            processing_time=processing_time
+        )
     
-    functions = EntityNativeCallableRegistry.list_functions()
-    print(f"Registered functions: {functions}")
+    async def demo():
+        # Print registration info
+        print("\n🚀 Entity-Native Callable Registry Demo")
+        print("=====================================")
+        
+        functions = EntityNativeCallableRegistry.list_functions()
+        print(f"Registered functions: {functions}")
+        
+        for func_name in functions:
+            info = EntityNativeCallableRegistry.get_function_info(func_name)
+            if info:
+                print(f"\nFunction: {info['name']}")
+                print(f"Signature: {info['signature']}")
+                print(f"Input Entity: {info['input_entity_class']}")
+                print(f"Output Entity: {info['output_entity_class']}")
+                print(f"Is Async: {info['is_async']}")
     
-    for func_name in functions:
-        info = EntityNativeCallableRegistry.get_function_info(func_name)
-        if info:
-            print(f"\nFunction: {info['name']}")
-            print(f"Signature: {info['signature']}")
-            print(f"Input Entity: {info['input_entity_class']}")
-            print(f"Output Entity: {info['output_entity_class']}")
+    # Run the demo
+    asyncio.run(demo())
