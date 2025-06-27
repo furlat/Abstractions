@@ -23,6 +23,8 @@ class ECSAddressParser:
     
     # Pattern: @uuid.field.subfield.etc
     ADDRESS_PATTERN = re.compile(r'^@([a-f0-9\-]{36})\.(.+)$')
+    # Pattern for entity-only addresses: @uuid
+    ENTITY_ONLY_PATTERN = re.compile(r'^@([a-f0-9\-]{36})$')
     
     @classmethod
     def parse_address(cls, address: str) -> Tuple[UUID, List[str]]:
@@ -65,6 +67,34 @@ class ECSAddressParser:
         return entity_id, field_parts
     
     @classmethod
+    def parse_address_flexible(cls, address: str) -> Tuple[UUID, List[str]]:
+        """
+        Parse address supporting entity-only format.
+        
+        Examples:
+            "@uuid" → (uuid, [])
+            "@uuid.field" → (uuid, ["field"])
+            "@uuid.field.subfield" → (uuid, ["field", "subfield"])
+        """
+        if not isinstance(address, str) or not address.startswith('@'):
+            raise ValueError(f"Invalid ECS address format: {address}")
+        
+        address_content = address[1:]  # Remove @
+        
+        # Split on first dot to separate UUID from field path
+        parts = address_content.split('.', 1)
+        
+        try:
+            entity_id = UUID(parts[0])
+        except ValueError as e:
+            raise ValueError(f"Invalid UUID in address {address}: {e}")
+        
+        # Field path (empty if no dots)
+        field_path = parts[1].split('.') if len(parts) > 1 else []
+        
+        return entity_id, field_path
+    
+    @classmethod
     def resolve_with_tree_navigation(cls, address: str, entity_tree=None) -> Any:
         """
         Enhanced resolution using EntityTree navigation when available.
@@ -89,6 +119,63 @@ class ECSAddressParser:
         
         # Fallback to registry-based resolution
         return cls.resolve_address(address)
+    
+    @classmethod
+    def resolve_address_advanced(cls, address: str) -> Tuple[Any, str]:
+        """
+        Enhanced address resolution supporting entity and sub-entity references.
+        
+        Returns:
+            Tuple of (resolved_value, resolution_type)
+            resolution_type: "entity" | "field_value" | "sub_entity"
+        """
+        entity_id, field_path = cls.parse_address_flexible(address)
+        
+        # Get root entity
+        from .entity import EntityRegistry
+        root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
+        if not root_ecs_id:
+            raise ValueError(f"Entity {entity_id} not found in registry")
+        
+        entity = EntityRegistry.get_stored_entity(root_ecs_id, entity_id)
+        if not entity:
+            raise ValueError(f"Could not retrieve entity {entity_id}")
+        
+        # Case 1: No field path - return entire entity
+        if not field_path:
+            return entity, "entity"
+        
+        # Case 2: Navigate field path
+        current_value = entity
+        for field_part in field_path:
+            if hasattr(current_value, field_part):
+                current_value = getattr(current_value, field_part)
+            else:
+                # Try container navigation
+                current_value = cls._navigate_container(current_value, field_part)
+                if current_value is None:
+                    raise ValueError(f"Cannot navigate to {field_part}")
+        
+        # Determine resolution type
+        from .entity import Entity
+        if isinstance(current_value, Entity):
+            return current_value, "sub_entity"
+        else:
+            return current_value, "field_value"
+    
+    @classmethod
+    def _navigate_container(cls, container, key_or_index: str) -> Any:
+        """Navigate into containers using key or index."""
+        # Handle list/tuple indices
+        if key_or_index.isdigit() and isinstance(container, (list, tuple)):
+            index = int(key_or_index)
+            return container[index] if 0 <= index < len(container) else None
+        
+        # Handle dict keys
+        elif isinstance(container, dict):
+            return container.get(key_or_index)
+        
+        return None
     
     @classmethod
     def resolve_address(cls, address: str) -> Any:
@@ -140,10 +227,15 @@ class ECSAddressParser:
             
         Examples:
             "@f65cf3bd-9392-499f-8f57-dba701f5069c.name" -> True
+            "@f65cf3bd-9392-499f-8f57-dba701f5069c" -> True
             "regular_string" -> False
             "@invalid-uuid.field" -> False
         """
-        return isinstance(value, str) and value.startswith('@') and bool(cls.ADDRESS_PATTERN.match(value))
+        if not isinstance(value, str) or not value.startswith('@'):
+            return False
+        
+        # Check if it matches field address pattern or entity-only pattern
+        return bool(cls.ADDRESS_PATTERN.match(value)) or bool(cls.ENTITY_ONLY_PATTERN.match(value))
     
     @classmethod
     def batch_resolve_addresses(cls, addresses: List[str]) -> Dict[str, Any]:
@@ -342,6 +434,97 @@ class InputPatternClassifier:
             pattern_type = "direct"
         
         return pattern_type, classification
+    
+    @classmethod
+    def classify_kwargs_advanced(cls, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+        """
+        Advanced classification with detailed metadata.
+        
+        Returns:
+            Tuple of (pattern_type, field_classifications)
+            
+        field_classifications format:
+        {
+            "field_name": {
+                "type": "entity" | "entity_address" | "sub_entity" | "sub_entity_address" | "direct",
+                "resolution_metadata": {...}
+            }
+        }
+        """
+        entity_count = 0
+        address_count = 0
+        sub_entity_count = 0
+        direct_count = 0
+        
+        classification = {}
+        
+        for key, value in kwargs.items():
+            if hasattr(value, 'ecs_id'):  # Duck typing for Entity
+                if cls._is_sub_entity(value):
+                    sub_entity_count += 1
+                    classification[key] = {
+                        "type": "sub_entity",
+                        "resolution_metadata": {"root_ecs_id": value.root_ecs_id}
+                    }
+                else:
+                    entity_count += 1
+                    classification[key] = {
+                        "type": "entity", 
+                        "resolution_metadata": {"ecs_id": value.ecs_id}
+                    }
+            elif isinstance(value, str) and cls.is_ecs_address(value):
+                try:
+                    resolved_value, resolution_type = ECSAddressParser.resolve_address_advanced(value)
+                    address_count += 1
+                    
+                    if resolution_type == "entity":
+                        classification[key] = {
+                            "type": "entity_address",
+                            "resolution_metadata": {"address": value, "resolves_to": "entity"}
+                        }
+                    elif resolution_type == "sub_entity":
+                        classification[key] = {
+                            "type": "sub_entity_address", 
+                            "resolution_metadata": {"address": value, "resolves_to": "sub_entity"}
+                        }
+                    else:
+                        classification[key] = {
+                            "type": "field_address",
+                            "resolution_metadata": {"address": value, "resolves_to": "field_value"}
+                        }
+                except Exception as e:
+                    # Fallback to basic address classification
+                    classification[key] = {
+                        "type": "address",
+                        "resolution_metadata": {"address": value, "error": str(e)}
+                    }
+            else:
+                direct_count += 1
+                classification[key] = {
+                    "type": "direct",
+                    "resolution_metadata": {"value": value}
+                }
+        
+        # Determine overall pattern type
+        if entity_count > 0 and address_count == 0:
+            pattern_type = "pure_transactional"
+        elif address_count > 0 and entity_count == 0:
+            pattern_type = "pure_borrowing"
+        elif entity_count > 0 and address_count > 0:
+            pattern_type = "mixed"
+        elif sub_entity_count > 0:
+            pattern_type = "sub_entity_transactional" 
+        else:
+            pattern_type = "direct"
+        
+        return pattern_type, classification
+    
+    @classmethod
+    def _is_sub_entity(cls, entity: Any) -> bool:
+        """Check if entity is a sub-entity (has root_ecs_id != ecs_id)."""
+        if not hasattr(entity, 'ecs_id') or not hasattr(entity, 'root_ecs_id'):
+            return False
+        return entity.root_ecs_id is not None and entity.root_ecs_id != entity.ecs_id
     
     @classmethod
     def is_ecs_address(cls, value: str) -> bool:

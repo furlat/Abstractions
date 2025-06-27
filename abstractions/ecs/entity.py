@@ -1713,7 +1713,7 @@ class HierarchicalEntity(Entity):
 
 class FunctionExecution(Entity):
     """
-    Minimal entity for tracking function execution relationships.
+    Enhanced entity for tracking function execution relationships.
     
     This tracks the relationship between input entities, executed functions,
     and output entities for complete audit trails and provenance tracking.
@@ -1721,14 +1721,26 @@ class FunctionExecution(Entity):
     function_name: str = ""
     input_entity_id: Optional[UUID] = None
     output_entity_id: Optional[UUID] = None
+    output_entity_ids: List[UUID] = Field(default_factory=list)  # Support multiple outputs
     execution_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     execution_status: str = "completed"  # "completed", "failed", "pending"
     error_message: Optional[str] = None
     
-    # Execution semantics detected via live_id analysis
+    # Execution semantics detected via object identity analysis
     execution_semantic: str = ""  # "mutation", "creation", "detachment"
     
-    # For future enhancement - execution metadata
+    # Enhanced metadata for Phase 2
+    return_analysis: Dict[str, Any] = Field(default_factory=dict)  # Return type analysis
+    unpacking_metadata: Dict[str, Any] = Field(default_factory=dict)  # How return was unpacked
+    sibling_groups: List[List[UUID]] = Field(default_factory=list)  # Groups of entities created together
+    performance_metrics: Dict[str, Any] = Field(default_factory=dict)  # Execution time, memory usage, etc.
+    input_pattern_classification: Dict[str, Any] = Field(default_factory=dict)  # From Phase 1
+    
+    # Audit trail expansion
+    pre_execution_snapshots: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)  # Entity states before
+    post_execution_changes: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)   # What changed after
+    
+    # Execution metadata
     execution_metadata: Dict[str, Any] = Field(default_factory=dict)
     
     def mark_as_failed(self, error: str) -> None:
@@ -1740,6 +1752,40 @@ class FunctionExecution(Entity):
         """Mark execution as completed with detected semantic."""
         self.execution_status = "completed"
         self.execution_semantic = semantic
+
+
+def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, Any]) -> Type[Entity]:
+    """
+    Create a dynamic Entity subclass with specified fields.
+    
+    Args:
+        class_name: Name for the dynamic class
+        field_definitions: Dict mapping field names to values or (type, default) tuples
+        
+    Returns:
+        Dynamic Entity subclass
+    """
+    from pydantic import create_model
+    
+    # Process field definitions
+    pydantic_fields = {}
+    for field_name, field_spec in field_definitions.items():
+        if isinstance(field_spec, tuple) and len(field_spec) == 2:
+            field_type, default_value = field_spec
+            pydantic_fields[field_name] = (field_type, default_value)
+        else:
+            # Infer type from value
+            field_type = type(field_spec)
+            pydantic_fields[field_name] = (field_type, field_spec)
+    
+    # Create the dynamic class
+    DynamicClass = create_model(
+        class_name,
+        __base__=Entity,
+        **pydantic_fields
+    )
+    
+    return DynamicClass
 
 
 

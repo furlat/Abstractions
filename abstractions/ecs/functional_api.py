@@ -185,6 +185,120 @@ def create_composite_entity_with_pattern_detection(
     return entity, classification
 
 
+def create_composite_entity_with_pattern_detection_advanced(
+    entity_class: Type[Entity], 
+    field_mappings: Dict[str, Union[str, Any, Entity]], 
+    register: bool = False
+) -> Tuple[Entity, Dict[str, Dict[str, Any]], List[Entity]]:
+    """
+    Advanced composite entity creation supporting all 7 input patterns.
+    
+    Returns:
+        Tuple of (created_entity, classification_metadata, dependency_entities)
+    """
+    # Step 1: Advanced pattern classification
+    pattern_type, classification = InputPatternClassifier.classify_kwargs_advanced(field_mappings)
+    
+    # Step 2: Resolve all references and collect dependencies
+    resolved_mappings = {}
+    dependency_entities = []
+    
+    for field_name, value in field_mappings.items():
+        field_info = classification[field_name]
+        field_type = field_info["type"]
+        
+        if field_type == "entity":
+            # Direct entity reference
+            resolved_mappings[field_name] = value
+            dependency_entities.append(value)
+            
+        elif field_type == "entity_address":
+            # Address that resolves to entire entity
+            if isinstance(value, str):
+                resolved_entity, _ = ECSAddressParser.resolve_address_advanced(value)
+                resolved_mappings[field_name] = resolved_entity
+                dependency_entities.append(resolved_entity)
+            else:
+                # Should not happen with proper classification, but handle gracefully
+                resolved_mappings[field_name] = value
+            
+        elif field_type == "sub_entity":
+            # Direct sub-entity reference
+            resolved_mappings[field_name] = value
+            # Find root entity for dependency tracking
+            if hasattr(value, 'root_live_id'):
+                root_live_id = getattr(value, 'root_live_id', None)
+                if root_live_id:
+                    root_entity = EntityRegistry.get_live_entity(root_live_id)
+                    if root_entity:
+                        dependency_entities.append(root_entity)
+                    
+        elif field_type == "sub_entity_address":
+            # Address that resolves to sub-entity
+            if isinstance(value, str):
+                resolved_sub_entity, _ = ECSAddressParser.resolve_address_advanced(value)
+                resolved_mappings[field_name] = resolved_sub_entity
+                # Track root entity dependency
+                if hasattr(resolved_sub_entity, 'root_live_id') and resolved_sub_entity.root_live_id:
+                    root_entity = EntityRegistry.get_live_entity(resolved_sub_entity.root_live_id)
+                    if root_entity:
+                        dependency_entities.append(root_entity)
+            else:
+                # Should not happen with proper classification, but handle gracefully
+                resolved_mappings[field_name] = value
+                    
+        elif field_type == "field_address":
+            # Address that resolves to field value
+            if isinstance(value, str):
+                resolved_value, _ = ECSAddressParser.resolve_address_advanced(value)
+                resolved_mappings[field_name] = resolved_value
+                # Track source entity
+                entity_id, _ = ECSAddressParser.parse_address_flexible(value)
+                root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
+                if root_ecs_id:
+                    # Get the live entity from the root
+                    for live_id, live_entity in EntityRegistry.live_id_registry.items():
+                        if live_entity.root_ecs_id == root_ecs_id:
+                            dependency_entities.append(live_entity)
+                            break
+            else:
+                # Should not happen with proper classification, but handle gracefully
+                resolved_mappings[field_name] = value
+        else:
+            # Direct value
+            resolved_mappings[field_name] = value
+    
+    # Step 3: Create entity with resolved data
+    entity = entity_class(**resolved_mappings)
+    
+    # Step 4: Set up proper attribute sources
+    for field_name, value in field_mappings.items():
+        field_info = classification[field_name]
+        if field_info["type"] in ["entity_address", "field_address", "sub_entity_address"]:
+            # Parse to get source entity ID
+            if isinstance(value, str):
+                entity_id, _ = ECSAddressParser.parse_address_flexible(value)
+                entity.attribute_source[field_name] = entity_id
+            else:
+                entity.attribute_source[field_name] = None
+        elif field_info["type"] in ["entity", "sub_entity"]:
+            # Direct entity reference
+            if hasattr(value, 'ecs_id'):
+                ecs_id = getattr(value, 'ecs_id', None)
+                entity.attribute_source[field_name] = ecs_id
+            else:
+                entity.attribute_source[field_name] = None
+        else:
+            # Direct value
+            entity.attribute_source[field_name] = None
+    
+    # Step 5: Optionally register
+    if register:
+        entity.promote_to_root()
+    
+    return entity, classification, dependency_entities
+
+
 def create_composite_entity(
     entity_class: Type[Entity], 
     field_mappings: Dict[str, Union[str, Any]], 

@@ -286,14 +286,14 @@ class CallableRegistry:
         """
         Execute with complete semantic detection.
         
-        This implements the enhanced pattern with live_id-based semantic analysis:
-        1. Prepare isolated execution environment
+        This implements the enhanced pattern with object identity-based semantic analysis:
+        1. Prepare isolated execution environment with object tracking
         2. Execute function with isolated entities
-        3. Finalize with semantic detection
+        3. Finalize with semantic detection using object identity
         """
         
-        # Step 1: Prepare isolated execution environment
-        execution_kwargs, original_entities, execution_copies = await cls._prepare_transactional_inputs(kwargs)
+        # Step 1: Prepare isolated execution environment with object identity tracking
+        execution_kwargs, original_entities, execution_copies, object_identity_map = await cls._prepare_transactional_inputs(kwargs)
         
         # Step 2: Execute function with isolated entities
         try:
@@ -306,20 +306,21 @@ class CallableRegistry:
             await cls._record_execution_failure(None, metadata.name, str(e))
             raise
         
-        # Step 3: Finalize with semantic detection
-        return await cls._finalize_transactional_result(result, metadata, original_entities, execution_copies)
+        # Step 3: Finalize with semantic detection using object identity
+        return await cls._finalize_transactional_result(result, metadata, object_identity_map)
     
     @classmethod
-    async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity], List[Entity]]:
+    async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity], List[Entity], Dict[int, Entity]]:
         """
         Prepare inputs for transactional execution with complete isolation.
         
         Returns:
-            Tuple of (execution_kwargs, original_entities, execution_copies)
+            Tuple of (execution_kwargs, original_entities, execution_copies, object_identity_map)
         """
         execution_kwargs = {}
         original_entities = []
         execution_copies = []
+        object_identity_map = {}  # Maps id(execution_copy) -> original_entity
         
         for param_name, value in kwargs.items():
             if isinstance(value, Entity):
@@ -335,23 +336,27 @@ class CallableRegistry:
                     if copy:
                         execution_copies.append(copy)
                         execution_kwargs[param_name] = copy
+                        # Track object identity mapping
+                        object_identity_map[id(copy)] = value
                     else:
                         # Entity not in storage, use direct copy with new live_id
                         copy = value.model_copy(deep=True)
                         copy.live_id = uuid4()
                         execution_copies.append(copy)
                         execution_kwargs[param_name] = copy
+                        object_identity_map[id(copy)] = value
                 else:
                     # Orphan entity, create isolated copy
                     copy = value.model_copy(deep=True)
                     copy.live_id = uuid4()
                     execution_copies.append(copy)
                     execution_kwargs[param_name] = copy
+                    object_identity_map[id(copy)] = value
             else:
                 # Non-entity values pass through
                 execution_kwargs[param_name] = value
         
-        return execution_kwargs, original_entities, execution_copies
+        return execution_kwargs, original_entities, execution_copies, object_identity_map
     
     @classmethod
     async def _check_entity_divergence(cls, entity: Entity) -> None:
@@ -383,44 +388,43 @@ class CallableRegistry:
                     EntityRegistry.version_entity(entity)
     
     @classmethod
-    def _detect_execution_semantic(cls, result: Entity, original_entities: List[Entity], execution_copies: List[Entity]) -> str:
+    def _detect_execution_semantic(cls, result: Entity, object_identity_map: Dict[int, Entity]) -> Tuple[str, Optional[Entity]]:
         """
-        Core semantic detection using live_id comparison.
+        Core semantic detection using Python object identity.
         
-        This is the key innovation - deterministic classification without heuristics.
+        This is the key innovation - deterministic classification using object identity
+        instead of unreliable live_id comparison.
+        
+        Returns:
+            Tuple of (semantic_type, original_entity_if_mutation)
         """
-        # Collect execution copy live_ids
-        execution_live_ids = {copy.live_id for copy in execution_copies}
+        # Check for MUTATION: result is the same Python object as an execution copy
+        result_object_id = id(result)
+        if result_object_id in object_identity_map:
+            original_entity = object_identity_map[result_object_id]
+            return "mutation", original_entity
         
-        # Check for MUTATION: result has same live_id as an execution copy
-        if result.live_id in execution_live_ids:
-            return "mutation"
+        # Check for DETACHMENT: result has same ecs_id as an entity in input trees
+        # but is a different Python object (indicating extraction from tree)
+        for original_entity in object_identity_map.values():
+            if original_entity.root_ecs_id:
+                tree = EntityRegistry.get_stored_tree(original_entity.root_ecs_id)
+                if tree and result.ecs_id in tree.nodes:
+                    # Entity exists in input tree but is different object -> detachment
+                    return "detachment", original_entity
         
-        # Collect input tree live_ids for DETACHMENT detection
-        input_tree_live_ids = set()
-        for entity in original_entities:
-            if entity.root_ecs_id:
-                tree = EntityRegistry.get_stored_tree(entity.root_ecs_id)
-                if tree:
-                    input_tree_live_ids.update(tree.live_id_to_ecs_id.keys())
-        
-        # Check for DETACHMENT: result came from input tree but not execution copies
-        if result.live_id in input_tree_live_ids:
-            return "detachment"
-        
-        # Default: CREATION - result is a new entity
-        return "creation"
+        # Default: CREATION - result is a completely new entity
+        return "creation", None
     
     @classmethod
     async def _finalize_transactional_result(
         cls, 
         result: Any, 
         metadata: FunctionMetadata, 
-        original_entities: List[Entity],
-        execution_copies: List[Entity]
+        object_identity_map: Dict[int, Entity]
     ) -> Entity:
         """
-        Enhanced result finalization with semantic detection.
+        Enhanced result finalization with object identity-based semantic detection.
         """
         
         # Type validation
@@ -430,39 +434,35 @@ class CallableRegistry:
         
         # Handle entity results with semantic detection
         if isinstance(result, Entity):
-            semantic = cls._detect_execution_semantic(result, original_entities, execution_copies)
+            semantic, original_entity = cls._detect_execution_semantic(result, object_identity_map)
             
             if semantic == "mutation":
-                # Find the original entity that was mutated
-                original_entity = None
-                for orig, copy in zip(original_entities, execution_copies):
-                    if result.live_id == copy.live_id:
-                        original_entity = orig
-                        break
-                
+                # MUTATION: Function modified input entity in-place
                 if original_entity:
-                    # Preserve lineage, update ecs_id, register new version
+                    # Preserve lineage, update ecs_id for versioning
                     result.update_ecs_ids()
+                    # Register the updated entity (this should NOT conflict)
                     EntityRegistry.register_entity(result)
+                    # Version the original entity to maintain history
                     EntityRegistry.version_entity(original_entity)
                 else:
-                    # Fallback: treat as creation
+                    # Fallback: treat as creation if we can't find original
                     result.promote_to_root()
                     
             elif semantic == "creation":
-                # New entity - register normally
+                # CREATION: Function created completely new entity
                 result.promote_to_root()
                 
             elif semantic == "detachment":
-                # Child extracted from parent tree
+                # DETACHMENT: Function extracted child from parent tree
                 result.detach()
-                # Version all parent entities
-                for entity in original_entities:
-                    EntityRegistry.version_entity(entity)
+                # Version the parent entity to reflect the change
+                if original_entity:
+                    EntityRegistry.version_entity(original_entity)
             
             return result
         
-        # Wrap non-entity results
+        # Wrap non-entity results in output entity
         output_entity = metadata.output_entity_class(**{"result": result})
         output_entity.promote_to_root()
         return output_entity
