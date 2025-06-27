@@ -13,7 +13,6 @@ from uuid import UUID, uuid4
 from enum import Enum
 from collections import deque
 import inspect
-from abstractions.ecs.ecs_address_parser import ECSAddressParser
 
 # Edge type enum
 class EdgeType(str, Enum):
@@ -1566,59 +1565,7 @@ class Entity(BaseModel):
             # For simple fields and entities, point to source entity
             self.attribute_source[self_field] = source_entity.ecs_id
 
-    def borrow_from_address(self, address: str, target_field: str) -> None:
-        """
-        Borrow an attribute using ECS address string syntax.
-        
-        Args:
-            address: ECS address like "@uuid.field.subfield"
-            target_field: The field name in this entity to set
-            
-        Example:
-            entity.borrow_from_address("@f65cf3bd-9392-499f-8f57-dba701f5069c.name", "student_name")
-        """
-       
-        
-        entity_id, field_path = ECSAddressParser.parse_address(address)
-        
-        # Get source entity
-        root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
-        if not root_ecs_id:
-            raise ValueError(f"Entity {entity_id} not found in registry")
-        
-        source_entity = EntityRegistry.get_stored_entity(root_ecs_id, entity_id)
-        if not source_entity:
-            raise ValueError(f"Could not retrieve entity {entity_id}")
-        
-        # For now, support only single-field borrowing (first field in path)
-        source_field = field_path[0]
-        
-        # Use existing borrow_attribute_from method
-        self.borrow_attribute_from(source_entity, source_field, target_field)
-        
-        # TODO: Support nested field paths like "record.gpa"
 
-    @classmethod
-    def create_from_address_dict(cls, address_mapping: Dict[str, str]) -> "Entity":
-        """
-        Factory method to create entity by borrowing from multiple addresses.
-        
-        Args:
-            address_mapping: Dict mapping target fields to ECS addresses
-            
-        Example:
-            Student.create_from_address_dict({
-                "name": "@student_uuid.name",
-                "age": "@student_uuid.age", 
-                "gpa": "@record_uuid.gpa"
-            })
-        """
-        instance = cls()
-        
-        for target_field, address in address_mapping.items():
-            instance.borrow_from_address(address, target_field)
-        
-        return instance
 
 
     def attach(self, new_root_entity: "Entity") -> None:
@@ -1762,6 +1709,37 @@ class HierarchicalEntity(Entity):
     flat_entity: Entity = Field(description="The flat entity", default_factory=Entity)
     entity_of_entity_of_entity: EntityInEntityInEntity = Field(description="The entity of the entity of the entity", default_factory=EntityInEntityInEntity)
     primitive_data: EntityWithPrimitives = Field(description="Entity with primitive data", default_factory=EntityWithPrimitives)
+
+
+class FunctionExecution(Entity):
+    """
+    Minimal entity for tracking function execution relationships.
+    
+    This tracks the relationship between input entities, executed functions,
+    and output entities for complete audit trails and provenance tracking.
+    """
+    function_name: str = ""
+    input_entity_id: Optional[UUID] = None
+    output_entity_id: Optional[UUID] = None
+    execution_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    execution_status: str = "completed"  # "completed", "failed", "pending"
+    error_message: Optional[str] = None
+    
+    # Execution semantics detected via live_id analysis
+    execution_semantic: str = ""  # "mutation", "creation", "detachment"
+    
+    # For future enhancement - execution metadata
+    execution_metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    def mark_as_failed(self, error: str) -> None:
+        """Mark execution as failed with error message."""
+        self.execution_status = "failed"
+        self.error_message = error
+    
+    def mark_as_completed(self, semantic: str) -> None:
+        """Mark execution as completed with detected semantic."""
+        self.execution_status = "completed"
+        self.execution_semantic = semantic
 
 
 

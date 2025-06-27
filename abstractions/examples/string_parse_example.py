@@ -21,7 +21,8 @@ from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree
 from abstractions.ecs.ecs_address_parser import ECSAddressParser, EntityReferenceResolver, get, is_address, parse
 from abstractions.ecs.functional_api import (
     create_entity_from_mapping, batch_get, resolve_data_with_tracking,
-    create_composite_entity, get_entity_dependencies, validate_addresses
+    create_composite_entity, get_entity_dependencies, validate_addresses,
+    create_entity_from_address_dict
 )
 
 def log_section(title: str):
@@ -232,8 +233,8 @@ def main():
     
     print("Testing factory method entity creation...")
     
-    # Using the Entity.create_from_address_dict class method
-    analysis_input_2 = StudentAnalysisInput.create_from_address_dict({
+    # Using the create_entity_from_address_dict function
+    analysis_input_2 = create_entity_from_address_dict(StudentAnalysisInput, {
         "student_name": f"@{alice.ecs_id}.name",
         "student_age": f"@{alice.ecs_id}.age",
         "current_gpa": f"@{alice_record.ecs_id}.gpa"
@@ -402,7 +403,7 @@ def main():
     
     print("\n Entity Creation from Addresses")
     print("  - create_entity_from_mapping() for mixed value/address mappings")
-    print("  - Entity.create_from_address_dict() factory method")
+    print("  - create_entity_from_address_dict() factory function")
     print("  - create_composite_entity() with registration options")
     print("  - Complete provenance tracking through attribute_source")
     

@@ -65,6 +65,32 @@ class ECSAddressParser:
         return entity_id, field_parts
     
     @classmethod
+    def resolve_with_tree_navigation(cls, address: str, entity_tree=None) -> Any:
+        """
+        Enhanced resolution using EntityTree navigation when available.
+        
+        Args:
+            address: ECS address string
+            entity_tree: Optional EntityTree for efficient navigation
+            
+        Returns:
+            Resolved value with improved performance
+        """
+        entity_id, field_path = cls.parse_address(address)
+        
+        if entity_tree and entity_id in entity_tree.nodes:
+            # Use tree navigation for better performance
+            entity = entity_tree.nodes[entity_id]
+            if entity:
+                try:
+                    return functools.reduce(getattr, field_path, entity)
+                except AttributeError as e:
+                    raise ValueError(f"Field path '{'.'.join(field_path)}' not found: {e}")
+        
+        # Fallback to registry-based resolution
+        return cls.resolve_address(address)
+    
+    @classmethod
     def resolve_address(cls, address: str) -> Any:
         """
         Resolve an ECS address to the actual value.
@@ -269,3 +295,55 @@ def parse(address: str) -> Tuple[UUID, List[str]]:
         entity_id, fields = parse("@uuid.record.gpa")
     """
     return ECSAddressParser.parse_address(address)
+
+
+class InputPatternClassifier:
+    """Classify input patterns for callable registry."""
+    
+    @classmethod
+    def classify_kwargs(cls, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
+        """
+        Classify input pattern types.
+        
+        Returns:
+            Tuple of (pattern_type, field_classifications)
+            
+        Pattern Types:
+            - "pure_borrowing": All @uuid.field strings
+            - "pure_transactional": All direct Entity objects  
+            - "mixed": Combination of both
+            - "direct": Only primitive values
+        """
+        entity_count = 0
+        address_count = 0
+        direct_count = 0
+        
+        classification = {}
+        
+        for key, value in kwargs.items():
+            if hasattr(value, 'ecs_id'):  # Duck typing for Entity
+                entity_count += 1
+                classification[key] = "entity"
+            elif isinstance(value, str) and cls.is_ecs_address(value):
+                address_count += 1
+                classification[key] = "address"
+            else:
+                direct_count += 1
+                classification[key] = "direct"
+        
+        # Determine pattern type
+        if entity_count > 0 and address_count == 0:
+            pattern_type = "pure_transactional"
+        elif address_count > 0 and entity_count == 0:
+            pattern_type = "pure_borrowing"
+        elif entity_count > 0 and address_count > 0:
+            pattern_type = "mixed"
+        else:
+            pattern_type = "direct"
+        
+        return pattern_type, classification
+    
+    @classmethod
+    def is_ecs_address(cls, value: str) -> bool:
+        """Check if string is ECS address format."""
+        return ECSAddressParser.is_ecs_address(value)

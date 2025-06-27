@@ -19,9 +19,9 @@ from datetime import datetime, timezone
 import asyncio
 from uuid import UUID, uuid4
 
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities
-from abstractions.ecs.ecs_address_parser import EntityReferenceResolver  
-from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution
+from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier  
+from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection
 import concurrent.futures
 
 
@@ -173,53 +173,51 @@ class CallableRegistry:
     async def _create_input_entity_with_borrowing(
         cls,
         input_entity_class: Type[Entity],
-        kwargs: Dict[str, Any]
+        kwargs: Dict[str, Any],
+        classification: Optional[Dict[str, str]] = None
     ) -> Entity:
         """
-        Create input entity using proven borrowing patterns.
+        Create input entity using enhanced borrowing patterns.
         
         Leverages:
-        - create_composite_entity() from functional_api.py
-        - borrow_from_address() from entity.py
-        - Automatic attribute_source tracking
+        - create_composite_entity_with_pattern_detection() from functional_api.py
+        - Enhanced pattern classification for mixed inputs
+        - Automatic dependency tracking
         """
-        
-        # Use proven composite entity creation
-        input_entity = create_composite_entity(
-            entity_class=input_entity_class,
-            field_mappings=kwargs,
-            register=False  # We'll register it properly below
-        )
-        
-        # Track dependencies (leverages EntityReferenceResolver)
-        _, dependencies = resolve_data_with_tracking(kwargs)
+        # Use enhanced composite entity creation
+        if classification:
+            # Pattern already classified - use existing create_composite_entity
+            input_entity = create_composite_entity(
+                entity_class=input_entity_class,
+                field_mappings=kwargs,
+                register=False
+            )
+        else:
+            # Use pattern-aware creation
+            input_entity, _ = create_composite_entity_with_pattern_detection(
+                entity_class=input_entity_class,
+                field_mappings=kwargs,
+                register=False
+            )
         
         return input_entity
     
     @classmethod
     async def _execute_async(cls, func_name: str, **kwargs) -> Entity:
-        """
-        Execute function with complete entity system integration.
-        
-        Supports two execution modes:
-        1. Borrowing pattern: Uses @uuid.field syntax for data composition
-        2. Direct entities: Transactional execution with entity inputs/outputs
-        """
-        
+        """Execute function with enhanced pattern detection."""
         # Step 1: Get function metadata
         metadata = cls.get_metadata(func_name)
         if not metadata:
             raise ValueError(f"Function '{func_name}' not registered")
         
-        # Step 2: Detect execution mode
-        has_entity_inputs = cls._has_direct_entity_inputs(kwargs)
+        # Step 2: Detect execution pattern using clean architecture
+        pattern_type, classification = InputPatternClassifier.classify_kwargs(kwargs)
         
-        if has_entity_inputs:
-            # Use transactional entity execution
-            return await cls._execute_transactional(metadata, kwargs)
+        # Step 3: Route to appropriate execution strategy
+        if pattern_type in ["pure_transactional", "mixed"]:
+            return await cls._execute_transactional(metadata, kwargs, classification)
         else:
-            # Use borrowing pattern execution
-            return await cls._execute_borrowing(metadata, kwargs)
+            return await cls._execute_borrowing(metadata, kwargs, classification)
     
     @classmethod
     def _has_direct_entity_inputs(cls, kwargs: Dict[str, Any]) -> bool:
@@ -230,12 +228,12 @@ class CallableRegistry:
         return False
     
     @classmethod
-    async def _execute_borrowing(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Entity:
+    async def _execute_borrowing(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Entity:
         """Execute using borrowing pattern (data composition)."""
         
-        # Create input entity with borrowing (proven pattern)
+        # Create input entity with borrowing (enhanced pattern)
         input_entity = await cls._create_input_entity_with_borrowing(
-            metadata.input_entity_class, kwargs
+            metadata.input_entity_class, kwargs, classification
         )
         
         # Register input entity (leverages build_entity_tree)
@@ -284,22 +282,20 @@ class CallableRegistry:
         return output_entity
     
     @classmethod
-    async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Entity:
+    async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Entity:
         """
-        Execute with transactional entity semantics for direct Entity inputs/outputs.
+        Execute with complete semantic detection.
         
-        This implements the pattern described in containerized_callables.md:
-        1. Check if input entities have diverged from storage
-        2. Create isolated copies for execution
-        3. Execute function with full mutation freedom
-        4. Validate return type constraints
-        5. Register valid results atomically
+        This implements the enhanced pattern with live_id-based semantic analysis:
+        1. Prepare isolated execution environment
+        2. Execute function with isolated entities
+        3. Finalize with semantic detection
         """
         
-        # Step 1: Pre-execution entity validation and copying
-        execution_kwargs, input_entities = await cls._prepare_transactional_inputs(kwargs)
+        # Step 1: Prepare isolated execution environment
+        execution_kwargs, original_entities, execution_copies = await cls._prepare_transactional_inputs(kwargs)
         
-        # Step 2: Execute function in isolated environment
+        # Step 2: Execute function with isolated entities
         try:
             if metadata.is_async:
                 result = await metadata.original_function(**execution_kwargs)
@@ -310,44 +306,52 @@ class CallableRegistry:
             await cls._record_execution_failure(None, metadata.name, str(e))
             raise
         
-        # Step 3: Post-execution validation and registration
-        return await cls._finalize_transactional_result(result, metadata, input_entities)
+        # Step 3: Finalize with semantic detection
+        return await cls._finalize_transactional_result(result, metadata, original_entities, execution_copies)
     
     @classmethod
-    async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity]]:
+    async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity], List[Entity]]:
         """
-        Prepare inputs for transactional execution.
+        Prepare inputs for transactional execution with complete isolation.
         
         Returns:
-            Tuple of (execution_kwargs, original_input_entities)
+            Tuple of (execution_kwargs, original_entities, execution_copies)
         """
         execution_kwargs = {}
-        input_entities = []
+        original_entities = []
+        execution_copies = []
         
         for param_name, value in kwargs.items():
             if isinstance(value, Entity):
                 # Check if entity has diverged from storage
                 await cls._check_entity_divergence(value)
                 
-                # Create isolated copy for execution
-                if value.root_ecs_id:
-                    execution_copy = EntityRegistry.get_stored_entity(value.root_ecs_id, value.ecs_id)
-                    if not execution_copy:
-                        # Entity not in storage, use direct copy
-                        execution_copy = value.model_copy(deep=True)
-                        execution_copy.live_id = uuid4()
-                else:
-                    # Orphan entity, use direct copy
-                    execution_copy = value.model_copy(deep=True)
-                    execution_copy.live_id = uuid4()
+                # Store original for lineage tracking
+                original_entities.append(value)
                 
-                execution_kwargs[param_name] = execution_copy
-                input_entities.append(value)  # Keep original for lineage
+                # Create isolated execution copy
+                if value.root_ecs_id:
+                    copy = EntityRegistry.get_stored_entity(value.root_ecs_id, value.ecs_id)
+                    if copy:
+                        execution_copies.append(copy)
+                        execution_kwargs[param_name] = copy
+                    else:
+                        # Entity not in storage, use direct copy with new live_id
+                        copy = value.model_copy(deep=True)
+                        copy.live_id = uuid4()
+                        execution_copies.append(copy)
+                        execution_kwargs[param_name] = copy
+                else:
+                    # Orphan entity, create isolated copy
+                    copy = value.model_copy(deep=True)
+                    copy.live_id = uuid4()
+                    execution_copies.append(copy)
+                    execution_kwargs[param_name] = copy
             else:
-                # Non-entity values pass through directly
+                # Non-entity values pass through
                 execution_kwargs[param_name] = value
         
-        return execution_kwargs, input_entities
+        return execution_kwargs, original_entities, execution_copies
     
     @classmethod
     async def _check_entity_divergence(cls, entity: Entity) -> None:
@@ -379,47 +383,88 @@ class CallableRegistry:
                     EntityRegistry.version_entity(entity)
     
     @classmethod
+    def _detect_execution_semantic(cls, result: Entity, original_entities: List[Entity], execution_copies: List[Entity]) -> str:
+        """
+        Core semantic detection using live_id comparison.
+        
+        This is the key innovation - deterministic classification without heuristics.
+        """
+        # Collect execution copy live_ids
+        execution_live_ids = {copy.live_id for copy in execution_copies}
+        
+        # Check for MUTATION: result has same live_id as an execution copy
+        if result.live_id in execution_live_ids:
+            return "mutation"
+        
+        # Collect input tree live_ids for DETACHMENT detection
+        input_tree_live_ids = set()
+        for entity in original_entities:
+            if entity.root_ecs_id:
+                tree = EntityRegistry.get_stored_tree(entity.root_ecs_id)
+                if tree:
+                    input_tree_live_ids.update(tree.live_id_to_ecs_id.keys())
+        
+        # Check for DETACHMENT: result came from input tree but not execution copies
+        if result.live_id in input_tree_live_ids:
+            return "detachment"
+        
+        # Default: CREATION - result is a new entity
+        return "creation"
+    
+    @classmethod
     async def _finalize_transactional_result(
         cls, 
         result: Any, 
         metadata: FunctionMetadata, 
-        input_entities: List[Entity]
+        original_entities: List[Entity],
+        execution_copies: List[Entity]
     ) -> Entity:
         """
-        Finalize transactional execution result.
-        
-        Validates return type and registers result entity.
+        Enhanced result finalization with semantic detection.
         """
         
-        # Step 1: Type validation
+        # Type validation
         return_type = metadata.original_function.__annotations__.get('return')
         if return_type and not isinstance(result, return_type):
-            raise TypeError(
-                f"Function {metadata.name} returned {type(result)}, "
-                f"expected {return_type}"
-            )
+            raise TypeError(f"Function {metadata.name} returned {type(result)}, expected {return_type}")
         
-        # Step 2: Handle entity results
+        # Handle entity results with semantic detection
         if isinstance(result, Entity):
-            # Set up lineage from input entities
-            for input_entity in input_entities:
-                # Track that result was derived from these inputs
-                # This could be enhanced with more sophisticated lineage tracking
-                pass
+            semantic = cls._detect_execution_semantic(result, original_entities, execution_copies)
             
-            # Register result entity
-            if not result.is_root_entity():
+            if semantic == "mutation":
+                # Find the original entity that was mutated
+                original_entity = None
+                for orig, copy in zip(original_entities, execution_copies):
+                    if result.live_id == copy.live_id:
+                        original_entity = orig
+                        break
+                
+                if original_entity:
+                    # Preserve lineage, update ecs_id, register new version
+                    result.update_ecs_ids()
+                    EntityRegistry.register_entity(result)
+                    EntityRegistry.version_entity(original_entity)
+                else:
+                    # Fallback: treat as creation
+                    result.promote_to_root()
+                    
+            elif semantic == "creation":
+                # New entity - register normally
                 result.promote_to_root()
-            else:
-                EntityRegistry.register_entity(result)
+                
+            elif semantic == "detachment":
+                # Child extracted from parent tree
+                result.detach()
+                # Version all parent entities
+                for entity in original_entities:
+                    EntityRegistry.version_entity(entity)
             
             return result
         
-        # Step 3: Wrap non-entity results in entity
-        # Create output entity using the pattern from borrowing execution
+        # Wrap non-entity results
         output_entity = metadata.output_entity_class(**{"result": result})
         output_entity.promote_to_root()
-        
         return output_entity
     
     @classmethod
@@ -485,10 +530,15 @@ class CallableRegistry:
         output_entity: Entity, 
         function_name: str
     ) -> None:
-        """Record function execution in entity lineage."""
-        # Future enhancement: Create FunctionExecution entity
-        # For now, provenance is handled through attribute_source
-        pass
+        """Record function execution with enhanced tracking."""
+        # Create FunctionExecution entity for audit trail
+        execution_record = FunctionExecution(
+            function_name=function_name,
+            input_entity_id=input_entity.ecs_id,
+            output_entity_id=output_entity.ecs_id
+        )
+        execution_record.mark_as_completed("creation")  # Default semantic
+        execution_record.promote_to_root()
     
     @classmethod
     async def _record_execution_failure(

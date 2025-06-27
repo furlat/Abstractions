@@ -11,9 +11,9 @@ Features:
 - Integration with borrowing and provenance tracking
 """
 
-from typing import Any, Dict, List, Optional, Union, Type
+from typing import Any, Dict, List, Optional, Union, Type, Tuple
 from .entity import Entity, EntityRegistry
-from .ecs_address_parser import ECSAddressParser, EntityReferenceResolver
+from .ecs_address_parser import ECSAddressParser, EntityReferenceResolver, InputPatternClassifier
 
 
 def get(address: str) -> Any:
@@ -53,9 +53,9 @@ def put(address: str, value: Any, borrow: bool = True) -> None:
     if not root_ecs_id:
         raise ValueError(f"Entity {entity_id} not found in registry")
     
-    entity = EntityRegistry.get_live_entity_by_ecs_id(entity_id)  # Get live version for modification
+    entity = EntityRegistry.get_stored_entity(root_ecs_id, entity_id)  # Get entity for modification
     if not entity:
-        raise ValueError(f"Could not retrieve live entity {entity_id}")
+        raise ValueError(f"Could not retrieve entity {entity_id}")
     
     # For now, support only single field (first in path)
     field_name = field_path[0]
@@ -97,7 +97,7 @@ def create_entity_from_mapping(entity_class: Type[Entity], mapping: Dict[str, An
     for field_name, value in mapping.items():
         if isinstance(value, str) and ECSAddressParser.is_ecs_address(value):
             # Borrow from address
-            instance.borrow_from_address(value, field_name)
+            borrow_from_address(instance, value, field_name)
         else:
             # Direct assignment
             setattr(instance, field_name, value)
@@ -146,6 +146,43 @@ def resolve_data_with_tracking(data: Any) -> tuple[Any, set]:
     """
     resolver = EntityReferenceResolver()
     return resolver.resolve_references(data)
+
+
+def create_composite_entity_with_pattern_detection(
+    entity_class: Type[Entity], 
+    field_mappings: Dict[str, Union[str, Any, Entity]], 
+    register: bool = False
+) -> Tuple[Entity, Dict[str, str]]:
+    """
+    Enhanced composite entity creation with pattern detection.
+    
+    Returns:
+        Tuple of (created_entity, pattern_classification)
+    """
+    # Step 1: Classify input patterns
+    pattern_type, classification = InputPatternClassifier.classify_kwargs(field_mappings)
+    
+    # Step 2: Handle mixed patterns appropriately
+    if pattern_type == "mixed":
+        # Special handling for mixed entity/address patterns
+        resolved_mappings = {}
+        for field_name, value in field_mappings.items():
+            if classification[field_name] == "entity":
+                # Handle direct entity reference
+                resolved_mappings[field_name] = value
+            elif classification[field_name] == "address":
+                # Resolve address to value (we know it's a string from classification)
+                resolved_mappings[field_name] = ECSAddressParser.resolve_address(str(value))
+            else:
+                # Direct value
+                resolved_mappings[field_name] = value
+        
+        entity = create_composite_entity(entity_class, resolved_mappings, register)
+        return entity, classification
+    
+    # Step 3: Use existing implementation for pure patterns
+    entity = create_composite_entity(entity_class, field_mappings, register)
+    return entity, classification
 
 
 def create_composite_entity(
@@ -282,8 +319,61 @@ def borrow_to_new_entity(
         New entity with borrowed field
     """
     entity = entity_class()
-    entity.borrow_from_address(source_address, target_field)
+    borrow_from_address(entity, source_address, target_field)
     return entity
+
+
+def borrow_from_address(target_entity: Entity, address: str, target_field: str) -> None:
+    """
+    Borrow an attribute using ECS address string syntax.
+    
+    Args:
+        target_entity: Entity to borrow into
+        address: ECS address like "@uuid.field.subfield"
+        target_field: The field name in target entity to set
+        
+    Example:
+        borrow_from_address(entity, "@f65cf3bd-9392-499f-8f57-dba701f5069c.name", "student_name")
+    """
+    entity_id, field_path = ECSAddressParser.parse_address(address)
+    
+    # Get source entity using registry
+    root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
+    if not root_ecs_id:
+        raise ValueError(f"Entity {entity_id} not found in registry")
+    
+    source_entity = EntityRegistry.get_stored_entity(root_ecs_id, entity_id)
+    if not source_entity:
+        raise ValueError(f"Could not retrieve entity {entity_id}")
+    
+    # For now, support only single-field borrowing (first field in path)
+    source_field = field_path[0]
+    
+    # Use existing borrow_attribute_from method from entity
+    target_entity.borrow_attribute_from(source_entity, source_field, target_field)
+
+
+def create_entity_from_address_dict(entity_class: Type[Entity], address_mapping: Dict[str, str]) -> Entity:
+    """
+    Factory function to create entity by borrowing from multiple addresses.
+    
+    Args:
+        entity_class: Entity class to create
+        address_mapping: Dict mapping target fields to ECS addresses
+        
+    Example:
+        student = create_entity_from_address_dict(Student, {
+            "name": "@student_uuid.name",
+            "age": "@student_uuid.age", 
+            "gpa": "@record_uuid.gpa"
+        })
+    """
+    instance = entity_class()
+    
+    for target_field, address in address_mapping.items():
+        borrow_from_address(instance, address, target_field)
+    
+    return instance
 
 
 def quick_composite(*address_mappings: Dict[str, str], entity_class: Type[Entity]) -> Entity:
