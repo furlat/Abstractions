@@ -1248,9 +1248,6 @@ class EntityRegistry():
 
 
 
-
-
-
 class Entity(BaseModel):
     ecs_id: UUID = Field(default_factory=uuid4, description="Unique identifier")
     live_id: UUID = Field(default_factory=uuid4, description="Live/warm identifier")
