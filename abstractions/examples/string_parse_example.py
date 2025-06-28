@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """
-String Parsing Example: @uuid.field Syntax and Entity Creation
+Enhanced String Parsing Example: @uuid.field Syntax with ConfigEntity Integration
 
-This example demonstrates the newly implemented ECS address parser and 
-functional API for creating entities from string-based entity references.
+This example demonstrates the complete ECS address parser and functional API
+with the new ConfigEntity pattern for configuration management.
 
 Features demonstrated:
-- Parsing @uuid.field syntax
-- Creating entities from address dictionaries
-- Functional get/put API operations
-- Batch resolution and validation
-- Integration with borrowing and provenance tracking
+- Parsing @uuid.field syntax with entity borrowing
+- ConfigEntity pattern for parameter management
+- Creating entities from address dictionaries with config support
+- Functional get/put API operations with ConfigEntity integration
+- Batch resolution and validation with configuration entities
+- Integration with callable registry and ConfigEntity patterns
+- functools.partial execution with ConfigEntity parameters
 """
 
 from typing import List, Optional, Dict, Any
 from pydantic import Field
 
 # Import the entity system and new modules
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, ConfigEntity
 from abstractions.ecs.ecs_address_parser import ECSAddressParser, EntityReferenceResolver, get, is_address, parse
 from abstractions.ecs.functional_api import (
     create_entity_from_mapping, batch_get, resolve_data_with_tracking,
     create_composite_entity, get_entity_dependencies, validate_addresses,
     create_entity_from_address_dict
 )
+from abstractions.ecs.callable_registry import CallableRegistry
 
 def log_section(title: str):
     """Clean section logging to avoid overwhelming output."""
@@ -97,6 +100,96 @@ class PerformanceReport(Entity):
     performance_metrics: Dict[str, float] = Field(default_factory=dict)
     recommendations: List[str] = Field(default_factory=list)
     report_id: str = ""
+
+# NEW: ConfigEntity classes for parameter management
+class AnalysisConfig(ConfigEntity):
+    """Configuration entity for analysis parameters."""
+    threshold: float = 3.5
+    include_detailed_analysis: bool = True
+    report_format: str = "standard"
+    analysis_depth: str = "normal"
+    
+class ValidationConfig(ConfigEntity):
+    """Configuration entity for validation settings."""
+    strict_mode: bool = False
+    min_gpa_threshold: float = 2.0
+    max_courses_required: int = 10
+    validation_level: str = "basic"
+
+# NEW: Functions demonstrating ConfigEntity patterns
+@CallableRegistry.register("analyze_student_with_config")
+def analyze_student_with_config(
+    student: Student,
+    record: AcademicRecord,
+    config: AnalysisConfig
+) -> PerformanceReport:
+    """Analyze student using ConfigEntity for parameters."""
+    
+    # Use config parameters for analysis
+    avg_gpa = record.gpa
+    status = "excellent" if avg_gpa >= config.threshold else "needs_improvement"
+    
+    report_info = {
+        "name": student.name,
+        "age": student.age,
+        "email": student.email,
+        "student_id": student.student_id
+    }
+    
+    metrics = {
+        "gpa": avg_gpa,
+        "threshold_used": config.threshold,
+        "total_credits": record.total_credits
+    }
+    
+    recommendations = []
+    if avg_gpa < config.threshold:
+        recommendations.append("Consider tutoring services")
+        recommendations.append("Meet with academic advisor")
+    
+    if config.include_detailed_analysis:
+        recommendations.append(f"Analysis depth: {config.analysis_depth}")
+        recommendations.append(f"Report format: {config.report_format}")
+    
+    return PerformanceReport(
+        student_info=report_info,
+        performance_metrics=metrics,
+        recommendations=recommendations,
+        report_id=f"RPT_{student.student_id}_{record.total_credits}"
+    )
+
+@CallableRegistry.register("validate_academic_record")
+def validate_academic_record(
+    record: AcademicRecord,
+    validation_config: ValidationConfig
+) -> PerformanceReport:
+    """Validate academic record using ConfigEntity for validation rules."""
+    
+    is_valid = True
+    validation_results = []
+    
+    # Apply validation rules from config
+    if validation_config.strict_mode and record.gpa < validation_config.min_gpa_threshold:
+        is_valid = False
+        validation_results.append(f"GPA {record.gpa} below minimum threshold {validation_config.min_gpa_threshold}")
+    
+    if len(record.grades) > validation_config.max_courses_required:
+        validation_results.append(f"Too many courses: {len(record.grades)} > {validation_config.max_courses_required}")
+    
+    status = "valid" if is_valid else "invalid"
+    
+    return PerformanceReport(
+        student_info={
+            "record_validation": status,
+            "validation_level": validation_config.validation_level
+        },
+        performance_metrics={
+            "gpa": record.gpa,
+            "total_grades": float(len(record.grades))
+        },
+        recommendations=validation_results,
+        report_id=f"VAL_{record.student.student_id if record.student else 'UNKNOWN'}"
+    )
 
 def main():
     """Main demonstration of string parsing and entity creation functionality."""

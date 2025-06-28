@@ -18,29 +18,223 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import asyncio
 from uuid import UUID, uuid4
+import hashlib
+from functools import partial
 
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity
 from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier  
 from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection
 import concurrent.futures
 
 
+def is_top_level_config_entity(param_type: Optional[Type]) -> bool:
+    """Detect ConfigEntity only at function signature top-level."""
+    if param_type is None:
+        return False
+    return ConfigEntity.is_config_entity_type(param_type)
+
+
+class FunctionSignatureCache:
+    """Separate caches for input and output models to prevent collisions."""
+    
+    _input_cache: Dict[str, Tuple[Optional[Type[Entity]], str]] = {}   # input_hash → (input_model, pattern)
+    _output_cache: Dict[str, Tuple[Type[Entity], str]] = {}            # output_hash → (output_model, pattern)
+    
+    @classmethod
+    def get_or_create_input_model(cls, func: Callable, function_name: str) -> Tuple[Optional[Type[Entity]], str]:
+        """Cache input signature → input entity model + execution pattern."""
+        input_hash = cls._hash_input_signature(func)
+        
+        if input_hash in cls._input_cache:
+            return cls._input_cache[input_hash]
+        
+        # Create input model with ConfigEntity exclusion
+        input_model = create_entity_from_function_signature_enhanced(func, "Input", function_name)
+        
+        # Determine if this function uses ConfigEntity pattern
+        sig = signature(func)
+        type_hints = get_type_hints(func)
+        has_config_entity = any(
+            is_top_level_config_entity(type_hints.get(param.name, Any))
+            for param in sig.parameters.values()
+        )
+        
+        pattern = "config_entity_pattern" if has_config_entity else "standard_pattern"
+        
+        # Handle case where all parameters are ConfigEntity (no input model needed)
+        if not input_model.model_fields or all(
+            field_name in ['ecs_id', 'live_id', 'created_at', 'forked_at', 
+                          'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                          'root_ecs_id', 'root_live_id', 'from_storage', 
+                          'untyped_data', 'attribute_source']
+            for field_name in input_model.model_fields.keys()
+        ):
+            input_model = None  # No input entity needed for pure ConfigEntity functions
+        
+        cls._input_cache[input_hash] = (input_model, pattern)
+        return input_model, pattern
+    
+    @classmethod  
+    def get_or_create_output_model(cls, func: Callable, function_name: str) -> Tuple[Type[Entity], str]:
+        """Cache output signature → output entity model + return pattern."""
+        output_hash = cls._hash_output_signature(func)
+        
+        if output_hash in cls._output_cache:
+            return cls._output_cache[output_hash]
+        
+        output_model = create_entity_from_function_signature_enhanced(func, "Output", function_name)
+        
+        # Analyze return type for pattern classification
+        type_hints = get_type_hints(func)
+        return_type = type_hints.get('return', Any)
+        
+        pattern = cls._classify_return_pattern(return_type)
+        
+        cls._output_cache[output_hash] = (output_model, pattern)
+        return output_model, pattern
+    
+    @classmethod
+    def _hash_input_signature(cls, func: Callable) -> str:
+        """Create hash of input signature for caching."""
+        sig = signature(func)
+        type_hints = get_type_hints(func)
+        
+        # Include parameter names, types, and defaults
+        sig_parts = []
+        for param in sig.parameters.values():
+            param_type = type_hints.get(param.name, 'Any')
+            default = 'NO_DEFAULT' if param.default is param.empty else str(param.default)
+            sig_parts.append(f"{param.name}:{param_type}:{default}")
+        
+        signature_str = '|'.join(sorted(sig_parts))
+        return hashlib.md5(signature_str.encode()).hexdigest()
+    
+    @classmethod
+    def _hash_output_signature(cls, func: Callable) -> str:
+        """Create hash of output signature for caching."""
+        type_hints = get_type_hints(func)
+        return_type = type_hints.get('return', 'Any')
+        return hashlib.md5(str(return_type).encode()).hexdigest()
+    
+    @classmethod
+    def _classify_return_pattern(cls, return_type: Type) -> str:
+        """Classify return pattern for output processing."""
+        # Basic classification - can be enhanced with ReturnTypeAnalyzer integration
+        if hasattr(return_type, '__origin__') and return_type.__origin__ is tuple:
+            return "tuple_return"
+        elif hasattr(return_type, '__origin__') and return_type.__origin__ in [list, List]:
+            return "list_return"
+        elif hasattr(return_type, '__origin__') and return_type.__origin__ in [dict, Dict]:
+            return "dict_return"
+        else:
+            return "single_return"
+    
+    @classmethod
+    def clear_cache(cls):
+        """Clear both caches (useful for testing)."""
+        cls._input_cache.clear()
+        cls._output_cache.clear()
+    
+    @classmethod
+    def get_cache_stats(cls) -> Dict[str, int]:
+        """Get cache statistics."""
+        return {
+            "input_cache_size": len(cls._input_cache),
+            "output_cache_size": len(cls._output_cache),
+            "total_cached_functions": len(set(cls._input_cache.keys()) | set(cls._output_cache.keys()))
+        }
+
+
+def create_entity_from_function_signature_enhanced(
+    func: Callable,
+    entity_type: str,  # "Input" or "Output"
+    function_name: str
+) -> Type[Entity]:
+    """Enhanced to exclude top-level ConfigEntity parameters from input entity creation."""
+    
+    sig = signature(func)
+    type_hints = get_type_hints(func)
+    field_definitions: Dict[str, Any] = {}
+    
+    if entity_type == "Input":
+        type_hints.pop('return', None)
+        
+        for param in sig.parameters.values():
+            param_type = type_hints.get(param.name, Any)
+            
+            # NEW: Skip ONLY top-level ConfigEntity parameters
+            if is_top_level_config_entity(param_type):
+                continue  # Exclude from auto-generated input entity
+                
+            # Include everything else (including nested ConfigEntities)
+            if param.default is param.empty:
+                field_definitions[param.name] = (param_type, ...)
+            else:
+                field_definitions[param.name] = (param_type, param.default)
+    
+    elif entity_type == "Output":
+        # Handle return type (unchanged)
+        return_type = type_hints.get('return', Any)
+        if isinstance(return_type, type) and issubclass(return_type, BaseModel):
+            for field_name, field_info in return_type.model_fields.items():
+                field_type = return_type.__annotations__.get(field_name, Any)
+                if hasattr(field_info, 'default') and field_info.default is not ...:
+                    field_definitions[field_name] = (field_type, field_info.default)
+                else:
+                    field_definitions[field_name] = (field_type, ...)
+        else:
+            field_definitions['result'] = (return_type, ...)
+    
+    # Create Entity subclass using create_model
+    entity_class_name = f"{function_name}{entity_type}Entity"
+    EntityClass = create_model(
+        entity_class_name,
+        __base__=Entity,
+        __module__=func.__module__,
+        **field_definitions
+    )
+    EntityClass.__qualname__ = f"{function_name}.{entity_class_name}"
+    return EntityClass
+
+
 @dataclass
 class FunctionMetadata:
-    """Clean metadata storage - leverages proven dataclass patterns."""
+    """Enhanced metadata with ConfigEntity and caching support."""
     name: str
     signature_str: str
     docstring: Optional[str]
     is_async: bool
     original_function: Callable
     
-    # Dynamic Entity classes created with create_model
-    input_entity_class: Type[Entity]
+    # Entity classes (input may be None for pure ConfigEntity functions)
+    input_entity_class: Optional[Type[Entity]]
     output_entity_class: Type[Entity]
+    
+    # NEW: Pattern classifications from separate caches
+    input_pattern: str   # "config_entity_pattern" | "standard_pattern"
+    output_pattern: str  # "single_return" | "tuple_return" | etc.
     
     # For future Modal Sandbox integration
     serializable_signature: Dict[str, Any]
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # NEW: ConfigEntity support flags
+    uses_config_entity: bool = field(init=False)
+    config_entity_types: List[Type[ConfigEntity]] = field(default_factory=list, init=False)
+    
+    def __post_init__(self):
+        """Initialize ConfigEntity support flags."""
+        self.uses_config_entity = self.input_pattern == "config_entity_pattern"
+        
+        if self.uses_config_entity:
+            # Extract ConfigEntity types from function signature
+            sig = signature(self.original_function)
+            type_hints = get_type_hints(self.original_function)
+            
+            for param in sig.parameters.values():
+                param_type = type_hints.get(param.name, Any)
+                if is_top_level_config_entity(param_type):
+                    self.config_entity_types.append(param_type)
 
 
 def create_entity_from_function_signature(
@@ -124,7 +318,7 @@ class CallableRegistry:
     
     @classmethod
     def register(cls, name: str) -> Callable:
-        """Register function with entity factory integration."""
+        """Enhanced registration with separate signature caching."""
         
         def decorator(func: Callable) -> Callable:
             # Validate function has proper type hints
@@ -132,29 +326,27 @@ class CallableRegistry:
             if 'return' not in type_hints:
                 raise ValueError(f"Function {func.__name__} must have return type hint")
             
-            # Create Entity classes using proven factory
-            input_entity_class = create_entity_from_function_signature(
-                func, "Input", name
-            )
-            output_entity_class = create_entity_from_function_signature(
-                func, "Output", name
-            )
+            # Use separate signature caching
+            input_entity_class, input_pattern = FunctionSignatureCache.get_or_create_input_model(func, name)
+            output_entity_class, output_pattern = FunctionSignatureCache.get_or_create_output_model(func, name)
             
-            # Store clean metadata
+            # Store enhanced metadata
             metadata = FunctionMetadata(
                 name=name,
                 signature_str=str(signature(func)),
                 docstring=getdoc(func),
                 is_async=iscoroutinefunction(func),
                 original_function=func,
-                input_entity_class=input_entity_class,
+                input_entity_class=input_entity_class,  # May be None for pure ConfigEntity functions
                 output_entity_class=output_entity_class,
+                input_pattern=input_pattern,              # NEW: Input pattern classification
+                output_pattern=output_pattern,            # NEW: Output pattern classification
                 serializable_signature=cls._create_serializable_signature(func)
             )
             
             cls._functions[name] = metadata
             
-            print(f"✅ Registered '{name}' with entity-native execution")
+            print(f"✅ Registered '{name}' with ConfigEntity-aware caching (input_pattern: {input_pattern}, output_pattern: {output_pattern})")
             return func
         
         return decorator
@@ -172,7 +364,7 @@ class CallableRegistry:
     @classmethod
     async def _create_input_entity_with_borrowing(
         cls,
-        input_entity_class: Type[Entity],
+        input_entity_class: Optional[Type[Entity]],
         kwargs: Dict[str, Any],
         classification: Optional[Dict[str, str]] = None
     ) -> Entity:
@@ -184,6 +376,9 @@ class CallableRegistry:
         - Enhanced pattern classification for mixed inputs
         - Automatic dependency tracking
         """
+        if input_entity_class is None:
+            raise ValueError("Cannot create input entity: input_entity_class is None (pure ConfigEntity function)")
+        
         # Use enhanced composite entity creation
         if classification:
             # Pattern already classified - use existing create_composite_entity
@@ -203,21 +398,226 @@ class CallableRegistry:
         return input_entity
     
     @classmethod
+    def _detect_execution_strategy(cls, kwargs: Dict[str, Any], metadata: FunctionMetadata) -> str:
+        """Detect execution strategy based on input composition."""
+        
+        sig = signature(metadata.original_function)
+        type_hints = get_type_hints(metadata.original_function)
+        
+        # Count parameter types
+        entity_params = []
+        config_params = []
+        primitive_params = {}
+        
+        for param_name, value in kwargs.items():
+            param_type = type_hints.get(param_name)
+            
+            if is_top_level_config_entity(param_type):
+                config_params.append(param_name)
+            elif isinstance(value, Entity) and not isinstance(value, ConfigEntity):
+                entity_params.append(param_name)
+            else:
+                primitive_params[param_name] = value
+        
+        # Strategy determination
+        if len(entity_params) == 1 and (primitive_params or config_params):
+            return "single_entity_with_config"  # Use functools.partial approach
+        elif len(entity_params) > 1:
+            return "multi_entity_composite"     # Traditional composite entity
+        elif len(entity_params) == 1:
+            return "single_entity_direct"       # Direct entity processing
+        else:
+            return "pure_borrowing"             # Address-based borrowing
+    
+    @classmethod
     async def _execute_async(cls, func_name: str, **kwargs) -> Entity:
-        """Execute function with enhanced pattern detection."""
+        """Execute function with enhanced strategy detection."""
         # Step 1: Get function metadata
         metadata = cls.get_metadata(func_name)
         if not metadata:
             raise ValueError(f"Function '{func_name}' not registered")
         
-        # Step 2: Detect execution pattern using clean architecture
-        pattern_type, classification = InputPatternClassifier.classify_kwargs(kwargs)
+        # Step 2: Detect execution strategy based on ConfigEntity pattern
+        strategy = cls._detect_execution_strategy(kwargs, metadata)
         
         # Step 3: Route to appropriate execution strategy
-        if pattern_type in ["pure_transactional", "mixed"]:
-            return await cls._execute_transactional(metadata, kwargs, classification)
-        else:
+        if strategy == "single_entity_with_config":
+            return await cls._execute_with_partial(metadata, kwargs)
+        elif strategy in ["multi_entity_composite", "single_entity_direct"]:
+            # Use pattern classification for existing logic
+            pattern_type, classification = InputPatternClassifier.classify_kwargs(kwargs)
+            if pattern_type in ["pure_transactional", "mixed"]:
+                return await cls._execute_transactional(metadata, kwargs, classification)
+            else:
+                return await cls._execute_borrowing(metadata, kwargs, classification)
+        else:  # pure_borrowing
+            pattern_type, classification = InputPatternClassifier.classify_kwargs(kwargs)
             return await cls._execute_borrowing(metadata, kwargs, classification)
+    
+    @classmethod
+    async def _execute_with_partial(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Entity:
+        """Execute using functools.partial for single_entity_with_config pattern."""
+        
+        # Step 1: Separate entity and config parameters
+        sig = signature(metadata.original_function)
+        type_hints = get_type_hints(metadata.original_function)
+        
+        entity_params = {}
+        config_params = {}
+        primitive_params = {}
+        
+        for param_name, value in kwargs.items():
+            param_type = type_hints.get(param_name)
+            
+            if is_top_level_config_entity(param_type):
+                config_params[param_name] = value
+            elif isinstance(value, Entity) and not isinstance(value, ConfigEntity):
+                entity_params[param_name] = value
+            else:
+                primitive_params[param_name] = value
+        
+        # Step 2: Create or resolve ConfigEntity
+        config_entities = {}
+        for param_name, param_type in [(p.name, type_hints.get(p.name)) for p in sig.parameters.values()]:
+            if is_top_level_config_entity(param_type):
+                if param_name in config_params:
+                    # Use provided ConfigEntity
+                    config_entity = config_params[param_name]
+                else:
+                    # Create ConfigEntity using the factory pattern
+                    config_entity = cls.create_config_entity_from_primitives(
+                        metadata.name,
+                        primitive_params,
+                        expected_config_type=param_type
+                    )
+                    
+                    # Register ConfigEntity in ECS
+                    config_entity.promote_to_root()
+                
+                config_entities[param_name] = config_entity
+        
+        # Step 3: Create partial function with ConfigEntity
+        partial_func = partial(metadata.original_function, **config_entities)
+        
+        # Step 4: Execute with single entity using transactional path
+        if entity_params:
+            # Use existing transactional execution with the partial function
+            # This leverages all existing semantic detection logic
+            entity_name, entity_obj = next(iter(entity_params.items()))
+            
+            # Create temporary metadata for the partial function
+            partial_metadata = FunctionMetadata(
+                name=f"{metadata.name}_partial",
+                signature_str=str(signature(partial_func)),
+                docstring=metadata.docstring,
+                is_async=metadata.is_async,
+                original_function=partial_func,
+                input_entity_class=type(entity_obj),  # Use entity's actual class
+                output_entity_class=metadata.output_entity_class,
+                input_pattern="single_entity_direct",
+                output_pattern=metadata.output_pattern,
+                serializable_signature={}
+            )
+            
+            # Execute using existing transactional logic
+            return await cls._execute_transactional(partial_metadata, {entity_name: entity_obj}, None)
+        else:
+            # Pure ConfigEntity function - execute directly
+            try:
+                if metadata.is_async:
+                    result = await partial_func()
+                else:
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, partial_func)
+            except Exception as e:
+                await cls._record_execution_failure(None, metadata.name, str(e))
+                raise
+            
+            # Create output entity
+            if isinstance(result, Entity):
+                output_entity = result
+                output_entity.promote_to_root()
+            else:
+                # Determine the correct field name from the output entity class
+                field_names = list(metadata.output_entity_class.model_fields.keys())
+                # Exclude entity system fields
+                data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
+                                                                  'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                                                  'root_ecs_id', 'root_live_id', 'from_storage', 
+                                                                  'untyped_data', 'attribute_source'}]
+                if data_fields:
+                    # Use the first available data field
+                    output_entity = metadata.output_entity_class(**{data_fields[0]: result})
+                else:
+                    raise ValueError(f"No data fields available in output entity class {metadata.output_entity_class.__name__}")
+                output_entity.promote_to_root()
+            
+            # Record execution with ConfigEntity tracking
+            await cls._record_function_execution_with_config(
+                None, output_entity, metadata.name, list(config_entities.values())
+            )
+            
+            return output_entity
+    
+    @classmethod
+    def create_config_entity_from_primitives(
+        cls,
+        function_name: str,
+        primitive_params: Dict[str, Any],
+        expected_config_type: Optional[Type[ConfigEntity]] = None
+    ) -> ConfigEntity:
+        """Create ConfigEntity dynamically from primitive parameters."""
+        from abstractions.ecs.functional_api import borrow_from_address
+        
+        if expected_config_type:
+            # Function expects specific ConfigEntity type - use it directly
+            config_data = {}
+            for param_name, param_value in primitive_params.items():
+                if param_name in expected_config_type.model_fields:
+                    if isinstance(param_value, str) and param_value.startswith('@'):
+                        # Create the entity first, then borrow
+                        config_entity = expected_config_type()
+                        borrow_from_address(config_entity, param_value, param_name)
+                        return config_entity
+                    else:
+                        config_data[param_name] = param_value
+            return expected_config_type(**config_data)
+        else:
+            # Create dynamic ConfigEntity class for this function
+            class_name = f"{function_name}Config"
+            
+            # Build field definitions from primitive parameters
+            field_definitions = {}
+            for param_name, param_value in primitive_params.items():
+                param_type = type(param_value)
+                field_definitions[param_name] = (param_type, param_value)
+            
+            # Create ConfigEntity subclass using factory
+            ConfigClass = ConfigEntity.create_config_entity_class(
+                class_name,
+                field_definitions,
+                module_name="__callable_registry__"
+            )
+            
+            # Create instance
+            return ConfigClass(**primitive_params)
+    
+    @classmethod
+    async def _record_function_execution_with_config(
+        cls,
+        input_entity: Optional[Entity],
+        output_entity: Entity,
+        function_name: str,
+        config_entities: List[ConfigEntity]
+    ) -> None:
+        """Record function execution with ConfigEntity tracking."""
+        execution_record = FunctionExecution(
+            function_name=function_name,
+            input_entity_id=input_entity.ecs_id if input_entity else None,
+            output_entity_id=output_entity.ecs_id
+        )
+        execution_record.mark_as_completed("creation")
+        execution_record.promote_to_root()
     
     @classmethod
     def _has_direct_entity_inputs(cls, kwargs: Dict[str, Any]) -> bool:
@@ -589,7 +989,7 @@ class CallableRegistry:
             'docstring': metadata.docstring,
             'is_async': metadata.is_async,
             'created_at': metadata.created_at,
-            'input_entity_class': metadata.input_entity_class.__name__,
+            'input_entity_class': metadata.input_entity_class.__name__ if metadata.input_entity_class else None,
             'output_entity_class': metadata.output_entity_class.__name__
         }
     

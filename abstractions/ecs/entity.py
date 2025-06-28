@@ -1749,9 +1749,87 @@ class FunctionExecution(Entity):
         self.error_message = error
     
     def mark_as_completed(self, semantic: str) -> None:
-        """Mark execution as completed with detected semantic."""
+        """Mark execution as completed with semantic classification."""
         self.execution_status = "completed"
         self.execution_semantic = semantic
+
+
+class ConfigEntity(Entity):
+    """Base class for dynamically created parameter entities.
+    
+    ConfigEntity is a subclass of Entity that provides full ECS tracking 
+    for parameter entities created by the callable registry. It receives
+    special handling only when detected at the top-level of function signatures.
+    
+    Purpose:
+    - Track configuration parameters as first-class entities
+    - Enable functools.partial execution pattern
+    - Maintain complete audit trails for both data and configuration
+    - Support entity inheritance pattern without root reassignment
+    
+    Usage:
+        # Manual creation
+        config = ProcessingConfig(threshold=4.0, reason="final_update")
+        config.promote_to_root()
+        
+        # Automatic creation by callable registry
+        execute("process_data", data=entity, threshold=4.0, reason="update")
+        # System creates ProcessingConfig automatically when function expects it
+    """
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # ConfigEntity-specific initialization if needed
+    
+    @classmethod
+    def is_config_entity_type(cls, entity_type: Type) -> bool:
+        """Check if a type is a ConfigEntity subclass (not ConfigEntity itself)."""
+        return (
+            isinstance(entity_type, type) and
+            issubclass(entity_type, ConfigEntity) and
+            entity_type is not ConfigEntity
+        )
+    
+    @classmethod
+    def create_config_entity_class(
+        cls,
+        class_name: str,
+        field_definitions: Dict[str, Any],
+        module_name: str = "__main__"
+    ) -> Type['ConfigEntity']:
+        """Factory method to create ConfigEntity subclasses dynamically.
+        
+        Args:
+            class_name: Name for the new ConfigEntity subclass
+            field_definitions: Dict mapping field names to (type, default) tuples
+            module_name: Module name for the created class
+            
+        Returns:
+            New ConfigEntity subclass with specified fields
+            
+        Example:
+            ProcessingConfig = ConfigEntity.create_config_entity_class(
+                "ProcessingConfig",
+                {
+                    "threshold": (float, 3.5),
+                    "reason": (str, "update"),
+                    "active": (bool, True)
+                }
+            )
+        """
+        from pydantic import create_model
+        
+        ConfigEntityClass = create_model(
+            class_name,
+            __base__=cls,  # Inherit from ConfigEntity
+            __module__=module_name,
+            **field_definitions
+        )
+        
+        # Set proper qualname for debugging
+        ConfigEntityClass.__qualname__ = class_name
+        
+        return ConfigEntityClass
 
 
 def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, Any]) -> Type[Entity]:

@@ -1,14 +1,17 @@
 """
-Entity-Native Callable Registry Example
+Entity-Native Callable Registry Example with ConfigEntity Integration
 
 This demonstrates the revolutionary entity-native function execution using
-all our proven patterns:
+all our proven patterns plus the new ConfigEntity features:
 
 - @uuid.field entity addressing
+- ConfigEntity pattern for parameter management
+- functools.partial execution with full ECS tracking
 - Automatic dependency discovery  
 - Entity borrowing with provenance
 - Immutable execution boundaries
 - Complete audit trails
+- Separate signature caching
 """
 
 import sys
@@ -18,9 +21,9 @@ from typing import List
 from pydantic import BaseModel
 from uuid import uuid4
 
-# Import our entity system
-from abstractions.ecs.entity import Entity, EntityRegistry, EntityWithPrimitives
-from abstractions.ecs.callable_registry import CallableRegistry
+# Import our entity system with ConfigEntity
+from abstractions.ecs.entity import Entity, EntityRegistry, ConfigEntity
+from abstractions.ecs.callable_registry import CallableRegistry, FunctionSignatureCache
 
 # Import our addressing system
 from abstractions.ecs.ecs_address_parser import get, is_address
@@ -49,6 +52,20 @@ class AnalysisResult(BaseModel):
     total_courses: int
     analysis_notes: str
 
+# NEW: ConfigEntity for parameter management
+class AnalysisConfig(ConfigEntity):
+    """Configuration entity for analysis parameters."""
+    threshold: float = 3.0
+    grade_weight: float = 1.0
+    include_notes: bool = True
+    analysis_mode: str = "standard"
+
+class ProcessingConfig(ConfigEntity):
+    """Configuration entity for data processing."""
+    min_courses: int = 1
+    weighting_scheme: str = "linear"
+    ignore_outliers: bool = False
+
 # Register a function with entity-native execution
 @CallableRegistry.register("analyze_student_performance")
 def analyze_student_performance(
@@ -76,6 +93,58 @@ def analyze_student_performance(
         average_grade=avg_grade,
         status=status,
         total_courses=len(grades),
+        analysis_notes=notes
+    )
+
+# NEW: Function with explicit ConfigEntity parameter (showcases functools.partial execution)
+@CallableRegistry.register("analyze_with_config")
+def analyze_with_config(
+    student: Student,
+    record: AcademicRecord, 
+    config: AnalysisConfig
+) -> AnalysisResult:
+    """Analyze student performance using ConfigEntity for parameters."""
+    
+    # Use config parameters
+    avg_grade = sum(record.grades) / len(record.grades) if record.grades else 0.0
+    weighted_avg = avg_grade * config.grade_weight
+    
+    status = "excellent" if weighted_avg >= config.threshold else "needs_improvement"
+    
+    notes = f"Analysis mode: {config.analysis_mode}, Weight: {config.grade_weight}"
+    if config.include_notes:
+        notes += f", Threshold: {config.threshold}"
+    
+    return AnalysisResult(
+        student_name=student.name,
+        average_grade=weighted_avg,
+        status=status,
+        total_courses=len(record.grades),
+        analysis_notes=notes
+    )
+
+# NEW: Function that takes both entities and primitives (showcases dynamic ConfigEntity creation)
+@CallableRegistry.register("comprehensive_analysis")
+def comprehensive_analysis(
+    student: Student,
+    threshold: float = 3.5,
+    analysis_depth: str = "standard",
+    include_recommendations: bool = True
+) -> AnalysisResult:
+    """Comprehensive analysis with automatic ConfigEntity creation."""
+    
+    # This function doesn't explicitly use ConfigEntity, but the registry will create one
+    # from the threshold, analysis_depth, and include_recommendations parameters
+    
+    notes = f"Comprehensive {analysis_depth} analysis"
+    if include_recommendations:
+        notes += " with recommendations"
+    
+    return AnalysisResult(
+        student_name=student.name,
+        average_grade=3.75,  # Placeholder calculation
+        status="good" if 3.75 >= threshold else "needs_improvement",
+        total_courses=5,
         analysis_notes=notes
     )
 
@@ -140,10 +209,80 @@ if result_tree:
     print(f"Result entity tree has {result_tree.node_count} nodes and {result_tree.edge_count} edges")
     print(f"Max depth: {result_tree.max_depth}")
 
+print("\n🔄 Demonstrate ConfigEntity patterns...")
+
+# Create a configuration entity
+print("Creating configuration entity...")
+analysis_config = AnalysisConfig(
+    threshold=3.8,
+    grade_weight=1.2,
+    include_notes=True,
+    analysis_mode="detailed"
+)
+analysis_config.promote_to_root()
+print(f"✅ Created AnalysisConfig: {analysis_config.ecs_id}")
+
+# Pattern 1: Explicit ConfigEntity execution (functools.partial)
+print("\nPattern 1: Function with explicit ConfigEntity parameter...")
+config_result = CallableRegistry.execute(
+    "analyze_with_config",
+    student=student,
+    record=record,
+    config=analysis_config
+)
+
+print(f"✅ ConfigEntity execution result: {config_result.ecs_id}")
+if hasattr(config_result, 'analysis_notes'):
+    print(f"Analysis notes: {getattr(config_result, 'analysis_notes', 'N/A')}")
+
+# Pattern 2: Automatic ConfigEntity creation from primitives
+print("\nPattern 2: Automatic ConfigEntity creation from primitives...")
+auto_config_result = CallableRegistry.execute(
+    "analyze_with_config",
+    student=student,
+    record=record,
+    threshold=4.0,
+    grade_weight=0.9,
+    analysis_mode="quick"
+)
+
+print(f"✅ Auto-ConfigEntity result: {auto_config_result.ecs_id}")
+if hasattr(auto_config_result, 'analysis_notes'):
+    print(f"Auto-config notes: {getattr(auto_config_result, 'analysis_notes', 'N/A')}")
+
+# Pattern 3: Single entity + config pattern (dynamic ConfigEntity)
+print("\nPattern 3: Single entity + config parameters...")
+comprehensive_result = CallableRegistry.execute(
+    "comprehensive_analysis",
+    student=student,
+    threshold=3.7,
+    analysis_depth="detailed",
+    include_recommendations=True
+)
+
+print(f"✅ Comprehensive analysis result: {comprehensive_result.ecs_id}")
+if hasattr(comprehensive_result, 'status'):
+    print(f"Status: {getattr(comprehensive_result, 'status', 'N/A')}")
+
+# Pattern 4: ConfigEntity with borrowing from addresses
+print("\nPattern 4: ConfigEntity with address-based borrowing...")
+result_with_borrowing = CallableRegistry.execute(
+    "analyze_with_config",
+    student=student,
+    record=record,
+    threshold=f"@{analysis_config.ecs_id}.threshold",  # Borrow from config entity
+    grade_weight=1.5,  # Direct value
+    analysis_mode="borrowed"
+)
+
+print(f"✅ Borrowing result: {result_with_borrowing.ecs_id}")
+if hasattr(result_with_borrowing, 'analysis_notes'):
+    print(f"Borrowed config notes: {getattr(result_with_borrowing, 'analysis_notes', 'N/A')}")
+
 print("\n🔄 Demonstrate entity versioning through function calls...")
 
 # Execute the same function with different parameters
-print("Executing with higher threshold...")
+print("Executing original function with higher threshold...")
 result2_entity = CallableRegistry.execute(
     "analyze_student_performance",
     **{
