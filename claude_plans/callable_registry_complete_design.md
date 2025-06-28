@@ -246,21 +246,174 @@ input_entity = create_composite_entity(
 # Result: Complex composite with all input patterns unified, including dict navigation
 ```
 
-### **Parameter Entity Pattern**
+### **ConfigEntity Pattern with functools.partial**
 
-**Concept**: Non-entity parameters become flat parameter entities, enabling:
-- **Currying**: Pre-create parameter entities and reuse them
-- **Caching**: Store common parameter configurations  
-- **Provenance**: Full ECS tracking of parameter data
+**✅ UPDATED APPROACH**: Sophisticated parameter handling using ConfigEntity subclass + functools.partial for clean execution with complete ECS tracking.
 
-**Implementation**:
+#### **Core Concept**
+1. **ConfigEntity as Entity subclass**: `ConfigEntity(Entity)` - full ECS tracking for parameter entities
+2. **Top-level signature detection**: ConfigEntity is special only when it appears as direct function parameter
+3. **functools.partial execution**: Create partial function with ConfigEntity, execute with single entity
+4. **Separate signature caching**: Input and output signatures cached independently
+
+#### **ConfigEntity Definition**
 ```python
-# Manual parameter entity creation for currying
-analysis_params = ParameterEntity(threshold=85.0, weight=1.2, bonus=5.0)
-analysis_params.promote_to_root()  # Cache in registry
+class ConfigEntity(Entity):
+    """Base class for dynamically created parameter entities.
+    
+    Subclass of Entity to ensure full ECS tracking and audit trails.
+    Special handling only when detected at top-level of function signatures.
+    """
+    pass
 
-# Reuse in multiple executions
-execute("analyze", grades="@record.grades", **analysis_params.model_dump())
+# Example usage patterns:
+class ProcessingConfig(ConfigEntity):
+    threshold: float = 3.5
+    reason: str = "update" 
+    active: bool = True
+
+def update_student(student: StudentEntity, config: ProcessingConfig) -> StudentEntity:
+    # Well-behaved function signature with explicit ConfigEntity
+    return student
+```
+
+#### **Smart Function Signature Analysis**
+```python
+def is_top_level_config_entity(param_type: Type) -> bool:
+    """Detect ConfigEntity only at function signature top-level."""
+    return (
+        isinstance(param_type, type) and 
+        issubclass(param_type, ConfigEntity) and 
+        param_type is not ConfigEntity
+    )
+
+def create_entity_from_function_signature(func: Callable, entity_type: str, function_name: str):
+    """Enhanced to exclude top-level ConfigEntity parameters from input entity creation."""
+    sig = signature(func)
+    type_hints = get_type_hints(func)
+    
+    field_definitions = {}
+    
+    for param in sig.parameters.values():
+        param_type = type_hints.get(param.name, Any)
+        
+        # ✅ NEW: Skip ONLY top-level ConfigEntity parameters
+        if is_top_level_config_entity(param_type):
+            continue  # Exclude from auto-generated input entity
+            
+        # Include everything else (including nested ConfigEntities)
+        if param.default is param.empty:
+            field_definitions[param.name] = (param_type, ...)
+        else:
+            field_definitions[param.name] = (param_type, param.default)
+    
+    return create_model(f"{function_name}{entity_type}Entity", __base__=Entity, **field_definitions)
+```
+
+#### **Execution Patterns**
+
+**Pattern 1: Single Entity + Parameters → ConfigEntity + Partial**
+```python
+# Input: Single entity + parameters
+execute("update_student", student=entity, threshold=4.0, reason="final_update", active=True)
+
+# Internal processing:
+# 1. Detect single entity + parameters pattern
+# 2. Create ConfigEntity from parameters: ProcessingConfig(threshold=4.0, reason="final_update", active=True)
+# 3. Register ConfigEntity in ECS: config.promote_to_root()
+# 4. Create partial: partial_func = partial(update_student, config=config)
+# 5. Execute with single entity: result = partial_func(student=execution_copy)
+# 6. Apply semantic detection to result
+```
+
+**Pattern 2: Well-Behaved Functions with ConfigEntity**
+```python
+# Function already expects ConfigEntity
+def process_data(data: DataEntity, config: ProcessingConfig) -> DataEntity: ...
+
+# Execution approaches:
+# Direct ConfigEntity
+config = ProcessingConfig(threshold=4.0)
+config.promote_to_root()
+execute("process_data", data=entity, config=config)
+
+# Automatic ConfigEntity creation
+execute("process_data", data=entity, threshold=4.0, reason="update")
+# System creates ProcessingConfig automatically
+```
+
+#### **Separate Signature Caching Strategy**
+```python
+class FunctionSignatureCache:
+    """Separate caches for input and output models to prevent collisions."""
+    
+    _input_cache: Dict[str, Tuple[Optional[Type[Entity]], str]] = {}   # input_hash → (input_model, pattern)
+    _output_cache: Dict[str, Tuple[Type[Entity], str]] = {}            # output_hash → (output_model, pattern)
+    
+    @classmethod
+    def get_or_create_input_model(cls, func: Callable) -> Tuple[Optional[Type[Entity]], str]:
+        """Cache input signature → input entity model."""
+        input_hash = cls._hash_input_signature(func)
+        
+        if input_hash in cls._input_cache:
+            return cls._input_cache[input_hash]
+        
+        # Analyze input signature for pattern detection
+        input_model, pattern = cls._analyze_input_signature(func)
+        cls._input_cache[input_hash] = (input_model, pattern)
+        return input_model, pattern
+    
+    @classmethod  
+    def get_or_create_output_model(cls, func: Callable) -> Tuple[Type[Entity], str]:
+        """Cache output signature → output entity model."""
+        output_hash = cls._hash_output_signature(func)
+        
+        if output_hash in cls._output_cache:
+            return cls._output_cache[output_hash]
+        
+        output_model, pattern = cls._analyze_output_signature(func)
+        cls._output_cache[output_hash] = (output_model, pattern)
+        return output_model, pattern
+
+# Benefits of separate caches:
+# - Functions with same inputs but different outputs get correct models
+# - Better cache hit rates for input model reuse
+# - Independent analysis of input vs output patterns
+```
+
+#### **Enhanced Execution Strategy**
+```python
+@classmethod
+def _detect_execution_strategy(cls, kwargs: Dict[str, Any], metadata: FunctionMetadata) -> str:
+    """Detect execution strategy based on input composition."""
+    
+    sig = signature(metadata.original_function)
+    type_hints = get_type_hints(metadata.original_function)
+    
+    # Count parameter types
+    entity_params = []
+    config_params = []
+    primitive_params = {}
+    
+    for param_name, value in kwargs.items():
+        param_type = type_hints.get(param_name)
+        
+        if is_top_level_config_entity(param_type):
+            config_params.append(param_name)
+        elif isinstance(value, Entity) and not isinstance(value, ConfigEntity):
+            entity_params.append(param_name)
+        else:
+            primitive_params[param_name] = value
+    
+    # Strategy determination
+    if len(entity_params) == 1 and (primitive_params or config_params):
+        return "single_entity_with_config"  # Use functools.partial approach
+    elif len(entity_params) > 1:
+        return "multi_entity_composite"     # Traditional composite entity
+    elif len(entity_params) == 1:
+        return "single_entity_direct"       # Direct entity processing
+    else:
+        return "pure_borrowing"             # Address-based borrowing
 ```
 
 ### **Enhanced Input Pattern Processing**
@@ -1107,12 +1260,25 @@ class RegistryConfig(BaseModel):
 - **Implemented**: All 7 return patterns (B1-B7) with 100% test coverage
 - **Implemented**: Container metadata preservation and reconstruction capabilities
 
-### **❌ REMAINING TO IMPLEMENT**
+### **❌ REMAINING TO IMPLEMENT (Updated)**
 
-#### **10. Advanced Features**
-- **Missing**: Registry disconnection for perfect isolation
-- **Missing**: Parameter entity pattern for currying
-- **Missing**: Configurable execution settings and performance metrics
+#### **10. ConfigEntity Integration & Unified Execution** (CURRENT PRIORITY)
+- **Missing**: ConfigEntity base class implementation in entity.py
+- **Missing**: Separate input/output signature caching system
+- **Missing**: functools.partial execution pipeline for single_entity_with_config pattern
+- **Missing**: Top-level ConfigEntity detection in function signature analysis
+- **Missing**: Unified execution path (eliminate borrowing vs transactional dual paths)
+
+#### **11. Phase 2 Integration** (HIGH PRIORITY)
+- **Missing**: Integration of ReturnTypeAnalyzer with callable registry execution pipeline
+- **Missing**: Integration of EntityUnpacker for multi-entity tuple unpacking
+- **Missing**: Enhanced semantic detection with Phase 2 output analysis
+- **Missing**: Sibling relationship tracking for unpacked multi-entity outputs
+
+#### **12. Advanced Features** (LOWER PRIORITY) 
+- **Missing**: Registry disconnection for perfect isolation (may not be needed with current approach)
+- **Missing**: Configurable execution settings and performance metrics  
+- **Missing**: Pydantic BaseModel auto-wrapping (DEFERRED - not current priority)
 
 ### **Updated Implementation Priority (Post Phase 1 & 2)**
 
@@ -1139,18 +1305,37 @@ class RegistryConfig(BaseModel):
    - ✅ 100% test success rate across all 35 pattern tests
    - ✅ Comprehensive edge case coverage
 
-#### **🔄 Phase 3: Integration & Semantic Detection** (NEXT PRIORITY)
-1. **Integrate Return Type Analyzer with Callable Registry**:
-   - Connect `ReturnTypeAnalyzer.analyze_return()` with function execution pipeline
+#### **🔄 Phase 3: Unified Execution & ConfigEntity Integration** (CURRENT PRIORITY)
+
+**✅ UPDATED UNDERSTANDING**: Focus on unified execution path with ConfigEntity pattern and separate signature caching.
+
+1. **Unified Execution Path**:
+   - ✅ **Insight**: Borrowing is just preprocessing step before transactional execution
+   - **Implementation**: Single execution pipeline with pattern-specific preprocessing
+   - **Benefit**: Eliminate dual execution paths, reuse semantic detection logic
+
+2. **ConfigEntity Integration**:
+   - **ConfigEntity Implementation**: Subclass of Entity for meta-created parameter entities
+   - **Top-level Detection**: Special handling only for direct function parameters
+   - **functools.partial Execution**: Clean single-entity execution with parameter isolation
+   - **ECS Tracking**: Full audit trail for both entities and configuration parameters
+
+3. **Separate Signature Caching**:
+   - **Input Cache**: `input_signature_hash → (input_model, input_pattern)`
+   - **Output Cache**: `output_signature_hash → (output_model, output_pattern)`
+   - **Collision Prevention**: Functions with same inputs but different outputs handled correctly
+   - **Cache Reuse**: Better hit rates for input model reuse across functions
+
+4. **Enhanced Pattern Detection**:
+   - **single_entity_with_config**: Use functools.partial approach
+   - **multi_entity_composite**: Traditional composite entity wrapping
+   - **single_entity_direct**: Direct entity processing
+   - **pure_borrowing**: Address-based borrowing with composite entities
+
+5. **Integration with Phase 2 Components**:
+   - Connect `ReturnTypeAnalyzer.analyze_return()` with unified execution pipeline
    - Integrate `EntityUnpacker.unpack_return()` for multi-entity results
    - Add unpacking configuration to execution parameters
-2. **Enhanced Semantic Detection**:
-   - Implement enhanced `analyze_execution_result()` with sub-entity support
-   - Add semantic classification enum and action mapping for all patterns
-   - Integrate detection with existing entity primitives (detach, update_ecs_ids, etc.)
-3. **Complete Execution Pipeline**:
-   - Merge Phase 1 (input processing) + Phase 2 (output analysis) into unified flow
-   - Add proper error handling for all return patterns
    - Implement sibling relationship tracking for unpacked outputs
 
 #### **Phase 4: Functional Tracking & Audit** (Medium Priority)
@@ -1253,3 +1438,52 @@ Each scenario demonstrates that the unified approach handles the full range of e
 - **Advantage**: Natural entity operations, avoids unnecessary container entities
 
 The design represents a sophisticated yet implementable approach that maintains the full power of the entity system while extending it to handle complex function execution semantics in a consistent, auditable, and performant manner.
+
+## **Updated Design Summary (December 2024)**
+
+### **Key Refinements from Brainstorming**
+
+#### **1. ConfigEntity Pattern (Primary Innovation)**
+- **ConfigEntity as Entity subclass**: Full ECS tracking for parameter entities
+- **Top-level detection only**: Special handling only for direct function parameters
+- **functools.partial execution**: Clean single-entity execution with parameter isolation
+- **Complete audit trail**: Both entity operations and configuration tracked in ECS
+
+#### **2. Unified Execution Architecture** 
+- **Single execution path**: Borrowing becomes preprocessing step for transactional execution
+- **Pattern-based routing**: Different preprocessing based on input pattern detection
+- **Reuse semantic detection**: Same object identity-based logic for all patterns
+- **Simplified codebase**: Eliminate dual execution path complexity
+
+#### **3. Separate Signature Caching**
+- **Input cache**: `input_signature_hash → (input_model, input_pattern)`
+- **Output cache**: `output_signature_hash → (output_model, output_pattern)`  
+- **Collision prevention**: Handle functions with same inputs but different outputs
+- **Better reuse**: Independent caching for inputs and outputs
+
+#### **4. Enhanced Pattern Detection**
+- **single_entity_with_config**: Use functools.partial + ConfigEntity
+- **multi_entity_composite**: Traditional composite entity wrapping
+- **single_entity_direct**: Direct entity processing
+- **pure_borrowing**: Address-based borrowing with composite entities
+
+### **Implementation Roadmap**
+
+#### **Immediate Priority: ConfigEntity & Unified Execution**
+1. Implement ConfigEntity base class in entity.py
+2. Build separate input/output signature caching system
+3. Create functools.partial execution pipeline
+4. Unify execution paths (eliminate borrowing vs transactional)
+
+#### **High Priority: Phase 2 Integration**
+1. Integrate ReturnTypeAnalyzer with unified execution pipeline
+2. Add EntityUnpacker for multi-entity tuple unpacking
+3. Enhanced semantic detection with output analysis
+4. Implement sibling relationship tracking
+
+#### **Lower Priority: Advanced Features**
+1. Performance optimization and metrics
+2. Pydantic BaseModel auto-wrapping (deferred)
+3. Advanced configuration and error recovery
+
+This refined design maintains the sophisticated ECS integration while providing a cleaner, more maintainable architecture that handles all execution patterns through a unified approach with complete audit trails.
