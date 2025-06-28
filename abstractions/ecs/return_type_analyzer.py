@@ -120,6 +120,9 @@ class ReturnTypeAnalyzer:
         if isinstance(result, list):
             if len(result) == 0:  # Empty list is non-entity
                 return ReturnPattern.NON_ENTITY
+            # Check for nested entities first
+            elif cls._has_nested_entities(result):
+                return ReturnPattern.NESTED_STRUCTURE
             elif all(isinstance(item, Entity) for item in result):
                 return ReturnPattern.LIST_ENTITIES
             elif any(isinstance(item, Entity) for item in result):
@@ -131,6 +134,9 @@ class ReturnTypeAnalyzer:
         if isinstance(result, dict):
             if len(result) == 0:  # Empty dict is non-entity
                 return ReturnPattern.NON_ENTITY
+            # Check for nested entities first
+            elif cls._has_nested_entities(result):
+                return ReturnPattern.NESTED_STRUCTURE
             values = list(result.values())
             if all(isinstance(value, Entity) for value in values):
                 return ReturnPattern.DICT_ENTITIES
@@ -257,9 +263,15 @@ class ReturnTypeAnalyzer:
                 entities.append(obj)
                 return f"entity_{len(entities)-1}"
             elif isinstance(obj, (list, tuple)):
-                return [_recursive_extract(item, f"{path}[{i}]") for i, item in enumerate(obj)]
+                extracted_items = []
+                for i, item in enumerate(obj):
+                    extracted_items.append(_recursive_extract(item, f"{path}[{i}]"))
+                return extracted_items
             elif isinstance(obj, dict):
-                return {k: _recursive_extract(v, f"{path}.{k}") for k, v in obj.items()}
+                extracted_dict = {}
+                for k, v in obj.items():
+                    extracted_dict[k] = _recursive_extract(v, f"{path}.{k}")
+                return extracted_dict
             else:
                 # Store non-entity data with path
                 key = f"data_{path}" if path else f"data_{len(non_entity_data)}"
@@ -284,9 +296,9 @@ class ReturnTypeAnalyzer:
             return "nested_unpack"
         elif pattern == ReturnPattern.NON_ENTITY and original_result is not None:
             # Handle empty containers as their container type, not wrapped
-            if isinstance(original_result, (list, tuple)):
+            if isinstance(original_result, (list, tuple)) and len(original_result) == 0:
                 return "sequence_unpack"
-            elif isinstance(original_result, dict):
+            elif isinstance(original_result, dict) and len(original_result) == 0:
                 return "dict_unpack"
             else:
                 return "wrap_in_entity"
@@ -338,19 +350,41 @@ class ReturnTypeAnalyzer:
     
     @classmethod
     def _has_nested_entities(cls, result: Any) -> bool:
-        """Check if result contains entities in nested structures using ECS pattern."""
-        def _check_recursive(obj, depth=0):
+        """Check if result contains entities in nested structures (containers within containers)."""
+        def _check_for_nested_containers(obj, depth=0):
             if depth > 10:  # Same limit as existing ECS code
                 return False
-            if isinstance(obj, Entity):
-                return depth > 0  # Entity at depth > 0 means nested structure
-            elif isinstance(obj, (list, tuple)):
-                return any(_check_recursive(item, depth+1) for item in obj)
+            
+            if isinstance(obj, (list, tuple)):
+                # Check if any item in this container is also a container that contains entities
+                for item in obj:
+                    if isinstance(item, (list, tuple, dict)):
+                        if _has_entities_inside(item):
+                            return True
+                    # Also check recursively for deeper nesting
+                    if _check_for_nested_containers(item, depth + 1):
+                        return True
             elif isinstance(obj, dict):
-                return any(_check_recursive(value, depth+1) for value in obj.values())
+                # Check if any value in this dict is a container that contains entities
+                for value in obj.values():
+                    if isinstance(value, (list, tuple, dict)):
+                        if _has_entities_inside(value):
+                            return True
+                    # Also check recursively for deeper nesting
+                    if _check_for_nested_containers(value, depth + 1):
+                        return True
+            
             return False
         
-        return _check_recursive(result)
+        def _has_entities_inside(container):
+            """Check if a container directly contains entities."""
+            if isinstance(container, (list, tuple)):
+                return any(isinstance(item, Entity) for item in container)
+            elif isinstance(container, dict):
+                return any(isinstance(value, Entity) for value in container.values())
+            return False
+        
+        return _check_for_nested_containers(result)
     
     @classmethod
     def _analyze_nested_structure(cls, result: Any) -> Dict[str, Any]:
