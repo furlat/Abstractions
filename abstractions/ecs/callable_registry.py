@@ -17,13 +17,16 @@ from inspect import signature, iscoroutinefunction, getdoc
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import asyncio
+import time
 from uuid import UUID, uuid4
 import hashlib
 from functools import partial
 
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity, create_dynamic_entity_class
 from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier  
-from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection
+from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection, borrow_from_address
+from abstractions.ecs.return_type_analyzer import ReturnTypeAnalyzer, QuickPatternDetector
+from abstractions.ecs.entity_unpacker import EntityUnpacker, ContainerReconstructor
 import concurrent.futures
 
 
@@ -38,7 +41,7 @@ class FunctionSignatureCache:
     """Separate caches for input and output models to prevent collisions."""
     
     _input_cache: Dict[str, Tuple[Optional[Type[Entity]], str]] = {}   # input_hash → (input_model, pattern)
-    _output_cache: Dict[str, Tuple[Type[Entity], str]] = {}            # output_hash → (output_model, pattern)
+    _output_cache: Dict[str, Union[Tuple[Type[Entity], str], Tuple[Type[Entity], str, Dict[str, Any]]]] = {}  # output_hash → (output_model, pattern, analysis)
     
     @classmethod
     def get_or_create_input_model(cls, func: Callable, function_name: str) -> Tuple[Optional[Type[Entity]], str]:
@@ -55,7 +58,7 @@ class FunctionSignatureCache:
         sig = signature(func)
         type_hints = get_type_hints(func)
         has_config_entity = any(
-            is_top_level_config_entity(type_hints.get(param.name, Any))
+            is_top_level_config_entity(type_hints.get(param.name, None))
             for param in sig.parameters.values()
         )
         
@@ -75,23 +78,51 @@ class FunctionSignatureCache:
         return input_model, pattern
     
     @classmethod  
-    def get_or_create_output_model(cls, func: Callable, function_name: str) -> Tuple[Type[Entity], str]:
-        """Cache output signature → output entity model + return pattern."""
+    def get_or_create_output_model(cls, func: Callable, function_name: str) -> Tuple[Type[Entity], str, Dict[str, Any]]:
+        """Cache output signature → output entity model + enhanced return analysis."""
+        
         output_hash = cls._hash_output_signature(func)
         
         if output_hash in cls._output_cache:
-            return cls._output_cache[output_hash]
+            # Update cache to return 3-tuple for backward compatibility
+            cached_result = cls._output_cache[output_hash]
+            if len(cached_result) == 2:
+                # Legacy 2-tuple, enhance it
+                output_model, pattern = cached_result
+                type_hints = get_type_hints(func)
+                return_type = type_hints.get('return', None)
+                if return_type is None:
+                    raise ValueError(
+                        f"Function '{func.__name__}' missing return type annotation. "
+                        f"All registered functions must have proper type hints for return values. "
+                        f"Please add a return type annotation like '-> Entity' or '-> List[Entity]'."
+                    )
+                analysis = QuickPatternDetector.analyze_type_signature(return_type)
+                enhanced_result = (output_model, pattern, analysis)
+                cls._output_cache[output_hash] = enhanced_result
+                return enhanced_result
+            else:
+                return cached_result
         
         output_model = create_entity_from_function_signature_enhanced(func, "Output", function_name)
         
-        # Analyze return type for pattern classification
+        # ✅ ENHANCED: Use Phase 2 return analysis
         type_hints = get_type_hints(func)
-        return_type = type_hints.get('return', Any)
+        return_type = type_hints.get('return', None)
+        if return_type is None:
+            raise ValueError(
+                f"Function '{func.__name__}' missing return type annotation. "
+                f"All registered functions must have proper type hints for return values. "
+                f"Please add a return type annotation like '-> Entity' or '-> List[Entity]'."
+            )
+        analysis = QuickPatternDetector.analyze_type_signature(return_type)
         
-        pattern = cls._classify_return_pattern(return_type)
+        # Extract pattern from analysis, fall back to basic classification
+        pattern = analysis.get("pattern", cls._classify_return_pattern(return_type))
         
-        cls._output_cache[output_hash] = (output_model, pattern)
-        return output_model, pattern
+        result = (output_model, pattern, analysis)
+        cls._output_cache[output_hash] = result
+        return result
     
     @classmethod
     def _hash_input_signature(cls, func: Callable) -> str:
@@ -160,7 +191,12 @@ def create_entity_from_function_signature_enhanced(
         type_hints.pop('return', None)
         
         for param in sig.parameters.values():
-            param_type = type_hints.get(param.name, Any)
+            param_type = type_hints.get(param.name, None)
+            if param_type is None:
+                raise ValueError(
+                    f"Function '{func.__name__}' parameter '{param.name}' missing type annotation. "
+                    f"All registered functions must have complete type hints."
+                )
             
             # NEW: Skip ONLY top-level ConfigEntity parameters
             if is_top_level_config_entity(param_type):
@@ -174,7 +210,12 @@ def create_entity_from_function_signature_enhanced(
     
     elif entity_type == "Output":
         # Handle return type (unchanged)
-        return_type = type_hints.get('return', Any)
+        return_type = type_hints.get('return', None)
+        if return_type is None:
+            raise ValueError(
+                f"Function '{func.__name__}' missing return type annotation. "
+                f"All registered functions must have proper type hints for return values."
+            )
         if isinstance(return_type, type) and issubclass(return_type, BaseModel):
             for field_name, field_info in return_type.model_fields.items():
                 field_type = return_type.__annotations__.get(field_name, Any)
@@ -199,7 +240,7 @@ def create_entity_from_function_signature_enhanced(
 
 @dataclass
 class FunctionMetadata:
-    """Enhanced metadata with ConfigEntity and caching support."""
+    """Enhanced metadata with ConfigEntity and Phase 2 return analysis support."""
     name: str
     signature_str: str
     docstring: Optional[str]
@@ -210,31 +251,49 @@ class FunctionMetadata:
     input_entity_class: Optional[Type[Entity]]
     output_entity_class: Type[Entity]
     
-    # NEW: Pattern classifications from separate caches
+    # Pattern classifications from separate caches
     input_pattern: str   # "config_entity_pattern" | "standard_pattern"
     output_pattern: str  # "single_return" | "tuple_return" | etc.
     
+    # ✅ NEW: Phase 2 return analysis integration
+    return_analysis: Dict[str, Any] = field(default_factory=dict)        # Full Phase 2 analysis metadata
+    supports_unpacking: bool = False                                     # Unpacking capability flag
+    expected_output_count: int = 1                                       # Expected entity count
+    
     # For future Modal Sandbox integration
-    serializable_signature: Dict[str, Any]
+    serializable_signature: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
-    # NEW: ConfigEntity support flags
+    # ConfigEntity support flags
     uses_config_entity: bool = field(init=False)
     config_entity_types: List[Type[ConfigEntity]] = field(default_factory=list, init=False)
     
     def __post_init__(self):
-        """Initialize ConfigEntity support flags."""
+        """Initialize ConfigEntity support flags and Phase 2 analysis metadata."""
         self.uses_config_entity = self.input_pattern == "config_entity_pattern"
         
+        # Initialize ConfigEntity types
         if self.uses_config_entity:
             # Extract ConfigEntity types from function signature
             sig = signature(self.original_function)
             type_hints = get_type_hints(self.original_function)
             
             for param in sig.parameters.values():
-                param_type = type_hints.get(param.name, Any)
+                param_type = type_hints.get(param.name, None)
+                if param_type is None:
+                    raise ValueError(
+                        f"Function '{self.original_function.__name__}' parameter '{param.name}' missing type annotation. "
+                        f"All registered functions must have complete type hints."
+                    )
                 if is_top_level_config_entity(param_type):
                     self.config_entity_types.append(param_type)
+        
+        # ✅ NEW: Initialize Phase 2 return analysis fields
+        if self.return_analysis:
+            self.supports_unpacking = self.return_analysis.get('supports_unpacking', False)
+            expected_count = self.return_analysis.get('expected_entity_count', 1)
+            # Handle -1 (unknown count) by defaulting to 1
+            self.expected_output_count = max(expected_count, 1) if expected_count != -1 else 1
 
 
 def create_entity_from_function_signature(
@@ -263,7 +322,12 @@ def create_entity_from_function_signature(
         type_hints.pop('return', None)
         
         for param in sig.parameters.values():
-            param_type = type_hints.get(param.name, Any)
+            param_type = type_hints.get(param.name, None)
+            if param_type is None:
+                raise ValueError(
+                    f"Function '{func.__name__}' parameter '{param.name}' missing type annotation. "
+                    f"All registered functions must have complete type hints."
+                )
             
             if param.default is param.empty:
                 # Required field
@@ -274,7 +338,12 @@ def create_entity_from_function_signature(
                 
     elif entity_type == "Output":
         # Handle return type
-        return_type = type_hints.get('return', Any)
+        return_type = type_hints.get('return', None)
+        if return_type is None:
+            raise ValueError(
+                f"Function '{func.__name__}' missing return type annotation. "
+                f"All registered functions must have proper type hints for return values."
+            )
         
         if isinstance(return_type, type) and issubclass(return_type, BaseModel):
             # If return type is already a Pydantic model, extract its fields
@@ -326,9 +395,16 @@ class CallableRegistry:
             if 'return' not in type_hints:
                 raise ValueError(f"Function {func.__name__} must have return type hint")
             
-            # Use separate signature caching
+            # ✅ ENHANCED: Use enhanced signature caching with Phase 2 analysis
             input_entity_class, input_pattern = FunctionSignatureCache.get_or_create_input_model(func, name)
-            output_entity_class, output_pattern = FunctionSignatureCache.get_or_create_output_model(func, name)
+            output_entity_class, output_pattern, return_analysis = FunctionSignatureCache.get_or_create_output_model(func, name)
+            
+            # ✅ NEW: Extract unpacking metadata from Phase 2 analysis
+            supports_unpacking = return_analysis.get('supports_unpacking', False)
+            expected_output_count = return_analysis.get('expected_entity_count', 1)
+            # Handle -1 (unknown count) by defaulting to 1
+            if expected_output_count == -1:
+                expected_output_count = 1
             
             # Store enhanced metadata
             metadata = FunctionMetadata(
@@ -339,25 +415,28 @@ class CallableRegistry:
                 original_function=func,
                 input_entity_class=input_entity_class,  # May be None for pure ConfigEntity functions
                 output_entity_class=output_entity_class,
-                input_pattern=input_pattern,              # NEW: Input pattern classification
-                output_pattern=output_pattern,            # NEW: Output pattern classification
+                input_pattern=input_pattern,              # Input pattern classification
+                output_pattern=output_pattern,            # Output pattern classification
+                return_analysis=return_analysis,          # ✅ NEW: Full Phase 2 analysis metadata
+                supports_unpacking=supports_unpacking,    # ✅ NEW: Unpacking capability flag
+                expected_output_count=expected_output_count,  # ✅ NEW: Expected entity count
                 serializable_signature=cls._create_serializable_signature(func)
             )
             
             cls._functions[name] = metadata
             
-            print(f"✅ Registered '{name}' with ConfigEntity-aware caching (input_pattern: {input_pattern}, output_pattern: {output_pattern})")
+            print(f"✅ Registered '{name}' with enhanced return analysis (input_pattern: {input_pattern}, output_pattern: {output_pattern}, unpacking: {supports_unpacking})")
             return func
         
         return decorator
     
     @classmethod
-    def execute(cls, func_name: str, **kwargs) -> Entity:
+    def execute(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
         """Execute function using entity-native patterns (sync wrapper)."""
         return asyncio.run(cls.aexecute(func_name, **kwargs))
     
     @classmethod
-    async def aexecute(cls, func_name: str, **kwargs) -> Entity:
+    async def aexecute(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
         """Execute function using entity-native patterns (async)."""
         return await cls._execute_async(func_name, **kwargs)
     
@@ -440,7 +519,7 @@ class CallableRegistry:
             return "pure_borrowing"             # Address-based borrowing
     
     @classmethod
-    async def _execute_async(cls, func_name: str, **kwargs) -> Entity:
+    async def _execute_async(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
         """Execute function with enhanced strategy detection."""
         # Step 1: Get function metadata
         metadata = cls.get_metadata(func_name)
@@ -465,7 +544,7 @@ class CallableRegistry:
             return await cls._execute_borrowing(metadata, kwargs, classification)
     
     @classmethod
-    async def _execute_with_partial(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Entity:
+    async def _execute_with_partial(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Union[Entity, List[Entity]]:
         """Execute using functools.partial for single_entity_with_config pattern."""
         
         # Step 1: Separate entity and config parameters
@@ -543,7 +622,6 @@ class CallableRegistry:
                     )
                 else:
                     # If no input entity class (pure ConfigEntity function), create a simple wrapper
-                    from abstractions.ecs.entity import create_dynamic_entity_class
                     CompositeClass = create_dynamic_entity_class(
                         f"{metadata.name}CompositeInput",
                         {name: (type(entity), entity) for name, entity in entity_params.items()}
@@ -577,7 +655,7 @@ class CallableRegistry:
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(None, partial_func)
             except Exception as e:
-                await cls._record_execution_failure(None, metadata.name, str(e))
+                await cls._record_execution_failure(None, metadata.name, str(e), None, None)
                 raise
             
             # Create output entity
@@ -614,7 +692,6 @@ class CallableRegistry:
         expected_config_type: Optional[Type[ConfigEntity]] = None
     ) -> ConfigEntity:
         """Create ConfigEntity dynamically from primitive parameters."""
-        from abstractions.ecs.functional_api import borrow_from_address
         
         if expected_config_type:
             # Function expects specific ConfigEntity type - use it directly
@@ -712,7 +789,7 @@ class CallableRegistry:
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, lambda: metadata.original_function(**function_args))
         except Exception as e:
-            await cls._record_execution_failure(input_entity, metadata.name, str(e))
+            await cls._record_execution_failure(input_entity, metadata.name, str(e), None, None)
             raise
         
         # Create output entity with proper provenance
@@ -729,18 +806,25 @@ class CallableRegistry:
         return output_entity
     
     @classmethod
-    async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Entity:
+    async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Union[Entity, List[Entity]]:
         """
-        Execute with complete semantic detection.
+        Enhanced execute with complete semantic detection and Phase 2 unpacking.
         
         This implements the enhanced pattern with object identity-based semantic analysis:
         1. Prepare isolated execution environment with object tracking
         2. Execute function with isolated entities
-        3. Finalize with semantic detection using object identity
+        3. Finalize with Phase 2 unpacking and semantic detection
         """
+        
+        # Generate execution ID for tracking
+        execution_id = uuid4()
+        start_time = time.time()
         
         # Step 1: Prepare isolated execution environment with object identity tracking
         execution_kwargs, original_entities, execution_copies, object_identity_map = await cls._prepare_transactional_inputs(kwargs)
+        
+        # Extract input entity for tracking (first original entity if available)
+        input_entity = original_entities[0] if original_entities else None
         
         # Step 2: Execute function with isolated entities
         try:
@@ -750,11 +834,19 @@ class CallableRegistry:
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, lambda: metadata.original_function(**execution_kwargs))
         except Exception as e:
-            await cls._record_execution_failure(None, metadata.name, str(e))
+            execution_duration = time.time() - start_time
+            await cls._record_execution_failure(input_entity, metadata.name, str(e), execution_id, execution_duration)
             raise
         
-        # Step 3: Finalize with semantic detection using object identity
-        return await cls._finalize_transactional_result(result, metadata, object_identity_map)
+        # Step 3: Enhanced finalization with Phase 2 unpacking
+        if metadata.supports_unpacking and metadata.expected_output_count > 1:
+            # Use enhanced result processing for multi-entity returns
+            return await cls._finalize_transactional_result_enhanced(
+                result, metadata, object_identity_map, input_entity, execution_id
+            )
+        else:
+            # Use traditional result processing for single-entity returns
+            return await cls._finalize_transactional_result(result, metadata, object_identity_map)
     
     @classmethod
     async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity], List[Entity], Dict[int, Entity]]:
@@ -924,6 +1016,202 @@ class CallableRegistry:
         return output_entity
     
     @classmethod
+    async def _finalize_transactional_result_enhanced(
+        cls, 
+        result: Any, 
+        metadata: FunctionMetadata, 
+        object_identity_map: Dict[int, Entity],
+        input_entity: Optional[Entity] = None,
+        execution_id: Optional[UUID] = None
+    ) -> Union[Entity, List[Entity]]:
+        """
+        Enhanced result processing with Phase 2 unpacking integration.
+        
+        This method integrates the EntityUnpacker to handle multi-entity returns
+        while maintaining all existing semantic detection capabilities.
+        """
+        
+        if execution_id is None:
+            execution_id = uuid4()
+        
+        # Step 1: Use EntityUnpacker for sophisticated result analysis
+        unpacking_result = ContainerReconstructor.unpack_with_signature_analysis(
+            result, 
+            metadata.return_analysis,
+            metadata.output_entity_class,
+            execution_id
+        )
+        
+        # Step 2: Process each entity with semantic detection
+        final_entities = []
+        semantic_results = []
+        
+        for entity in unpacking_result.primary_entities:
+            if isinstance(entity, Entity):
+                # Apply semantic detection
+                semantic, original_entity = cls._detect_execution_semantic(entity, object_identity_map)
+                
+                # Apply semantic actions
+                processed_entity = await cls._apply_semantic_actions(
+                    entity, semantic, original_entity, metadata, execution_id
+                )
+                
+                final_entities.append(processed_entity)
+                semantic_results.append(semantic)
+            else:
+                # Non-entity result, promote to root
+                if hasattr(entity, 'promote_to_root'):
+                    entity.promote_to_root()
+                final_entities.append(entity)
+                semantic_results.append("creation")
+        
+        # Step 3: Handle container entity if unpacking created one
+        if unpacking_result.container_entity:
+            container = unpacking_result.container_entity
+            if hasattr(container, 'promote_to_root'):
+                container.promote_to_root()
+            # Note: Container is tracking entity, not returned directly
+        
+        # Step 4: Set up sibling relationships for multi-entity outputs
+        if len(final_entities) > 1:
+            await cls._setup_sibling_relationships(final_entities, execution_id)
+        
+        # Step 5: Record enhanced execution metadata
+        await cls._record_enhanced_function_execution(
+            input_entity, final_entities, metadata.name, execution_id,
+            unpacking_result, semantic_results
+        )
+        
+        # Return single entity or list based on unpacking
+        return final_entities[0] if len(final_entities) == 1 else final_entities
+    
+    @classmethod
+    async def _apply_semantic_actions(
+        cls, 
+        entity: Entity, 
+        semantic: str, 
+        original_entity: Optional[Entity], 
+        metadata: FunctionMetadata, 
+        execution_id: UUID
+    ) -> Entity:
+        """Apply semantic actions based on detection result."""
+        
+        if semantic == "mutation":
+            # Handle mutation: preserve lineage, update IDs
+            if original_entity:
+                entity.update_ecs_ids()
+                EntityRegistry.register_entity(entity)
+                EntityRegistry.version_entity(original_entity)
+            else:
+                # Fallback: treat as creation if we can't find original
+                entity.promote_to_root()
+            
+            # Add function execution tracking
+            entity.derived_from_function = metadata.name
+            entity.derived_from_execution_id = execution_id
+            
+        elif semantic == "creation":
+            # Handle creation: new lineage, function derivation
+            entity.derived_from_function = metadata.name
+            entity.derived_from_execution_id = execution_id
+            entity.promote_to_root()
+            
+        elif semantic == "detachment":
+            # Handle detachment: promote to root, version parent
+            entity.detach()
+            if original_entity:
+                EntityRegistry.version_entity(original_entity)
+            
+            # Add function execution tracking
+            entity.derived_from_function = metadata.name
+            entity.derived_from_execution_id = execution_id
+        
+        return entity
+    
+    @classmethod
+    async def _setup_sibling_relationships(
+        cls, 
+        entities: List[Entity], 
+        execution_id: UUID
+    ) -> None:
+        """Set up sibling relationships for multi-entity outputs."""
+        
+        entity_ids = [e.ecs_id for e in entities]
+        
+        for i, entity in enumerate(entities):
+            # Set output index for tuple position tracking
+            if hasattr(entity, 'output_index'):
+                entity.output_index = i
+            
+            # Set sibling IDs (all others from same execution)
+            if hasattr(entity, 'sibling_output_entities'):
+                entity.sibling_output_entities = [
+                    eid for j, eid in enumerate(entity_ids) if j != i
+                ]
+            
+            # Ensure derived_from_execution_id is set
+            if hasattr(entity, 'derived_from_execution_id'):
+                entity.derived_from_execution_id = execution_id
+            
+            # Re-register entity with updated sibling information
+            EntityRegistry.version_entity(entity)
+    
+    @classmethod
+    async def _record_enhanced_function_execution(
+        cls, 
+        input_entity: Optional[Entity], 
+        output_entities: List[Entity], 
+        function_name: str, 
+        execution_id: UUID,
+        unpacking_result: Any, 
+        semantic_results: List[str],
+        config_entities: Optional[List[Any]] = None, 
+        execution_duration: float = 0.0
+    ) -> FunctionExecution:
+        """Record enhanced function execution with complete Phase 2 metadata."""
+        
+        execution_record = FunctionExecution(
+            ecs_id=execution_id,
+            function_name=function_name,
+            input_entity_id=input_entity.ecs_id if input_entity else None,
+            output_entity_ids=[e.ecs_id for e in output_entities]
+        )
+        
+        # Set enhanced fields after construction
+        execution_record.execution_duration = execution_duration
+        execution_record.return_analysis = unpacking_result.metadata if hasattr(unpacking_result, 'metadata') else {}
+        execution_record.unpacking_metadata = unpacking_result.metadata if hasattr(unpacking_result, 'metadata') else {}
+        execution_record.sibling_groups = cls._build_sibling_groups(output_entities)
+        execution_record.semantic_classifications = semantic_results
+        execution_record.execution_pattern = "enhanced_unified"
+        execution_record.was_unpacked = len(output_entities) > 1
+        execution_record.original_return_type = str(type(unpacking_result).__name__) if unpacking_result else ""
+        execution_record.entity_count_input = 1 if input_entity else 0
+        execution_record.entity_count_output = len(output_entities)
+        execution_record.config_entity_ids = [c.ecs_id for c in (config_entities or []) if hasattr(c, 'ecs_id')]
+        
+        execution_record.mark_as_completed("enhanced_execution")
+        execution_record.promote_to_root()
+        
+        # Register execution in the registry
+        EntityRegistry.register_entity(execution_record)
+        
+        return execution_record
+    
+    @classmethod
+    def _build_sibling_groups(cls, output_entities: List[Entity]) -> List[List[UUID]]:
+        """Build sibling groups for entities from same function execution."""
+        
+        if len(output_entities) <= 1:
+            return []
+        
+        # For now, all entities from same execution are siblings
+        # Future enhancement: Could group by semantic type or return position
+        all_ids = [e.ecs_id for e in output_entities]
+        
+        return [all_ids]  # Single group containing all entities
+    
+    @classmethod
     async def _create_output_entity_with_provenance(
         cls,
         result: Any,
@@ -1001,16 +1289,36 @@ class CallableRegistry:
         cls,
         input_entity: Optional[Entity],
         function_name: str,
-        error_message: str
+        error_message: str,
+        execution_id: Optional[UUID] = None,
+        execution_duration: Optional[float] = None
     ) -> None:
         """Record execution failure for audit trails."""
-        # Future enhancement: Create FailedExecution entity
-        pass
+        if execution_id is None:
+            execution_id = uuid4()
+        
+        # Create failed execution record
+        failed_execution = FunctionExecution(
+            ecs_id=execution_id,
+            function_name=function_name,
+            input_entity_id=input_entity.ecs_id if input_entity else None,
+            output_entity_ids=[],
+            error_message=error_message
+        )
+        
+        # Set additional fields after construction
+        failed_execution.execution_duration = execution_duration or 0.0
+        failed_execution.succeeded = False
+        failed_execution.execution_pattern = "failed"
+        
+        failed_execution.mark_as_failed(error_message)
+        failed_execution.promote_to_root()
+        EntityRegistry.register_entity(failed_execution)
     
     @classmethod
-    async def execute_batch(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+    async def execute_batch(cls, executions: List[Dict[str, Any]]) -> List[Union[Entity, List[Entity]]]:
         """Execute multiple functions concurrently."""
-        async def execute_single(execution_config: Dict[str, Any]) -> Entity:
+        async def execute_single(execution_config: Dict[str, Any]) -> Union[Entity, List[Entity]]:
             func_name = execution_config.pop('func_name')
             return await cls.aexecute(func_name, **execution_config)
         
@@ -1018,7 +1326,7 @@ class CallableRegistry:
         return await asyncio.gather(*tasks)
     
     @classmethod
-    def execute_batch_sync(cls, executions: List[Dict[str, Any]]) -> List[Entity]:
+    def execute_batch_sync(cls, executions: List[Dict[str, Any]]) -> List[Union[Entity, List[Entity]]]:
         """Execute multiple functions concurrently (sync wrapper)."""
         return asyncio.run(cls.execute_batch(executions))
     

@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from enum import Enum
 from collections import deque
 import inspect
+from pydantic import create_model
 
 # Edge type enum
 class EdgeType(str, Enum):
@@ -1264,6 +1265,12 @@ class Entity(BaseModel):
         default_factory=dict, 
         description="Tracks the source entity for each attribute"
     )
+    
+    # ✅ NEW: Phase 4 sibling relationship tracking fields
+    derived_from_function: Optional[str] = Field(default=None, description="Function that created or modified this entity")
+    derived_from_execution_id: Optional[UUID] = Field(default=None, description="Execution ID that created or modified this entity")
+    sibling_output_entities: List[UUID] = Field(default_factory=list, description="Other entities created by the same function execution")
+    output_index: Optional[int] = Field(default=None, description="Position in tuple output if part of multi-entity return")
 
     @model_validator(mode='after')
     def validate_attribute_source(self) -> Self:
@@ -1736,6 +1743,17 @@ class FunctionExecution(Entity):
     performance_metrics: Dict[str, Any] = Field(default_factory=dict)  # Execution time, memory usage, etc.
     input_pattern_classification: Dict[str, Any] = Field(default_factory=dict)  # From Phase 1
     
+    # ✅ NEW: Phase 4 integration fields
+    execution_duration: Optional[float] = Field(default=None, description="Function execution time in seconds")
+    semantic_classifications: List[str] = Field(default_factory=list, description="Semantic results per output entity")
+    execution_pattern: str = Field(default="standard", description="Execution strategy used")
+    was_unpacked: bool = Field(default=False, description="Whether result was unpacked into multiple entities")
+    original_return_type: str = Field(default="", description="Original function return type")
+    entity_count_input: int = Field(default=0, description="Number of input entities")
+    entity_count_output: int = Field(default=0, description="Number of output entities")
+    config_entity_ids: List[UUID] = Field(default_factory=list, description="ConfigEntity parameters used")
+    succeeded: bool = Field(default=True, description="Whether execution succeeded")
+    
     # Audit trail expansion
     pre_execution_snapshots: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)  # Entity states before
     post_execution_changes: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)   # What changed after
@@ -1747,11 +1765,18 @@ class FunctionExecution(Entity):
         """Mark execution as failed with error message."""
         self.execution_status = "failed"
         self.error_message = error
+        self.succeeded = False
+        self.execution_timestamp = datetime.now(timezone.utc)
     
     def mark_as_completed(self, semantic: str) -> None:
         """Mark execution as completed with semantic classification."""
         self.execution_status = "completed"
         self.execution_semantic = semantic
+        self.succeeded = True
+        self.execution_timestamp = datetime.now(timezone.utc)
+        if semantic not in self.semantic_classifications:
+            self.semantic_classifications.append(semantic)
+    
 
 
 class ConfigEntity(Entity):
@@ -1817,7 +1842,6 @@ class ConfigEntity(Entity):
                 }
             )
         """
-        from pydantic import create_model
         
         ConfigEntityClass = create_model(
             class_name,
@@ -1843,7 +1867,6 @@ def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, An
     Returns:
         Dynamic Entity subclass
     """
-    from pydantic import create_model
     
     # Process field definitions
     pydantic_fields = {}

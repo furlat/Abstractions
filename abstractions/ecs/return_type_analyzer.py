@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Tuple, Union, Optional, Set
 from enum import Enum
 import inspect
 from collections.abc import Sequence, Mapping
-
+from typing import get_origin, get_args
+import typing
 from abstractions.ecs.entity import Entity
 
 
@@ -438,3 +439,151 @@ class QuickPatternDetector:
             return ReturnPattern.NON_ENTITY
         else:
             return None  # Needs full analysis
+    
+    @classmethod
+    def analyze_type_signature(cls, return_type: Any) -> Dict[str, Any]:
+        """
+        Analyze function return type signature for registration-time analysis.
+        
+        This method analyzes the type annotation at registration time to determine
+        unpacking capabilities and expected entity counts.
+        
+        Args:
+            return_type: The function's return type annotation
+            
+        Returns:
+            Dict containing analysis metadata for function registration
+        """
+        
+        
+        metadata = {
+            "pattern": "unknown",
+            "supports_unpacking": False,
+            "expected_entity_count": 1,
+            "has_entities": False,
+            "has_non_entities": False,
+            "container_type": None,
+            "element_types": [],
+            "is_complex": False
+        }
+        
+        # Handle None or Any return types
+        if return_type is None or return_type == typing.Any:
+            metadata["pattern"] = "non_entity"
+            metadata["has_non_entities"] = True
+            return metadata
+        
+        # Get origin and args for generic types
+        origin = get_origin(return_type)
+        args = get_args(return_type)
+        
+        # Analyze based on type structure
+        if origin is tuple:
+            metadata["pattern"] = "tuple_return"
+            metadata["container_type"] = "tuple"
+            metadata["element_types"] = list(args) if args else []
+            metadata["expected_entity_count"] = len(args) if args else 0
+            metadata["supports_unpacking"] = len(args) > 1 if args else False
+            
+            # Analyze tuple elements for entity content
+            if args:
+                entity_count = 0
+                non_entity_count = 0
+                
+                for arg_type in args:
+                    if cls._is_entity_type_annotation(arg_type):
+                        entity_count += 1
+                        metadata["has_entities"] = True
+                    else:
+                        non_entity_count += 1
+                        metadata["has_non_entities"] = True
+                
+                metadata["expected_entity_count"] = entity_count
+                metadata["is_complex"] = entity_count > 0 and non_entity_count > 0
+        
+        elif origin in (list, typing.List):
+            metadata["pattern"] = "list_return"
+            metadata["container_type"] = "list"
+            metadata["supports_unpacking"] = True
+            metadata["expected_entity_count"] = -1  # Unknown at registration time
+            
+            if args:
+                element_type = args[0]
+                metadata["element_types"] = [element_type]
+                
+                if cls._is_entity_type_annotation(element_type):
+                    metadata["has_entities"] = True
+                else:
+                    metadata["has_non_entities"] = True
+        
+        elif origin in (dict, typing.Dict):
+            metadata["pattern"] = "dict_return"
+            metadata["container_type"] = "dict"
+            metadata["supports_unpacking"] = True
+            metadata["expected_entity_count"] = -1  # Unknown at registration time
+            
+            if len(args) >= 2:
+                key_type, value_type = args[0], args[1]
+                metadata["element_types"] = [key_type, value_type]
+                
+                if cls._is_entity_type_annotation(value_type):
+                    metadata["has_entities"] = True
+                else:
+                    metadata["has_non_entities"] = True
+        
+        elif origin is Union:
+            # Handle Union types (including Optional)
+            metadata["pattern"] = "union_return"
+            metadata["is_complex"] = True
+            
+            # Analyze union members
+            entity_count = 0
+            non_entity_count = 0
+            
+            for arg_type in args:
+                if arg_type == type(None):
+                    continue  # Skip None type in Optional
+                elif cls._is_entity_type_annotation(arg_type):
+                    entity_count += 1
+                    metadata["has_entities"] = True
+                else:
+                    non_entity_count += 1
+                    metadata["has_non_entities"] = True
+            
+            metadata["expected_entity_count"] = max(entity_count, 1)
+        
+        else:
+            # Single return type
+            if cls._is_entity_type_annotation(return_type):
+                metadata["pattern"] = "single_entity"
+                metadata["has_entities"] = True
+                metadata["expected_entity_count"] = 1
+            else:
+                metadata["pattern"] = "non_entity"
+                metadata["has_non_entities"] = True
+                metadata["expected_entity_count"] = 0
+        
+        return metadata
+    
+    @classmethod
+    def _is_entity_type_annotation(cls, type_annotation: Any) -> bool:
+        """Check if a type annotation represents an Entity type."""
+        # Entity is already imported at top level
+        
+        try:
+            # Handle direct Entity subclass
+            if (isinstance(type_annotation, type) and 
+                issubclass(type_annotation, Entity)):
+                return True
+            
+            # Handle string annotations
+            if isinstance(type_annotation, str):
+                return "Entity" in type_annotation
+            
+            # Handle forward references and other complex types
+            if hasattr(type_annotation, '__name__'):
+                return "Entity" in type_annotation.__name__
+            
+            return False
+        except (TypeError, AttributeError):
+            return False

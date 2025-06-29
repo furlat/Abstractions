@@ -12,8 +12,8 @@ Features:
 """
 
 from typing import Any, Dict, List, Optional, Union, Type, Tuple
-from .entity import Entity, EntityRegistry
-from .ecs_address_parser import ECSAddressParser, EntityReferenceResolver, InputPatternClassifier
+from abstractions.ecs.entity import Entity, EntityRegistry, FunctionExecution
+from abstractions.ecs.ecs_address_parser import ECSAddressParser, EntityReferenceResolver, InputPatternClassifier
 
 
 def get(address: str) -> Any:
@@ -512,3 +512,32 @@ def quick_composite(*address_mappings: Dict[str, str], entity_class: Type[Entity
         combined_mapping.update(mapping)
     
     return create_entity_from_mapping(entity_class, combined_mapping)
+
+
+def get_function_execution_siblings(execution: FunctionExecution) -> List[List[Entity]]:
+    """
+    Get all sibling entity groups from a function execution.
+    
+    This function retrieves the actual Entity objects from the sibling group UUIDs
+    stored in the FunctionExecution. Sibling entities are entities that were created
+    together by the same function execution (e.g., multiple entities from tuple unpacking).
+    
+    Args:
+        execution: FunctionExecution entity containing sibling group UUIDs
+        
+    Returns:
+        List of lists, where each inner list contains Entity objects that are siblings
+        
+    Example:
+        execution = EntityRegistry.get_live_entity(execution_id)
+        sibling_groups = get_function_execution_siblings(execution)
+        for group in sibling_groups:
+            print(f"Sibling group with {len(group)} entities")
+    """
+    sibling_entities = []
+    for group in execution.sibling_groups:
+        group_entities = [EntityRegistry.get_live_entity(eid) for eid in group]
+        # Filter out None values in case some entities were not found
+        valid_entities = [e for e in group_entities if e is not None]
+        sibling_entities.append(valid_entities)
+    return sibling_entities

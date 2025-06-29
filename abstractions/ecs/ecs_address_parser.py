@@ -16,6 +16,7 @@ import re
 import functools
 from typing import Tuple, List, Optional, Any, Dict
 from uuid import UUID
+from abstractions.ecs.entity import Entity, EntityRegistry
 
 
 class ECSAddressParser:
@@ -132,7 +133,6 @@ class ECSAddressParser:
         entity_id, field_path = cls.parse_address_flexible(address)
         
         # Get root entity
-        from .entity import EntityRegistry
         root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
         if not root_ecs_id:
             raise ValueError(f"Entity {entity_id} not found in registry")
@@ -157,7 +157,6 @@ class ECSAddressParser:
                     raise ValueError(f"Cannot navigate to {field_part}")
         
         # Determine resolution type
-        from .entity import Entity
         if isinstance(current_value, Entity):
             return current_value, "sub_entity"
         else:
@@ -195,7 +194,6 @@ class ECSAddressParser:
             "@f65cf3bd-9392-499f-8f57-dba701f5069c.name" -> "Alice Johnson"
             "@f65cf3bd-9392-499f-8f57-dba701f5069c.record.gpa" -> 3.90
         """
-        from .entity import EntityRegistry
         
         entity_id, field_path = cls.parse_address(address)
         
