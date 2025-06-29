@@ -409,6 +409,7 @@ class CallableRegistry:
         config_params = []
         primitive_params = {}
         
+        # First, classify provided kwargs
         for param_name, value in kwargs.items():
             param_type = type_hints.get(param_name)
             
@@ -419,11 +420,20 @@ class CallableRegistry:
             else:
                 primitive_params[param_name] = value
         
+        # Check if function expects ConfigEntity parameters that weren't provided directly
+        # but could be created from primitive parameters
+        function_expects_config_entity = any(
+            is_top_level_config_entity(type_hints.get(param.name))
+            for param in sig.parameters.values()
+        )
+        
         # Strategy determination
-        if len(entity_params) == 1 and (primitive_params or config_params):
+        if function_expects_config_entity and (primitive_params or config_params):
+            return "single_entity_with_config"  # Use functools.partial approach (works for 1+ entities)
+        elif len(entity_params) == 1 and (primitive_params or config_params):
             return "single_entity_with_config"  # Use functools.partial approach
-        elif len(entity_params) > 1:
-            return "multi_entity_composite"     # Traditional composite entity
+        elif len(entity_params) > 1 and not function_expects_config_entity:
+            return "multi_entity_composite"     # Traditional composite entity (no ConfigEntity involved)
         elif len(entity_params) == 1:
             return "single_entity_direct"       # Direct entity processing
         else:
@@ -499,28 +509,65 @@ class CallableRegistry:
         # Step 3: Create partial function with ConfigEntity
         partial_func = partial(metadata.original_function, **config_entities)
         
-        # Step 4: Execute with single entity using transactional path
+        # Step 4: Execute with entities using transactional path
         if entity_params:
-            # Use existing transactional execution with the partial function
-            # This leverages all existing semantic detection logic
-            entity_name, entity_obj = next(iter(entity_params.items()))
-            
-            # Create temporary metadata for the partial function
-            partial_metadata = FunctionMetadata(
-                name=f"{metadata.name}_partial",
-                signature_str=str(signature(partial_func)),
-                docstring=metadata.docstring,
-                is_async=metadata.is_async,
-                original_function=partial_func,
-                input_entity_class=type(entity_obj),  # Use entity's actual class
-                output_entity_class=metadata.output_entity_class,
-                input_pattern="single_entity_direct",
-                output_pattern=metadata.output_pattern,
-                serializable_signature={}
-            )
-            
-            # Execute using existing transactional logic
-            return await cls._execute_transactional(partial_metadata, {entity_name: entity_obj}, None)
+            if len(entity_params) == 1:
+                # Single entity case - use direct execution with partial
+                entity_name, entity_obj = next(iter(entity_params.items()))
+                
+                # Create temporary metadata for the partial function
+                partial_metadata = FunctionMetadata(
+                    name=f"{metadata.name}_partial",
+                    signature_str=str(signature(partial_func)),
+                    docstring=metadata.docstring,
+                    is_async=metadata.is_async,
+                    original_function=partial_func,
+                    input_entity_class=type(entity_obj),
+                    output_entity_class=metadata.output_entity_class,
+                    input_pattern="single_entity_direct",
+                    output_pattern=metadata.output_pattern,
+                    serializable_signature={}
+                )
+                
+                return await cls._execute_transactional(partial_metadata, {entity_name: entity_obj}, None)
+            else:
+                # Multiple entities + ConfigEntity case:
+                # 1. Create composite entity from multiple entities
+                # 2. Use functools.partial with ConfigEntity
+                # 3. Execute partial function with composite entity
+                
+                # Create composite input entity from multiple entities
+                if metadata.input_entity_class:
+                    composite_input = await cls._create_input_entity_with_borrowing(
+                        metadata.input_entity_class, entity_params, None
+                    )
+                else:
+                    # If no input entity class (pure ConfigEntity function), create a simple wrapper
+                    from abstractions.ecs.entity import create_dynamic_entity_class
+                    CompositeClass = create_dynamic_entity_class(
+                        f"{metadata.name}CompositeInput",
+                        {name: (type(entity), entity) for name, entity in entity_params.items()}
+                    )
+                    composite_input = CompositeClass(**entity_params)
+                
+                # Register composite entity
+                composite_input.promote_to_root()
+                
+                # Create metadata for partial function with composite input
+                partial_metadata = FunctionMetadata(
+                    name=f"{metadata.name}_partial",
+                    signature_str=str(signature(partial_func)),
+                    docstring=metadata.docstring,
+                    is_async=metadata.is_async,
+                    original_function=partial_func,
+                    input_entity_class=type(composite_input),
+                    output_entity_class=metadata.output_entity_class,
+                    input_pattern="single_entity_direct",
+                    output_pattern=metadata.output_pattern,
+                    serializable_signature={}
+                )
+                
+                return await cls._execute_transactional(partial_metadata, entity_params, None)
         else:
             # Pure ConfigEntity function - execute directly
             try:
@@ -827,10 +874,11 @@ class CallableRegistry:
         Enhanced result finalization with object identity-based semantic detection.
         """
         
-        # Type validation
-        return_type = metadata.original_function.__annotations__.get('return')
-        if return_type and not isinstance(result, return_type):
-            raise TypeError(f"Function {metadata.name} returned {type(result)}, expected {return_type}")
+        # Type validation (handle functools.partial objects)
+        if hasattr(metadata.original_function, '__annotations__'):
+            return_type = metadata.original_function.__annotations__.get('return')
+            if return_type and not isinstance(result, return_type):
+                raise TypeError(f"Function {metadata.name} returned {type(result)}, expected {return_type}")
         
         # Handle entity results with semantic detection
         if isinstance(result, Entity):
@@ -862,8 +910,16 @@ class CallableRegistry:
             
             return result
         
-        # Wrap non-entity results in output entity
-        output_entity = metadata.output_entity_class(**{"result": result})
+        # Handle non-entity results - wrap in output entity
+        if isinstance(result, dict):
+            output_entity = metadata.output_entity_class(**result)
+        elif isinstance(result, BaseModel):
+            # Extract fields from BaseModel (like AnalysisResult)
+            output_entity = metadata.output_entity_class(**result.model_dump())
+        else:
+            # For primitive results, wrap in a "result" field
+            output_entity = metadata.output_entity_class(**{"result": result})
+        
         output_entity.promote_to_root()
         return output_entity
     

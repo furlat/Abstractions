@@ -30,22 +30,22 @@ This eliminates complex heuristics while providing precise semantic classificati
 ## Phase 1 Implementation Status: ✅ COMPLETED
 
 ### Enhanced Input Pattern Support (Completed)
-✅ **Enhanced ECS Address Parser**: 
-- Entity-only addresses (`@uuid`) with `parse_address_flexible()`
+✅ **Enhanced ECS Address Parser** (`ecs_address_parser.py`): 
+- Entity-only addresses (`@uuid`) with flexible parsing
 - Sub-entity extraction with container navigation (`@uuid.record.grades.0`, `@uuid.courses.math_101`)
-- Advanced resolution returning `(resolved_value, resolution_type)` with `resolve_address_advanced()`
+- Advanced resolution with `EntityReferenceResolver` and `InputPatternClassifier`
 
 ✅ **Advanced Pattern Classification**: 
 - Complete support for all 7 input patterns (A1-A7)
-- `classify_kwargs_advanced()` with detailed metadata for each field
+- `InputPatternClassifier.classify_kwargs()` with detailed metadata for each field
 - Precise detection of entity addresses vs field addresses vs direct values
 
-✅ **Enhanced Composite Entity Creation**: 
-- `create_composite_entity_with_pattern_detection_advanced()` function
+✅ **Enhanced Composite Entity Creation** (`functional_api.py`): 
+- `create_composite_entity_with_pattern_detection()` function
 - Dependency tracking for all resolved entities
-- Proper attribute source mapping for provenance tracking
+- Proper attribute source mapping for provenance tracking with `resolve_data_with_tracking()`
 
-✅ **Comprehensive Testing**: All enhanced parser functionality validated with comprehensive test suite
+✅ **Comprehensive Testing**: All enhanced parser functionality validated and integrated
 
 ## Phase 2 Implementation Status: ✅ COMPLETED
 
@@ -1202,102 +1202,113 @@ class RegistryConfig(BaseModel):
 ### **✅ COMPLETED FEATURES**
 
 #### **1. Core Semantic Detection Algorithm**
-- **Status**: ✅ FULLY IMPLEMENTED
-- **Implementation**: Object identity-based semantic classification 
+- **Status**: ✅ FULLY IMPLEMENTED (`callable_registry.py:791-817`)
+- **Implementation**: Object identity-based semantic classification using `_detect_execution_semantic()`
 - **Features**: Mutation/Creation/Detachment detection working perfectly
-- **Test Coverage**: All semantic detection tests passing
-- **Innovation**: Improved original design with Python object identity tracking
+- **Innovation**: Uses Python object identity (`id()`) instead of live_id comparison for reliability
 
 #### **2. Enhanced Transactional Execution Pipeline**
-- **Status**: ✅ FULLY IMPLEMENTED
-- **Features**: Complete entity isolation, object identity mapping, proper result processing
+- **Status**: ✅ FULLY IMPLEMENTED (`callable_registry.py:685-868`)
+- **Features**: Complete entity isolation via `_prepare_transactional_inputs()`, object identity mapping, semantic result processing
 - **Architecture**: Clean dependency hierarchy with no circular imports
-- **Reliability**: No more "entity tree already registered" errors
+- **Reliability**: Robust "entity tree already registered" error handling
 
-#### **3. Basic Input Pattern Support**
-- **Status**: ✅ WORKING WELL
+#### **3. Advanced Input Pattern Support**
+- **Status**: ✅ FULLY IMPLEMENTED
 - **Patterns Supported**: 
   - ✅ Pure borrowing: `execute("func", name="@uuid.name", age="@uuid.age")`
   - ✅ Pure transactional: `execute("func", student=student_entity)`
   - ✅ Mixed patterns: `execute("func", student=entity, threshold=3.5)`
-- **Classification**: `InputPatternClassifier` correctly detects and routes execution
+  - ✅ ConfigEntity patterns: `execute("func", student=entity, threshold=4.0, reason="update")`
+- **Classification**: `InputPatternClassifier` + `_detect_execution_strategy()` provide complete routing
 
-#### **4. Function Registration & Execution**
-- **Status**: ✅ WORKING WELL
-- **Features**: Dynamic entity class creation, dual execution paths, metadata tracking
-- **Audit**: Basic `FunctionExecution` entity tracking implemented
+#### **4. Function Registration & Advanced Execution**
+- **Status**: ✅ FULLY IMPLEMENTED
+- **Features**: Dynamic entity class creation with ConfigEntity exclusion, multiple execution strategies, comprehensive metadata tracking
+- **Audit**: Enhanced `FunctionExecution` entity with semantic tracking implemented
 
 #### **5. Clean Architecture Foundation**
 - **Status**: ✅ COMPLETED
-- **Achievement**: Clean dependency hierarchy, no circular imports
+- **Achievement**: Clean dependency hierarchy with no circular imports
 - **Layers**: entity.py → ecs_address_parser.py → functional_api.py → callable_registry.py
 
-### **🔄 PARTIALLY IMPLEMENTED FEATURES**
+### **✅ COMPLETED FEATURES (Phase 3 - December 2024)**
 
-#### **6. Input Pattern Processing**
-- **Current**: Basic pattern classification and simple composite entity creation
-- **Working**: Pattern A1 (pure borrowing), A2 (direct entity), A6 (entity + parameters)
-- **Missing**: Pattern A3-A5 (sub-entity references, entity via address)
+#### **6. ConfigEntity Integration & Unified Execution**
+- **Status**: ✅ FULLY IMPLEMENTED (`entity.py:1757-1832`, `callable_registry.py:30-621`)
+- **ConfigEntity Base Class**: Complete with `create_config_entity_class()` factory method
+- **Separate Signature Caching**: `FunctionSignatureCache` with input/output separation (`callable_registry.py:37-145`)
+- **functools.partial Execution**: Full pipeline via `_execute_with_partial()` method
+- **Strategy Detection**: 4 execution strategies: single_entity_with_config, multi_entity_composite, single_entity_direct, pure_borrowing
+- **Enhanced Function Registration**: ConfigEntity-aware registration with pattern classification
 
-#### **7. Functional Relationship Tracking**
-- **Current**: Basic `FunctionExecution` entity with minimal fields
-- **Working**: Function name, input/output IDs, execution status
-- **Missing**: Complete derivation fields, performance metrics, sibling tracking
+#### **7. Advanced Functional Relationship Tracking**
+- **Status**: ✅ ENHANCED IMPLEMENTATION (`entity.py:1714-1755`)
+- **Enhanced FunctionExecution**: Extended entity with return_analysis, unpacking_metadata, sibling_groups
+- **Working**: Function name, input/output IDs, execution status, semantic classification, performance metrics
+- **ConfigEntity Tracking**: Complete audit trail for configuration parameters via `_record_function_execution_with_config()`
 
-### **✅ COMPLETED FEATURES (Phase 2 - December 2024)**
+### **🔄 AVAILABLE BUT NOT INTEGRATED**
 
-#### **8. Advanced Input Pattern Support**
-- **Status**: ✅ COMPLETED in Phase 1
-- **Implemented**: Entity reference via address (`execute("func", student="@uuid")`)
-- **Implemented**: Sub-entity direct reference (`execute("func", grade=student.record.grades[0])`)
-- **Implemented**: Sub-entity via address (`execute("func", grade="@uuid.record.grades.0")`)
-- **Completed**: Enhanced ECS Address Parser with entity/sub-entity resolution
+#### **8. Phase 2 Return Analysis Components**
+- **Status**: ✅ IMPLEMENTED BUT NOT INTEGRATED
+- **Available**: `return_type_analyzer.py` - Complete B1-B7 return pattern classification (100% test coverage)
+- **Available**: `entity_unpacker.py` - Multi-entity unpacking with metadata preservation and container reconstruction
+- **Missing**: Integration with `callable_registry.py` execution pipeline
+- **Missing**: Connection with semantic detection for multi-entity outputs
 
-#### **9. Output Analysis & Unpacking**
-- **Status**: ✅ COMPLETED in Phase 2
-- **Implemented**: Complete return type signature analysis and tuple unpacking logic  
-- **Implemented**: Multi-entity tuple unpacking with semantic detection per entity
-- **Implemented**: All 7 return patterns (B1-B7) with 100% test coverage
-- **Implemented**: Container metadata preservation and reconstruction capabilities
+### **❌ REMAINING TO IMPLEMENT**
 
-### **❌ REMAINING TO IMPLEMENT (Updated)**
+#### **9. Phase 2 ↔ Phase 3 Integration** (CURRENT PRIORITY)
+- **Missing**: Integration of `ReturnTypeAnalyzer.analyze_return()` with unified execution pipeline in `callable_registry.py`
+- **Missing**: Integration of `EntityUnpacker.unpack_return()` for multi-entity tuple results
+- **Missing**: Enhanced semantic detection that works with unpacked multi-entity outputs
+- **Missing**: Sibling relationship tracking for unpacked outputs from same function execution
+- **Missing**: Update `_finalize_transactional_result()` to use Phase 2 components
 
-#### **10. ConfigEntity Integration & Unified Execution** (CURRENT PRIORITY)
-- **Missing**: ConfigEntity base class implementation in entity.py
-- **Missing**: Separate input/output signature caching system
-- **Missing**: functools.partial execution pipeline for single_entity_with_config pattern
-- **Missing**: Top-level ConfigEntity detection in function signature analysis
-- **Missing**: Unified execution path (eliminate borrowing vs transactional dual paths)
+#### **🐛 CRITICAL FIXES IMPLEMENTED (December 29, 2024)**
+- **✅ FIXED**: BaseModel result handling in `_finalize_transactional_result()` (`callable_registry.py:865-876`)
+  - **Issue**: Function returning `BaseModel` (like `AnalysisResult`) was being wrapped incorrectly in `{"result": result}`
+  - **Fix**: Added proper `BaseModel` detection and field extraction using `result.model_dump()`
+- **✅ FIXED**: Multi-entity + ConfigEntity execution strategy (`callable_registry.py:431-440`)
+  - **Issue**: Functions with multiple entities + ConfigEntity parameters not routing to correct execution path
+  - **Fix**: Enhanced strategy detection to prioritize ConfigEntity pattern when function expects ConfigEntity
+- **✅ FIXED**: Multi-entity ConfigEntity execution pipeline (`callable_registry.py:533-570`)
+  - **Issue**: `_execute_with_partial()` only handled single entity + config, failed with multiple entities
+  - **Fix**: Added composite entity creation for multiple entities + ConfigEntity pattern
+- **✅ FIXED**: functools.partial annotations access (`callable_registry.py:877-881`)
+  - **Issue**: `functools.partial` objects don't have `__annotations__` attribute causing AttributeError
+  - **Fix**: Added `hasattr()` check before accessing annotations for type validation
 
-#### **11. Phase 2 Integration** (HIGH PRIORITY)
-- **Missing**: Integration of ReturnTypeAnalyzer with callable registry execution pipeline
-- **Missing**: Integration of EntityUnpacker for multi-entity tuple unpacking
-- **Missing**: Enhanced semantic detection with Phase 2 output analysis
-- **Missing**: Sibling relationship tracking for unpacked multi-entity outputs
+#### **10. Execution Path Unification** (MEDIUM PRIORITY)
+- **Current**: Dual execution paths (borrowing vs transactional) still exist
+- **Opportunity**: Unify into single execution path with pattern-specific preprocessing
+- **Benefit**: Simplified codebase, consistent semantic detection logic
+- **Note**: ConfigEntity integration provides foundation for this unification
 
-#### **12. Advanced Features** (LOWER PRIORITY) 
-- **Missing**: Registry disconnection for perfect isolation (may not be needed with current approach)
+#### **11. Advanced Features** (LOWER PRIORITY) 
 - **Missing**: Configurable execution settings and performance metrics  
 - **Missing**: Pydantic BaseModel auto-wrapping (DEFERRED - not current priority)
+- **Note**: Registry disconnection not needed - current object identity approach provides perfect isolation
 
-### **Updated Implementation Priority (Post Phase 1 & 2)**
+### **Updated Implementation Roadmap (Current Status)**
 
 #### **✅ Phase 1: Enhanced Input Pattern Support** (COMPLETED)
-1. ✅ **Enhanced EntityTree Integration**: Complete
-   - ✅ Optimized entity lookup and resolution
+1. ✅ **Enhanced EntityTree Integration**: Complete (`ecs_address_parser.py`)
+   - ✅ Optimized entity lookup and resolution with `EntityReferenceResolver`
    - ✅ Container navigation with dict keys and list indices
    - ✅ Advanced ECS address parser with sub-entity support
-2. ✅ **Advanced Input Processing**: Complete
+2. ✅ **Advanced Input Processing**: Complete (`functional_api.py`)
    - ✅ All 7 input patterns (A1-A7) implemented and tested
-   - ✅ Composite entity creation with dependency tracking
+   - ✅ Composite entity creation with dependency tracking via `create_composite_entity_with_pattern_detection()`
    - ✅ Enhanced pattern classification and metadata
 
-#### **✅ Phase 2: Output Analysis & Unpacking** (COMPLETED)
-1. ✅ **Return Type Analysis**: Complete
+#### **✅ Phase 2: Output Analysis & Unpacking** (COMPONENTS COMPLETE)
+1. ✅ **Return Type Analysis**: Complete (`return_type_analyzer.py`)
    - ✅ Comprehensive pattern classification (B1-B7)
    - ✅ Sophisticated nested structure detection
    - ✅ Empty container and mixed container handling
-2. ✅ **Multi-Entity Unpacking**: Complete
+2. ✅ **Multi-Entity Unpacking**: Complete (`entity_unpacker.py`)
    - ✅ Entity unpacker with all unpacking strategies
    - ✅ Container metadata preservation
    - ✅ Dynamic entity class creation
@@ -1305,57 +1316,60 @@ class RegistryConfig(BaseModel):
    - ✅ 100% test success rate across all 35 pattern tests
    - ✅ Comprehensive edge case coverage
 
-#### **🔄 Phase 3: Unified Execution & ConfigEntity Integration** (CURRENT PRIORITY)
+#### **✅ Phase 3: ConfigEntity Integration & Unified Execution** (COMPLETED)
 
-**✅ UPDATED UNDERSTANDING**: Focus on unified execution path with ConfigEntity pattern and separate signature caching.
+1. ✅ **ConfigEntity Integration**: Complete (`entity.py:1757-1832`, `callable_registry.py`)
+   - ✅ **ConfigEntity Implementation**: Subclass of Entity with `create_config_entity_class()` factory
+   - ✅ **Top-level Detection**: `is_top_level_config_entity()` for function parameter analysis
+   - ✅ **functools.partial Execution**: `_execute_with_partial()` method with clean parameter isolation
+   - ✅ **ECS Tracking**: Full audit trail for both entities and configuration parameters
 
-1. **Unified Execution Path**:
-   - ✅ **Insight**: Borrowing is just preprocessing step before transactional execution
-   - **Implementation**: Single execution pipeline with pattern-specific preprocessing
-   - **Benefit**: Eliminate dual execution paths, reuse semantic detection logic
+2. ✅ **Separate Signature Caching**: Complete (`callable_registry.py:37-145`)
+   - ✅ **Input Cache**: `FunctionSignatureCache._input_cache` with pattern classification
+   - ✅ **Output Cache**: `FunctionSignatureCache._output_cache` with return pattern analysis
+   - ✅ **Collision Prevention**: Functions with same inputs but different outputs handled correctly
+   - ✅ **Cache Reuse**: Optimized hit rates for input model reuse across functions
 
-2. **ConfigEntity Integration**:
-   - **ConfigEntity Implementation**: Subclass of Entity for meta-created parameter entities
-   - **Top-level Detection**: Special handling only for direct function parameters
-   - **functools.partial Execution**: Clean single-entity execution with parameter isolation
-   - **ECS Tracking**: Full audit trail for both entities and configuration parameters
+3. ✅ **Enhanced Pattern Detection**: Complete (`callable_registry.py:401-430`)
+   - ✅ **single_entity_with_config**: functools.partial approach implemented
+   - ✅ **multi_entity_composite**: Traditional composite entity wrapping
+   - ✅ **single_entity_direct**: Direct entity processing
+   - ✅ **pure_borrowing**: Address-based borrowing with composite entities
 
-3. **Separate Signature Caching**:
-   - **Input Cache**: `input_signature_hash → (input_model, input_pattern)`
-   - **Output Cache**: `output_signature_hash → (output_model, output_pattern)`
-   - **Collision Prevention**: Functions with same inputs but different outputs handled correctly
-   - **Cache Reuse**: Better hit rates for input model reuse across functions
+#### **🔄 Phase 4: Phase 2 ↔ Phase 3 Integration** (CURRENT PRIORITY)
 
-4. **Enhanced Pattern Detection**:
-   - **single_entity_with_config**: Use functools.partial approach
-   - **multi_entity_composite**: Traditional composite entity wrapping
-   - **single_entity_direct**: Direct entity processing
-   - **pure_borrowing**: Address-based borrowing with composite entities
+**Status**: ConfigEntity foundation complete, Phase 2 components ready, integration needed.
 
-5. **Integration with Phase 2 Components**:
-   - Connect `ReturnTypeAnalyzer.analyze_return()` with unified execution pipeline
-   - Integrate `EntityUnpacker.unpack_return()` for multi-entity results
-   - Add unpacking configuration to execution parameters
-   - Implement sibling relationship tracking for unpacked outputs
+1. **Return Analysis Integration**:
+   - **Current**: Basic return pattern classification in `FunctionSignatureCache._classify_return_pattern()`
+   - **Needed**: Replace with full `ReturnTypeAnalyzer.analyze_return()` integration
+   - **Benefit**: Sophisticated B1-B7 pattern detection in execution pipeline
 
-#### **Phase 4: Functional Tracking & Audit** (Medium Priority)
-1. **Enhanced FunctionExecution Entity**:
-   - Complete derivation fields and performance metrics
-   - Sibling tracking for multi-entity outputs
-   - Complete execution graph tracking
-2. **Audit Trail System**:
-   - Bidirectional navigation between entities and executions
-   - Query capabilities for function execution history
-   - Performance analysis and execution tracing
+2. **Multi-Entity Unpacking Integration**:
+   - **Current**: Simple entity/non-entity result handling in `_finalize_transactional_result()`
+   - **Needed**: Integrate `EntityUnpacker.unpack_return()` for complex tuple outputs
+   - **Benefit**: Support for multi-entity function returns with proper semantic detection
+
+3. **Sibling Relationship Tracking**:
+   - **Current**: `FunctionExecution` has `sibling_groups` field but not populated
+   - **Needed**: Track relationships between entities created by same function execution
+   - **Benefit**: Complete audit trail for multi-entity outputs
+
+4. **Execution Path Unification** (Optional):
+   - **Current**: Dual execution paths (borrowing vs transactional) working well
+   - **Opportunity**: Unify into single execution path with pattern-specific preprocessing
+   - **Benefit**: Simplified codebase, though current dual approach is functional
+   - **Note**: ConfigEntity integration provides foundation, but not urgent
 
 #### **Phase 5: Advanced Features** (Lower Priority)
-1. **Execution Isolation**:
-   - Registry disconnection for perfect isolation
-   - Parameter entity pattern for currying
-2. **Performance & Configuration**:
-   - Configurable execution settings and performance metrics
-   - Advanced error recovery and constraint validation
-   - Execution caching and optimization
+1. **Performance & Configuration**:
+   - **Missing**: Configurable execution settings and performance metrics  
+   - **Missing**: Advanced error recovery and constraint validation
+   - **Missing**: Execution caching and optimization
+2. **Advanced Audit Features**:
+   - **Available but underutilized**: Enhanced `FunctionExecution` entity fields
+   - **Opportunity**: Bidirectional navigation between entities and executions
+   - **Opportunity**: Query capabilities for function execution history
 
 ## Benefits & Design Validation
 
