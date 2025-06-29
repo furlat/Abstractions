@@ -487,19 +487,33 @@ class QuickPatternDetector:
             
             # Analyze tuple elements for entity content
             if args:
-                entity_count = 0
+                pure_entity_count = 0
+                container_count = 0
                 non_entity_count = 0
                 
                 for arg_type in args:
                     if cls._is_entity_type_annotation(arg_type):
-                        entity_count += 1
+                        pure_entity_count += 1
                         metadata["has_entities"] = True
+                    elif cls._is_entity_container_type(arg_type):
+                        # List[Entity], Dict[str, Entity], etc. are containers - no unpacking
+                        container_count += 1
+                        metadata["has_entities"] = True
+                        metadata["has_non_entities"] = True  # Container is treated as non-entity for unpacking
                     else:
                         non_entity_count += 1
                         metadata["has_non_entities"] = True
                 
-                metadata["expected_entity_count"] = entity_count
-                metadata["is_complex"] = entity_count > 0 and non_entity_count > 0
+                # Only unpack if ALL elements are pure entities
+                if container_count == 0 and non_entity_count == 0:
+                    metadata["expected_entity_count"] = pure_entity_count
+                    metadata["supports_unpacking"] = pure_entity_count > 1
+                else:
+                    # Has containers or non-entities - create unified entity
+                    metadata["expected_entity_count"] = 1
+                    metadata["supports_unpacking"] = False
+                    
+                metadata["is_complex"] = (pure_entity_count + container_count) > 0 and (container_count + non_entity_count) > 0
         
         elif origin in (list, typing.List):
             metadata["pattern"] = "list_return"
@@ -583,6 +597,27 @@ class QuickPatternDetector:
             # Handle forward references and other complex types
             if hasattr(type_annotation, '__name__'):
                 return "Entity" in type_annotation.__name__
+            
+            return False
+        except (TypeError, AttributeError):
+            return False
+
+    @classmethod
+    def _is_entity_container_type(cls, type_annotation: Any) -> bool:
+        """Check if a type annotation represents a container of Entity types (List[Entity], Dict[str, Entity], etc.)."""
+        try:
+            origin = get_origin(type_annotation)
+            args = get_args(type_annotation)
+            
+            if origin in (list, typing.List):
+                # List[Entity] -> check if element type is Entity
+                return len(args) > 0 and cls._is_entity_type_annotation(args[0])
+            elif origin in (dict, typing.Dict):
+                # Dict[str, Entity] -> check if value type is Entity
+                return len(args) > 1 and cls._is_entity_type_annotation(args[1])
+            elif origin is tuple:
+                # Tuple[Entity, ...] -> check if any element is Entity
+                return any(cls._is_entity_type_annotation(arg) for arg in args)
             
             return False
         except (TypeError, AttributeError):

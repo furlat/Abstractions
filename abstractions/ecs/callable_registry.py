@@ -402,9 +402,14 @@ class CallableRegistry:
             # ✅ NEW: Extract unpacking metadata from Phase 2 analysis
             supports_unpacking = return_analysis.get('supports_unpacking', False)
             expected_output_count = return_analysis.get('expected_entity_count', 1)
-            # Handle -1 (unknown count) by defaulting to 1
+            
+            # Fix: Handle -1 (unknown count) properly for multi-entity patterns
             if expected_output_count == -1:
-                expected_output_count = 1
+                # For list/tuple/dict patterns, -1 means multiple entities - use 2 to trigger unpacking
+                if output_pattern in ['list_return', 'tuple_return', 'dict_return']:
+                    expected_output_count = 2  # Trigger multi-entity path
+                else:
+                    expected_output_count = 1  # Single entity fallback
             
             # Store enhanced metadata
             metadata = FunctionMetadata(
@@ -771,7 +776,7 @@ class CallableRegistry:
         return False
     
     @classmethod
-    async def _execute_borrowing(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Entity:
+    async def _execute_borrowing(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Union[Entity, List[Entity]]:
         """Execute using borrowing pattern (data composition)."""
         
         # Create input entity with borrowing (enhanced pattern)
@@ -814,18 +819,31 @@ class CallableRegistry:
             await cls._record_execution_failure(input_entity, metadata.name, str(e), None, None)
             raise
         
-        # Create output entity with proper provenance
-        output_entity = await cls._create_output_entity_with_provenance(
-            result, metadata.output_entity_class, input_entity, metadata.name
-        )
-        
-        # Register output entity (automatic versioning)
-        output_entity.promote_to_root()
-        
-        # Record function execution relationship
-        await cls._record_function_execution(input_entity, output_entity, metadata.name)
-        
-        return output_entity
+        # Check if result needs enhanced processing for multi-entity returns
+        is_multi_entity = (metadata.supports_unpacking and 
+                          (metadata.expected_output_count > 1 or 
+                           metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+        if is_multi_entity:
+            # Use enhanced result processing for multi-entity returns
+            object_identity_map = {}  # Empty since borrowing path doesn't track object identity the same way
+            execution_id = uuid4()
+            
+            return await cls._finalize_transactional_result_enhanced(
+                result, metadata, object_identity_map, input_entity, execution_id
+            )
+        else:
+            # Use traditional single-entity processing
+            output_entity = await cls._create_output_entity_with_provenance(
+                result, metadata.output_entity_class, input_entity, metadata.name
+            )
+            
+            # Register output entity (automatic versioning)
+            output_entity.promote_to_root()
+            
+            # Record function execution relationship
+            await cls._record_function_execution(input_entity, output_entity, metadata.name)
+            
+            return output_entity
     
     @classmethod
     async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Union[Entity, List[Entity]]:
@@ -861,7 +879,10 @@ class CallableRegistry:
             raise
         
         # Step 3: Enhanced finalization with Phase 2 unpacking
-        if metadata.supports_unpacking and metadata.expected_output_count > 1:
+        is_multi_entity = (metadata.supports_unpacking and 
+                          (metadata.expected_output_count > 1 or 
+                           metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+        if is_multi_entity:
             # Use enhanced result processing for multi-entity returns
             return await cls._finalize_transactional_result_enhanced(
                 result, metadata, object_identity_map, input_entity, execution_id
@@ -1215,8 +1236,7 @@ class CallableRegistry:
         execution_record.mark_as_completed("enhanced_execution")
         execution_record.promote_to_root()
         
-        # Register execution in the registry
-        EntityRegistry.register_entity(execution_record)
+        # Entity is already registered by promote_to_root()
         
         return execution_record
     
@@ -1255,23 +1275,31 @@ class CallableRegistry:
         else:
             # Single return value - determine the correct field name from the output entity class
             field_names = list(output_entity_class.model_fields.keys())
-            # Exclude entity system fields
+            # Exclude entity system fields and Phase 4 fields
             data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
                                                                 'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
                                                                 'root_ecs_id', 'root_live_id', 'from_storage', 
-                                                                'untyped_data', 'attribute_source'}]
+                                                                'untyped_data', 'attribute_source',
+                                                                'derived_from_function', 'derived_from_execution_id',
+                                                                'sibling_output_entities', 'output_index'}]
             if data_fields:
                 # Use the first available data field
                 output_entity = output_entity_class(**{data_fields[0]: result})
             else:
                 raise ValueError(f"No data fields available in output entity class {output_entity_class.__name__}")
         
+        # Set Phase 4 provenance fields after entity creation
+        if hasattr(output_entity, 'derived_from_function'):
+            output_entity.derived_from_function = function_name
+        
         # Set up complete provenance tracking
         for field_name in output_entity.model_fields:
             if field_name not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
                                  'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
                                  'root_ecs_id', 'root_live_id', 'from_storage', 
-                                 'untyped_data', 'attribute_source'}:
+                                 'untyped_data', 'attribute_source',
+                                 'derived_from_function', 'derived_from_execution_id',
+                                 'sibling_output_entities', 'output_index'}:
                 
                 field_value = getattr(output_entity, field_name)
                 
