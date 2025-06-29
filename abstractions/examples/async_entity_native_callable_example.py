@@ -166,12 +166,19 @@ async def main():
         }
     )
 
-    print(f"✅ Sync function executed! Result entity: {result_entity.ecs_id}")
-    if hasattr(result_entity, 'student_name'):
-        print(f"Student Name: {getattr(result_entity, 'student_name', 'N/A')}")
-        print(f"Average Grade: {getattr(result_entity, 'average_grade', 'N/A')}")
-        print(f"Status: {getattr(result_entity, 'status', 'N/A')}")
-        print(f"Analysis Notes: {getattr(result_entity, 'analysis_notes', 'N/A')}")
+    # Handle potential multi-entity return (Phase 4 compatibility)
+    if isinstance(result_entity, list):
+        actual_result = result_entity[0]  # Take first entity for single-entity functions
+        print(f"✅ Sync function executed! Result entities: {len(result_entity)} (using first one)")
+    else:
+        actual_result = result_entity
+        print(f"✅ Sync function executed! Result entity: {actual_result.ecs_id}")
+        
+    if hasattr(actual_result, 'student_name'):
+        print(f"Student Name: {getattr(actual_result, 'student_name', 'N/A')}")
+        print(f"Average Grade: {getattr(actual_result, 'average_grade', 'N/A')}")
+        print(f"Status: {getattr(actual_result, 'status', 'N/A')}")
+        print(f"Analysis Notes: {getattr(actual_result, 'analysis_notes', 'N/A')}")
 
     print("\n⚡ Executing async function...")
 
@@ -186,11 +193,18 @@ async def main():
         }
     )
 
-    print(f"✅ Async function executed! Result entity: {async_result_entity.ecs_id}")
-    if hasattr(async_result_entity, 'student_name'):
-        print(f"Student Name: {getattr(async_result_entity, 'student_name', 'N/A')}")
-        print(f"Average Grade: {getattr(async_result_entity, 'average_grade', 'N/A')}")
-        processing_time = getattr(async_result_entity, 'processing_time', 0)
+    # Handle potential multi-entity return (Phase 4 compatibility)
+    if isinstance(async_result_entity, list):
+        actual_async_result = async_result_entity[0]  # Take first entity for single-entity functions
+        print(f"✅ Async function executed! Result entities: {len(async_result_entity)} (using first one)")
+    else:
+        actual_async_result = async_result_entity
+        print(f"✅ Async function executed! Result entity: {actual_async_result.ecs_id}")
+        
+    if hasattr(actual_async_result, 'student_name'):
+        print(f"Student Name: {getattr(actual_async_result, 'student_name', 'N/A')}")
+        print(f"Average Grade: {getattr(actual_async_result, 'average_grade', 'N/A')}")
+        processing_time = getattr(actual_async_result, 'processing_time', 0)
         print(f"Processing Time: {processing_time:.3f}s" if isinstance(processing_time, (int, float)) else f"Processing Time: {processing_time}")
 
     print("\n🚀 Demonstrating concurrent execution...")
@@ -217,11 +231,19 @@ async def main():
     
     print(f"✅ Executed {len(batch_results)} functions concurrently!")
     for i, result in enumerate(batch_results):
-        status = getattr(result, 'status', 'unknown') if hasattr(result, 'status') else 'unknown'
-        print(f"  Result {i+1}: {result.ecs_id} - Status: {status}")
+        # Handle potential multi-entity return (Phase 4 compatibility)
+        if isinstance(result, list):
+            actual_batch_result = result[0]
+            print(f"  Result {i+1}: {len(result)} entities (using first: {actual_batch_result.ecs_id})")
+        else:
+            actual_batch_result = result
+            print(f"  Result {i+1}: {actual_batch_result.ecs_id}")
+            
+        status = getattr(actual_batch_result, 'status', 'unknown') if hasattr(actual_batch_result, 'status') else 'unknown'
+        print(f"    Status: {status}")
 
     print("\n🔍 Provenance tracking (attribute_source):")
-    for field_name, source in result_entity.attribute_source.items():
+    for field_name, source in actual_result.attribute_source.items():
         if source and field_name not in {'ecs_id', 'live_id', 'created_at', 'forked_at'}:
             print(f"  {field_name} -> sourced from entity {source}")
 

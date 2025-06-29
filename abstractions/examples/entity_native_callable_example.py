@@ -187,24 +187,31 @@ result_entity = CallableRegistry.execute(
     }
 )
 
-print(f"✅ Function executed! Result entity: {result_entity.ecs_id}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(result_entity, list):
+    actual_result = result_entity[0]  # Take first entity for single-entity functions
+    print(f"✅ Function executed! Result entities: {len(result_entity)} (using first one)")
+else:
+    actual_result = result_entity
+    print(f"✅ Function executed! Result entity: {actual_result.ecs_id}")
+
 print(f"✅ Result is registered in EntityRegistry with full versioning")
 
 print("\n📊 Function execution results:")
-if hasattr(result_entity, 'student_name'):
-    print(f"Student Name: {getattr(result_entity, 'student_name', 'N/A')}")
-    print(f"Average Grade: {getattr(result_entity, 'average_grade', 'N/A')}")
-    print(f"Status: {getattr(result_entity, 'status', 'N/A')}")
-    print(f"Total Courses: {getattr(result_entity, 'total_courses', 'N/A')}")
-    print(f"Analysis Notes: {getattr(result_entity, 'analysis_notes', 'N/A')}")
+if hasattr(actual_result, 'student_name'):
+    print(f"Student Name: {getattr(actual_result, 'student_name', 'N/A')}")
+    print(f"Average Grade: {getattr(actual_result, 'average_grade', 'N/A')}")
+    print(f"Status: {getattr(actual_result, 'status', 'N/A')}")
+    print(f"Total Courses: {getattr(actual_result, 'total_courses', 'N/A')}")
+    print(f"Analysis Notes: {getattr(actual_result, 'analysis_notes', 'N/A')}")
 
 print("\n🔍 Provenance tracking (attribute_source):")
-for field_name, source in result_entity.attribute_source.items():
+for field_name, source in actual_result.attribute_source.items():
     if source and field_name not in {'ecs_id', 'live_id', 'created_at', 'forked_at'}:
         print(f"  {field_name} -> sourced from entity {source}")
 
 print("\n🌳 Entity tree relationships:")
-result_tree = result_entity.get_tree()
+result_tree = actual_result.get_tree()
 if result_tree:
     print(f"Result entity tree has {result_tree.node_count} nodes and {result_tree.edge_count} edges")
     print(f"Max depth: {result_tree.max_depth}")
@@ -231,9 +238,16 @@ config_result = CallableRegistry.execute(
     config=analysis_config
 )
 
-print(f"✅ ConfigEntity execution result: {config_result.ecs_id}")
-if hasattr(config_result, 'analysis_notes'):
-    print(f"Analysis notes: {getattr(config_result, 'analysis_notes', 'N/A')}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(config_result, list):
+    actual_config_result = config_result[0]
+    print(f"✅ ConfigEntity execution result entities: {len(config_result)} (using first one)")
+else:
+    actual_config_result = config_result
+    print(f"✅ ConfigEntity execution result: {actual_config_result.ecs_id}")
+
+if hasattr(actual_config_result, 'analysis_notes'):
+    print(f"Analysis notes: {getattr(actual_config_result, 'analysis_notes', 'N/A')}")
 
 # Pattern 2: Automatic ConfigEntity creation from primitives
 print("\nPattern 2: Automatic ConfigEntity creation from primitives...")
@@ -246,9 +260,16 @@ auto_config_result = CallableRegistry.execute(
     analysis_mode="quick"
 )
 
-print(f"✅ Auto-ConfigEntity result: {auto_config_result.ecs_id}")
-if hasattr(auto_config_result, 'analysis_notes'):
-    print(f"Auto-config notes: {getattr(auto_config_result, 'analysis_notes', 'N/A')}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(auto_config_result, list):
+    actual_auto_result = auto_config_result[0]
+    print(f"✅ Auto-ConfigEntity result entities: {len(auto_config_result)} (using first one)")
+else:
+    actual_auto_result = auto_config_result
+    print(f"✅ Auto-ConfigEntity result: {actual_auto_result.ecs_id}")
+
+if hasattr(actual_auto_result, 'analysis_notes'):
+    print(f"Auto-config notes: {getattr(actual_auto_result, 'analysis_notes', 'N/A')}")
 
 # Pattern 3: Single entity + config pattern (dynamic ConfigEntity)
 print("\nPattern 3: Single entity + config parameters...")
@@ -260,9 +281,16 @@ comprehensive_result = CallableRegistry.execute(
     include_recommendations=True
 )
 
-print(f"✅ Comprehensive analysis result: {comprehensive_result.ecs_id}")
-if hasattr(comprehensive_result, 'status'):
-    print(f"Status: {getattr(comprehensive_result, 'status', 'N/A')}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(comprehensive_result, list):
+    actual_comprehensive = comprehensive_result[0]
+    print(f"✅ Comprehensive analysis result entities: {len(comprehensive_result)} (using first one)")
+else:
+    actual_comprehensive = comprehensive_result
+    print(f"✅ Comprehensive analysis result: {actual_comprehensive.ecs_id}")
+
+if hasattr(actual_comprehensive, 'status'):
+    print(f"Status: {getattr(actual_comprehensive, 'status', 'N/A')}")
 
 # Pattern 4: ConfigEntity with borrowing from addresses
 print("\nPattern 4: ConfigEntity with address-based borrowing...")
@@ -275,9 +303,16 @@ result_with_borrowing = CallableRegistry.execute(
     analysis_mode="borrowed"
 )
 
-print(f"✅ Borrowing result: {result_with_borrowing.ecs_id}")
-if hasattr(result_with_borrowing, 'analysis_notes'):
-    print(f"Borrowed config notes: {getattr(result_with_borrowing, 'analysis_notes', 'N/A')}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(result_with_borrowing, list):
+    actual_borrowing = result_with_borrowing[0]
+    print(f"✅ Borrowing result entities: {len(result_with_borrowing)} (using first one)")
+else:
+    actual_borrowing = result_with_borrowing
+    print(f"✅ Borrowing result: {actual_borrowing.ecs_id}")
+
+if hasattr(actual_borrowing, 'analysis_notes'):
+    print(f"Borrowed config notes: {getattr(actual_borrowing, 'analysis_notes', 'N/A')}")
 
 print("\n🔄 Demonstrate entity versioning through function calls...")
 
@@ -293,10 +328,17 @@ result2_entity = CallableRegistry.execute(
     }
 )
 
-print(f"✅ Second execution result: {result2_entity.ecs_id}")
-if hasattr(result2_entity, 'status'):
-    print(f"New status: {getattr(result2_entity, 'status', 'N/A')}")
-print(f"Different entity ID proves versioning: {result_entity.ecs_id != result2_entity.ecs_id}")
+# Handle potential multi-entity return (Phase 4 compatibility)
+if isinstance(result2_entity, list):
+    actual_result2 = result2_entity[0]
+    print(f"✅ Second execution result entities: {len(result2_entity)} (using first one)")
+else:
+    actual_result2 = result2_entity
+    print(f"✅ Second execution result: {actual_result2.ecs_id}")
+
+if hasattr(actual_result2, 'status'):
+    print(f"New status: {getattr(actual_result2, 'status', 'N/A')}")
+print(f"Different entity ID proves versioning: {actual_result.ecs_id != actual_result2.ecs_id}")
 
 print("\n📈 Registry statistics:")
 print(f"Total trees in registry: {len(EntityRegistry.tree_registry)}")

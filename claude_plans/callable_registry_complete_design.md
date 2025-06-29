@@ -1501,3 +1501,120 @@ The design represents a sophisticated yet implementable approach that maintains 
 3. Advanced configuration and error recovery
 
 This refined design maintains the sophisticated ECS integration while providing a cleaner, more maintainable architecture that handles all execution patterns through a unified approach with complete audit trails.
+
+## Phase 4 Implementation Status: ✅ COMPLETED (December 2024)
+
+### Integration of Phase 2 + Phase 3 Capabilities (Completed)
+
+✅ **Enhanced Callable Registry Architecture**: 
+- **Phase 2 + Phase 3 Integration**: Successfully unified return type analysis with ConfigEntity patterns
+- **Multi-entity return support**: Functions can now return `Tuple[Entity, List[Entity], Entity]` with automatic unpacking
+- **Backward compatibility**: Single-entity functions continue to work seamlessly
+- **Complete audit trails**: Enhanced FunctionExecution tracking with sibling relationships
+
+✅ **Advanced Return Processing**:
+- **ReturnTypeAnalyzer Integration**: Signature-time analysis combined with runtime unpacking
+- **EntityUnpacker Enhancement**: Multi-entity unpacking with ContainerReconstructor support
+- **Sibling Relationship Tracking**: Complete linking of entities created by the same function execution
+- **Performance Metadata**: Execution timing, entity counts, and semantic classifications
+
+✅ **Enhanced Entity System**:
+- **Entity Field Extensions**: Added `derived_from_function`, `derived_from_execution_id`, `sibling_output_entities`, `output_index`
+- **FunctionExecution Enhancements**: Complete Phase 4 metadata including `execution_duration`, `semantic_classifications`, `was_unpacked`
+- **Functional API Extension**: Added `get_function_execution_siblings()` for accessing sibling entity groups
+
+✅ **Architectural Refinements**:
+- **Circular Dependency Resolution**: Eliminated all local imports through proper module organization
+- **Clean Import Hierarchy**: `entity.py` → functional modules → `callable_registry.py` (top-level coordinator)
+- **Top-level Import Enforcement**: Strict type hint requirements with graceful error handling for missing annotations
+
+### Key Phase 4 Features Delivered
+
+#### 1. Multi-Entity Return Pattern Support
+```python
+@CallableRegistry.register("comprehensive_analysis")
+def analyze_student_comprehensive(
+    student: StudentProfile, 
+    config: AdvancedAnalysisConfig
+) -> Tuple[AcademicAnalysis, List[Recommendation], PerformanceMetrics]:
+    # Function returns multiple related entities
+    analysis = AcademicAnalysis(...)
+    recommendations = [Recommendation(...), ...]
+    metrics = PerformanceMetrics(...)
+    return analysis, recommendations, metrics
+
+# Automatic unpacking and sibling relationship tracking
+analysis, recommendations, metrics = CallableRegistry.execute(
+    "comprehensive_analysis", student=student, config=config
+)
+```
+
+#### 2. Complete Sibling Relationship Tracking
+- **Entity-level tracking**: Each entity knows its siblings via `sibling_output_entities`
+- **Execution-level tracking**: FunctionExecution maintains `sibling_groups` for all related entities
+- **Functional API access**: `get_function_execution_siblings(execution)` for retrieving sibling groups
+
+#### 3. Enhanced Execution Metadata
+- **Performance tracking**: `execution_duration`, `entity_count_input`, `entity_count_output`
+- **Semantic analysis**: `semantic_classifications`, `execution_pattern`
+- **Unpacking metadata**: `was_unpacked`, `original_return_type`
+- **ConfigEntity tracking**: `config_entity_ids` for parameter provenance
+
+#### 4. Architectural Improvements
+- **Type safety enforcement**: All functions must have complete type annotations
+- **Clean module organization**: Eliminated circular dependencies through proper layering
+- **Import hierarchy**: Clear dependency flow with no bidirectional imports
+
+### Implementation Architecture (Phase 4)
+
+```
+┌─────────────────┐
+│   entity.py     │  ← BASE: Pure data structures + fields
+│                 │     - Entity (with sibling fields)
+│                 │     - FunctionExecution (enhanced)
+│                 │     - EntityRegistry
+└─────────────────┘
+         ↑ imports from
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│return_type_     │ │entity_unpacker  │ │functional_api   │
+│analyzer.py      │ │.py              │ │.py              │
+│                 │ │                 │ │                 │
+│+ signature      │ │+ multi-entity   │ │+ sibling access │
+│  analysis       │ │  unpacking      │ │+ entity utils   │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+         ↑ imports from all above
+┌─────────────────┐
+│callable_        │  ← TOP: Enhanced orchestration
+│registry.py      │     - Multi-entity support
+│                 │     - Sibling relationship tracking
+│                 │     - Performance metadata
+│                 │     - Complete audit trails
+└─────────────────┘
+```
+
+### Critical Architectural Lessons Learned
+
+#### **Circular Dependency Prevention**
+- **Root Cause**: Adding methods to data classes that create external dependencies
+- **Solution**: Keep data classes pure, put behavior in functional modules
+- **Enforcement**: Top-level imports only, no local imports except in truly exceptional cases
+
+#### **Type Safety as Foundation**
+- **Requirement**: All registered functions must have complete type annotations
+- **Benefit**: Enables sophisticated static analysis and runtime unpacking
+- **Implementation**: Graceful error messages for missing type hints
+
+#### **Module Responsibility Clarity**
+- **entity.py**: Data structures only (Entity, Registry, etc.)
+- **Functional modules**: Operations on entities (analysis, unpacking, addressing)
+- **callable_registry.py**: Orchestration and coordination (imports everything, provides API)
+
+### Phase 4 Integration Benefits
+
+1. **Complete Multi-Entity Support**: Functions can return complex structures with full entity tracking
+2. **Enhanced Audit Trails**: Complete provenance from inputs through execution to output relationships
+3. **Performance Insights**: Detailed metrics for execution analysis and optimization
+4. **Architectural Cleanliness**: Resolved circular dependencies and enforced clean layering
+5. **Developer Experience**: Clear error messages and type safety enforcement
+
+**Phase 4 represents the culmination of the callable registry vision**: a sophisticated, entity-native function execution system that maintains complete audit trails while supporting complex execution patterns with multi-entity returns, sibling relationship tracking, and performance analysis.

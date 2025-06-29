@@ -111,13 +111,21 @@ async def main():
     )
 
     print(f"✅ Transactional execution complete!")
-    print(f"✅ Result entity: {enrollment_result.ecs_id}")
+    
+    # Handle potential multi-entity return (Phase 4 compatibility)
+    if isinstance(enrollment_result, list):
+        enrollment_entity = enrollment_result[0]  # Take first entity for single-entity functions
+        print(f"✅ Result entities: {len(enrollment_result)} (using first one)")
+    else:
+        enrollment_entity = enrollment_result
+        print(f"✅ Result entity: {enrollment_entity.ecs_id}")
+    
     print(f"📊 Enrollment details:")
-    if hasattr(enrollment_result, 'student_id'):
-        print(f"  Student ID: {getattr(enrollment_result, 'student_id', 'N/A')}")
-        print(f"  Course ID: {getattr(enrollment_result, 'course_id', 'N/A')}")
-        print(f"  Grade: {getattr(enrollment_result, 'grade', 'N/A')}")
-        print(f"  Semester: {getattr(enrollment_result, 'semester', 'N/A')}")
+    if hasattr(enrollment_entity, 'student_id'):
+        print(f"  Student ID: {getattr(enrollment_entity, 'student_id', 'N/A')}")
+        print(f"  Course ID: {getattr(enrollment_entity, 'course_id', 'N/A')}")
+        print(f"  Grade: {getattr(enrollment_entity, 'grade', 'N/A')}")
+        print(f"  Semester: {getattr(enrollment_entity, 'semester', 'N/A')}")
 
     print("\n🔄 Executing function that modifies and returns entity...")
 
@@ -129,18 +137,26 @@ async def main():
     )
 
     print(f"✅ Student modification complete!")
-    print(f"✅ Updated student entity: {updated_student.ecs_id}")
+    
+    # Handle potential multi-entity return (Phase 4 compatibility)
+    if isinstance(updated_student, list):
+        updated_student_entity = updated_student[0]  # Take first entity for single-entity functions
+        print(f"✅ Updated student entities: {len(updated_student)} (using first one)")
+    else:
+        updated_student_entity = updated_student
+        print(f"✅ Updated student entity: {updated_student_entity.ecs_id}")
+    
     print(f"📊 Updated student details:")
-    if hasattr(updated_student, 'name'):
-        print(f"  Name: {getattr(updated_student, 'name', 'N/A')}")
+    if hasattr(updated_student_entity, 'name'):
+        print(f"  Name: {getattr(updated_student_entity, 'name', 'N/A')}")
         print(f"  Original GPA: {student.gpa}")  # Original entity unchanged
-        print(f"  Updated GPA: {getattr(updated_student, 'gpa', 'N/A')}")
+        print(f"  Updated GPA: {getattr(updated_student_entity, 'gpa', 'N/A')}")
 
     print("\n🔍 Verifying entity isolation...")
     print(f"Original student GPA (unchanged): {student.gpa}")
-    print(f"Returned student GPA (modified): {getattr(updated_student, 'gpa', 'N/A')}")
-    print(f"Different entities: {student.ecs_id != updated_student.ecs_id}")
-    print(f"Same lineage: {student.lineage_id == getattr(updated_student, 'lineage_id', None)}")
+    print(f"Returned student GPA (modified): {getattr(updated_student_entity, 'gpa', 'N/A')}")
+    print(f"Different entities: {student.ecs_id != updated_student_entity.ecs_id}")
+    print(f"Same lineage: {student.lineage_id == getattr(updated_student_entity, 'lineage_id', None)}")
 
     print("\n📈 Registry statistics:")
     print(f"Total trees in registry: {len(EntityRegistry.tree_registry)}")

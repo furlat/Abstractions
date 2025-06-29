@@ -23,7 +23,7 @@ import hashlib
 from functools import partial
 
 from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity, create_dynamic_entity_class
-from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier  
+from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier, ECSAddressParser
 from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection, borrow_from_address
 from abstractions.ecs.return_type_analyzer import ReturnTypeAnalyzer, QuickPatternDetector
 from abstractions.ecs.entity_unpacker import EntityUnpacker, ContainerReconstructor
@@ -506,17 +506,19 @@ class CallableRegistry:
             for param in sig.parameters.values()
         )
         
-        # Strategy determination
-        if function_expects_config_entity and (primitive_params or config_params):
-            return "single_entity_with_config"  # Use functools.partial approach (works for 1+ entities)
-        elif len(entity_params) == 1 and (primitive_params or config_params):
-            return "single_entity_with_config"  # Use functools.partial approach
-        elif len(entity_params) > 1 and not function_expects_config_entity:
-            return "multi_entity_composite"     # Traditional composite entity (no ConfigEntity involved)
-        elif len(entity_params) == 1:
-            return "single_entity_direct"       # Direct entity processing
+        # Strategy determination based on correct recasting rules
+        if len(entity_params) == 1 and not primitive_params and not function_expects_config_entity and not config_params:
+            return "single_entity_direct"       # Pure single entity, no recasting needed
+        elif function_expects_config_entity or config_params:
+            return "single_entity_with_config"  # Config entity handling (highest priority)
+        elif len(entity_params) == 1 and primitive_params:
+            return "single_entity_with_config"  # 1 entity + primitives → 1 entity + config (primitives become config)
+        elif len(entity_params) >= 2:
+            return "multi_entity_composite"     # 2+ entities (+ anything) → 1 unified entity
+        elif len(entity_params) == 0 and not primitive_params:
+            return "no_inputs"                  # No inputs → execute function directly
         else:
-            return "pure_borrowing"             # Address-based borrowing
+            return "pure_borrowing"             # Address-based borrowing and mixed patterns (fallback)
     
     @classmethod
     async def _execute_async(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
@@ -532,6 +534,8 @@ class CallableRegistry:
         # Step 3: Route to appropriate execution strategy
         if strategy == "single_entity_with_config":
             return await cls._execute_with_partial(metadata, kwargs)
+        elif strategy == "no_inputs":
+            return await cls._execute_no_inputs(metadata)
         elif strategy in ["multi_entity_composite", "single_entity_direct"]:
             # Use pattern classification for existing logic
             pattern_type, classification = InputPatternClassifier.classify_kwargs(kwargs)
@@ -567,6 +571,8 @@ class CallableRegistry:
         
         # Step 2: Create or resolve ConfigEntity
         config_entities = {}
+        
+        # Handle explicit ConfigEntity parameters
         for param_name, param_type in [(p.name, type_hints.get(p.name)) for p in sig.parameters.values()]:
             if is_top_level_config_entity(param_type):
                 if param_name in config_params:
@@ -585,7 +591,20 @@ class CallableRegistry:
                 
                 config_entities[param_name] = config_entity
         
-        # Step 3: Create partial function with ConfigEntity
+        # For "1 entity + primitives" pattern, create dynamic ConfigEntity from primitives
+        if len(entity_params) == 1 and primitive_params and not config_entities:
+            # Create a dynamic ConfigEntity that includes all primitive parameters
+            dynamic_config = cls.create_config_entity_from_primitives(
+                metadata.name,
+                primitive_params,
+                expected_config_type=None  # Will create dynamic ConfigEntity
+            )
+            dynamic_config.promote_to_root()
+            
+            # The partial function should include all primitive parameters directly
+            config_entities.update(primitive_params)
+        
+        # Step 3: Create partial function with ConfigEntity only
         partial_func = partial(metadata.original_function, **config_entities)
         
         # Step 4: Execute with entities using transactional path
@@ -779,7 +798,10 @@ class CallableRegistry:
             'ecs_id', 'live_id', 'created_at', 'forked_at', 
             'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
             'root_ecs_id', 'root_live_id', 'from_storage', 
-            'untyped_data', 'attribute_source'
+            'untyped_data', 'attribute_source',
+            # Phase 4 fields
+            'derived_from_function', 'derived_from_execution_id', 
+            'sibling_output_entities', 'output_index'
         })
         
         try:
@@ -1299,12 +1321,14 @@ class CallableRegistry:
         
         # Create failed execution record
         failed_execution = FunctionExecution(
-            ecs_id=execution_id,
             function_name=function_name,
             input_entity_id=input_entity.ecs_id if input_entity else None,
-            output_entity_ids=[],
+            output_entity_id=None,  # No output for failed execution
             error_message=error_message
         )
+        # Store the execution_id in untyped_data since execution_id field doesn't exist
+        if execution_id:
+            failed_execution.untyped_data = f"execution_id:{execution_id}"
         
         # Set additional fields after construction
         failed_execution.execution_duration = execution_duration or 0.0
@@ -1312,8 +1336,82 @@ class CallableRegistry:
         failed_execution.execution_pattern = "failed"
         
         failed_execution.mark_as_failed(error_message)
-        failed_execution.promote_to_root()
-        EntityRegistry.register_entity(failed_execution)
+        failed_execution.promote_to_root()  # This already calls EntityRegistry.register_entity()
+    
+    @classmethod
+    async def _execute_primitives_only(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Union[Entity, List[Entity]]:
+        """Execute function with only primitive parameters (no entities)."""
+        
+        # Create ConfigEntity from all primitive parameters
+        config_entity = cls.create_config_entity_from_primitives(
+            metadata.name,
+            kwargs,
+            expected_config_type=None  # Create dynamic ConfigEntity
+        )
+        config_entity.promote_to_root()
+        
+        # Create partial function with all parameters
+        partial_func = partial(metadata.original_function, **kwargs)
+        
+        # Execute function (no input entities needed)
+        try:
+            if metadata.is_async:
+                result = await partial_func()
+            else:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, partial_func)
+        except Exception as e:
+            await cls._record_execution_failure(None, metadata.name, str(e), None, None)
+            raise
+        
+        # Create output entity
+        if isinstance(result, Entity):
+            output_entity = result
+            output_entity.promote_to_root()
+        else:
+            # Wrap non-entity result
+            output_entity = metadata.output_entity_class(**{"result": result})
+            output_entity.promote_to_root()
+        
+        # Record execution
+        await cls._record_function_execution_with_config(None, output_entity, metadata.name, [config_entity])
+        
+        return output_entity
+    
+    @classmethod
+    async def _execute_no_inputs(cls, metadata: FunctionMetadata) -> Union[Entity, List[Entity]]:
+        """Execute function with no input parameters."""
+        
+        # Execute function directly
+        try:
+            if metadata.is_async:
+                result = await metadata.original_function()
+            else:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, metadata.original_function)
+        except Exception as e:
+            await cls._record_execution_failure(None, metadata.name, str(e), None, None)
+            raise
+        
+        # Create output entity
+        if isinstance(result, Entity):
+            output_entity = result
+            output_entity.promote_to_root()
+        else:
+            # Wrap non-entity result
+            output_entity = metadata.output_entity_class(**{"result": result})
+            output_entity.promote_to_root()
+        
+        # Record execution (no input entity, no config entity)
+        execution_record = FunctionExecution(
+            function_name=metadata.name,
+            input_entity_id=None,
+            output_entity_id=output_entity.ecs_id
+        )
+        execution_record.mark_as_completed("creation")
+        execution_record.promote_to_root()
+        
+        return output_entity
     
     @classmethod
     async def execute_batch(cls, executions: List[Dict[str, Any]]) -> List[Union[Entity, List[Entity]]]:

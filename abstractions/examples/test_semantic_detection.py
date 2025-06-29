@@ -42,9 +42,16 @@ def test_mutation_detection():
     # Execute function - this should be detected as mutation
     try:
         result = CallableRegistry.execute("update_gpa", student=student, new_gpa=3.9)
-        result_name = getattr(result, 'name', 'N/A')
-        result_gpa = getattr(result, 'gpa', 'N/A')
-        print(f"Result: {result_name}, GPA: {result_gpa}, ecs_id: {result.ecs_id}")
+        
+        # Handle potential multi-entity return (Phase 4 compatibility)
+        if isinstance(result, list):
+            result_entity = result[0]  # Take first entity for single-entity functions
+        else:
+            result_entity = result
+            
+        result_name = getattr(result_entity, 'name', 'N/A')
+        result_gpa = getattr(result_entity, 'gpa', 'N/A')
+        print(f"Result: {result_name}, GPA: {result_gpa}, ecs_id: {result_entity.ecs_id}")
         print("✅ Mutation detection successful - no 'entity tree already registered' error!")
         return True
     except Exception as e:
@@ -64,9 +71,16 @@ def test_creation_detection():
     # Execute function - this should be detected as creation
     try:
         result = CallableRegistry.execute("create_course", title="Physics 101", credits=3)
-        result_title = getattr(result, 'title', 'N/A')
-        result_credits = getattr(result, 'credits', 'N/A')
-        print(f"Created course: {result_title}, credits: {result_credits}, ecs_id: {result.ecs_id}")
+        
+        # Handle potential multi-entity return (Phase 4 compatibility)
+        if isinstance(result, list):
+            result_entity = result[0]  # Take first entity for single-entity functions
+        else:
+            result_entity = result
+            
+        result_title = getattr(result_entity, 'title', 'N/A')
+        result_credits = getattr(result_entity, 'credits', 'N/A')
+        print(f"Created course: {result_title}, credits: {result_credits}, ecs_id: {result_entity.ecs_id}")
         print("✅ Creation detection successful!")
         return True
     except Exception as e:
@@ -93,8 +107,15 @@ def test_object_identity_tracking():
     
     try:
         result = CallableRegistry.execute("identity_function", student=student)
-        result_name = getattr(result, 'name', 'N/A')
-        print(f"Result student: {result_name}, ecs_id: {result.ecs_id}")
+        
+        # Handle potential multi-entity return (Phase 4 compatibility)
+        if isinstance(result, list):
+            result_entity = result[0]  # Take first entity for single-entity functions
+        else:
+            result_entity = result
+            
+        result_name = getattr(result_entity, 'name', 'N/A')
+        print(f"Result student: {result_name}, ecs_id: {result_entity.ecs_id}")
         print("✅ Object identity tracking successful!")
         return True
     except Exception as e:
