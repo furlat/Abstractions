@@ -2,6 +2,58 @@
 
 Entity-Component-System with function-based systems and automatic entity lifecycle management.
 
+## Setup
+
+```bash
+git clone https://github.com/your-org/abstractions.git
+cd abstractions
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e .
+```
+
+## First steps
+
+The system has three main components: entities (your data structures), functions (your logic), and automatic management (versioning, relationships, audit trails). Here's the minimal pattern:
+
+```python
+from abstractions.ecs.entity import Entity
+from abstractions.ecs.callable_registry import CallableRegistry
+
+# 1. Define your data as entities
+class Student(Entity):
+    name: str = ""
+    gpa: float = 0.0
+
+# 2. Register functions that operate on entities  
+@CallableRegistry.register("update_gpa")
+def update_gpa(student: Student, new_gpa: float) -> Student:
+    student.gpa = new_gpa
+    return student
+
+# 3. Use the system
+student = Student(name="Alice", gpa=3.5)
+student.promote_to_root()  # Register with entity system
+
+updated = CallableRegistry.execute("update_gpa", student=student, new_gpa=3.8)
+print(f"{updated.name} now has GPA {updated.gpa}")
+```
+
+The system automatically handled entity storage, created a new version when the GPA changed, tracked that the update came from the `update_gpa` function, and maintained the relationship between the original and updated entities.
+
+To see what happened, you can check the entity registry:
+
+```python
+from abstractions.ecs.entity import EntityRegistry
+
+# See all entities in the system
+print(f"Total entities: {len(EntityRegistry.live_id_registry)}")
+
+# Get the version history for this student
+lineage = EntityRegistry.lineage_registry[student.lineage_id]
+print(f"Student has {len(lineage)} versions")
+```
+
 ## What this solves
 
 Traditional Entity-Component-System implementations force you to build most of the ECS framework yourself. You define entities and components, but then you have to manually register components, write system execution logic, manage entity-component relationships, and build data access patterns between systems. Most ECS libraries give you the data structures but leave the hard problems unsolved.
