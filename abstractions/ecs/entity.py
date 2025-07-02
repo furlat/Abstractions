@@ -999,6 +999,232 @@ def find_modified_entities(
 
 
 
+def update_tree_mappings_after_versioning(tree: EntityTree, id_mapping: Dict[UUID, UUID]) -> None:
+    """
+    Update all tree mappings to use new ECS IDs after versioning.
+    
+    This fixes the tree desynchronization bug where tree mappings still reference
+    old ECS IDs after entities have been updated with new IDs.
+    
+    Args:
+        tree: The EntityTree to update
+        id_mapping: Maps old_ecs_id -> new_ecs_id for all updated entities
+    """
+    
+    # Step 1: Update nodes mapping
+    updated_nodes = {}
+    for old_ecs_id, entity in tree.nodes.items():
+        new_ecs_id = id_mapping.get(old_ecs_id, old_ecs_id)
+        updated_nodes[new_ecs_id] = entity
+    tree.nodes = updated_nodes
+    
+    # Step 2: Update edges mapping and edge object IDs
+    updated_edges = {}
+    for (old_source_id, old_target_id), edge in tree.edges.items():
+        new_source_id = id_mapping.get(old_source_id, old_source_id)
+        new_target_id = id_mapping.get(old_target_id, old_target_id)
+        
+        # Update edge object's IDs
+        edge.source_id = new_source_id
+        edge.target_id = new_target_id
+        
+        updated_edges[(new_source_id, new_target_id)] = edge
+    tree.edges = updated_edges
+    
+    # Step 3: Update outgoing_edges mapping
+    updated_outgoing = defaultdict(list)
+    for old_source_id, target_list in tree.outgoing_edges.items():
+        new_source_id = id_mapping.get(old_source_id, old_source_id)
+        new_target_list = [id_mapping.get(tid, tid) for tid in target_list]
+        updated_outgoing[new_source_id] = new_target_list
+    tree.outgoing_edges = updated_outgoing
+    
+    # Step 4: Update incoming_edges mapping
+    updated_incoming = defaultdict(list)
+    for old_target_id, source_list in tree.incoming_edges.items():
+        new_target_id = id_mapping.get(old_target_id, old_target_id)
+        new_source_list = [id_mapping.get(sid, sid) for sid in source_list]
+        updated_incoming[new_target_id] = new_source_list
+    tree.incoming_edges = updated_incoming
+    
+    # Step 5: Update ancestry_paths mapping
+    updated_ancestry_paths = {}
+    for old_entity_id, path in tree.ancestry_paths.items():
+        new_entity_id = id_mapping.get(old_entity_id, old_entity_id)
+        new_path = [id_mapping.get(pid, pid) for pid in path]
+        updated_ancestry_paths[new_entity_id] = new_path
+    tree.ancestry_paths = updated_ancestry_paths
+    
+    # Step 6: Update live_id_to_ecs_id mapping
+    for live_id, old_ecs_id in tree.live_id_to_ecs_id.items():
+        if old_ecs_id in id_mapping:
+            tree.live_id_to_ecs_id[live_id] = id_mapping[old_ecs_id]
+    
+    # Step 7: Update tree's root_ecs_id if the root was versioned
+    if tree.root_ecs_id in id_mapping:
+        tree.root_ecs_id = id_mapping[tree.root_ecs_id]
+
+
+def rebuild_tree_from_scratch_after_versioning(tree: EntityTree) -> EntityTree:
+    """
+    EXPENSIVE: Completely rebuild the tree from scratch using current entity state.
+    
+    This is the worst-case scenario method that does a full graph traversal
+    and rebuilds all tree mappings from the ground up. Should only be used
+    for testing consistency against the optimized update method.
+    
+    Args:
+        tree: The EntityTree to rebuild
+        
+    Returns:
+        New EntityTree built from scratch with current entity state
+    """
+    # Get the root entity from current tree
+    root_entity = tree.get_entity(tree.root_ecs_id)
+    if root_entity is None:
+        raise ValueError(f"Root entity {tree.root_ecs_id} not found in tree")
+    
+    # Completely rebuild tree from scratch
+    rebuilt_tree = build_entity_tree(root_entity)
+    
+    # Preserve original lineage_id (build_entity_tree might use entity's current lineage)
+    rebuilt_tree.lineage_id = tree.lineage_id
+    
+    return rebuilt_tree
+
+
+def compare_tree_structures(tree1: EntityTree, tree2: EntityTree, comparison_name: str = "") -> bool:
+    """
+    Compare two EntityTree structures to verify they're equivalent.
+    
+    Used to test that the optimized update method produces the same result
+    as the expensive full rebuild method.
+    
+    Args:
+        tree1: First tree to compare
+        tree2: Second tree to compare
+        comparison_name: Optional name for debugging output
+        
+    Returns:
+        True if trees are structurally equivalent, False otherwise
+    """
+    try:
+        # Check basic properties
+        assert tree1.root_ecs_id == tree2.root_ecs_id, f"Root ECS IDs differ: {tree1.root_ecs_id} vs {tree2.root_ecs_id}"
+        assert tree1.lineage_id == tree2.lineage_id, f"Lineage IDs differ: {tree1.lineage_id} vs {tree2.lineage_id}"
+        assert tree1.node_count == tree2.node_count, f"Node counts differ: {tree1.node_count} vs {tree2.node_count}"
+        assert tree1.edge_count == tree2.edge_count, f"Edge counts differ: {tree1.edge_count} vs {tree2.edge_count}"
+        
+        # Check nodes mapping
+        assert set(tree1.nodes.keys()) == set(tree2.nodes.keys()), "Node keys differ"
+        for ecs_id in tree1.nodes:
+            entity1 = tree1.nodes[ecs_id]
+            entity2 = tree2.nodes[ecs_id]
+            assert entity1.ecs_id == entity2.ecs_id, f"Entity ECS IDs differ for {ecs_id}"
+            assert entity1.live_id == entity2.live_id, f"Entity live IDs differ for {ecs_id}"
+        
+        # Check edges mapping
+        assert set(tree1.edges.keys()) == set(tree2.edges.keys()), "Edge keys differ"
+        for edge_key in tree1.edges:
+            edge1 = tree1.edges[edge_key]
+            edge2 = tree2.edges[edge_key]
+            assert edge1.source_id == edge2.source_id, f"Edge source IDs differ for {edge_key}"
+            assert edge1.target_id == edge2.target_id, f"Edge target IDs differ for {edge_key}"
+            assert edge1.field_name == edge2.field_name, f"Edge field names differ for {edge_key}"
+            assert edge1.edge_type == edge2.edge_type, f"Edge types differ for {edge_key}"
+        
+        # Check ancestry paths
+        assert set(tree1.ancestry_paths.keys()) == set(tree2.ancestry_paths.keys()), "Ancestry path keys differ"
+        for ecs_id in tree1.ancestry_paths:
+            path1 = tree1.ancestry_paths[ecs_id]
+            path2 = tree2.ancestry_paths[ecs_id]
+            assert path1 == path2, f"Ancestry paths differ for {ecs_id}: {path1} vs {path2}"
+        
+        # Check outgoing edges
+        assert set(tree1.outgoing_edges.keys()) == set(tree2.outgoing_edges.keys()), "Outgoing edge keys differ"
+        for ecs_id in tree1.outgoing_edges:
+            targets1 = set(tree1.outgoing_edges[ecs_id])
+            targets2 = set(tree2.outgoing_edges[ecs_id])
+            assert targets1 == targets2, f"Outgoing targets differ for {ecs_id}: {targets1} vs {targets2}"
+        
+        # Check incoming edges
+        assert set(tree1.incoming_edges.keys()) == set(tree2.incoming_edges.keys()), "Incoming edge keys differ"
+        for ecs_id in tree1.incoming_edges:
+            sources1 = set(tree1.incoming_edges[ecs_id])
+            sources2 = set(tree2.incoming_edges[ecs_id])
+            assert sources1 == sources2, f"Incoming sources differ for {ecs_id}: {sources1} vs {sources2}"
+        
+        # Check live_id mappings
+        assert tree1.live_id_to_ecs_id == tree2.live_id_to_ecs_id, "Live ID mappings differ"
+        
+        if comparison_name:
+            print(f"  ✅ Tree structures match for {comparison_name}")
+        return True
+        
+    except AssertionError as e:
+        if comparison_name:
+            print(f"  ❌ Tree structures differ for {comparison_name}: {e}")
+        return False
+
+
+def validate_tree_consistency_after_versioning(tree: EntityTree, test_name: str = "") -> bool:
+    """
+    Validate that all tree mappings are consistent after versioning.
+    
+    Args:
+        tree: The EntityTree to validate
+        test_name: Optional name for debugging output
+        
+    Returns:
+        True if tree is consistent, False otherwise
+    """
+    try:
+        # Check 1: All entities have their ecs_id as key in nodes
+        for ecs_id, entity in tree.nodes.items():
+            assert entity.ecs_id == ecs_id, f"Entity ecs_id {entity.ecs_id} != nodes key {ecs_id}"
+        
+        # Check 2: All edge source/target IDs exist in nodes
+        for (source_id, target_id), edge in tree.edges.items():
+            assert source_id in tree.nodes, f"Edge source {source_id} not in nodes"
+            assert target_id in tree.nodes, f"Edge target {target_id} not in nodes"
+            assert edge.source_id == source_id, f"Edge source_id {edge.source_id} != key {source_id}"
+            assert edge.target_id == target_id, f"Edge target_id {edge.target_id} != key {target_id}"
+        
+        # Check 3: All ancestry path IDs exist in nodes
+        for entity_id, path in tree.ancestry_paths.items():
+            assert entity_id in tree.nodes, f"Ancestry entity {entity_id} not in nodes"
+            for path_id in path:
+                assert path_id in tree.nodes, f"Path entity {path_id} not in nodes"
+        
+        # Check 4: Root entity exists in nodes
+        assert tree.root_ecs_id in tree.nodes, f"Root {tree.root_ecs_id} not in nodes"
+        
+        # Check 5: All live_id mappings point to valid ecs_ids
+        for live_id, ecs_id in tree.live_id_to_ecs_id.items():
+            assert ecs_id in tree.nodes, f"Live ID {live_id} points to non-existent ecs_id {ecs_id}"
+        
+        # Check 6: Outgoing/incoming edges consistency
+        for source_id, targets in tree.outgoing_edges.items():
+            assert source_id in tree.nodes, f"Outgoing source {source_id} not in nodes"
+            for target_id in targets:
+                assert target_id in tree.nodes, f"Outgoing target {target_id} not in nodes"
+                assert (source_id, target_id) in tree.edges, f"Outgoing edge ({source_id}, {target_id}) not in edges"
+        
+        for target_id, sources in tree.incoming_edges.items():
+            assert target_id in tree.nodes, f"Incoming target {target_id} not in nodes"
+            for source_id in sources:
+                assert source_id in tree.nodes, f"Incoming source {source_id} not in nodes"
+                assert (source_id, target_id) in tree.edges, f"Incoming edge ({source_id}, {target_id}) not in edges"
+        
+        if test_name:
+            print(f"  ✅ Tree consistency valid for {test_name}")
+        return True
+        
+    except AssertionError as e:
+        if test_name:
+            print(f"  ❌ Tree consistency failed for {test_name}: {e}")
+        return False
+
 
 def generate_mermaid_diagram(tree: EntityTree, include_attributes: bool = False) -> str:
     """
@@ -1222,6 +1448,9 @@ class EntityRegistry():
                 root_entity_live_id = root_entity.live_id
                 assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
                 
+                # Build ID mapping for tracking changes
+                id_mapping = {current_root_ecs_id: new_root_ecs_id}
+                
                 # Update the nodes dictionary to use the new root entity ID
                 new_tree.nodes.pop(current_root_ecs_id)
                 new_tree.nodes[new_root_ecs_id] = root_entity
@@ -1233,14 +1462,18 @@ class EntityRegistry():
                     modified_entity = new_tree.get_entity(modified_entity_id)
                     if modified_entity is not None:
                         #here we could have some modified entitiyes being entities that have been removed from the tree so we get nones
+                        old_ecs_id = modified_entity.ecs_id
                         modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
+                        new_ecs_id = modified_entity.ecs_id
+                        id_mapping[old_ecs_id] = new_ecs_id
                     else:
                         #later here we will handle the case where the entity has been moved to a different tree or prompoted to it's own tree
                         print(f"modified entity {modified_entity_id} not found in new tree, something went wrong")
                 
-                # Update the tree's root_ecs_id and lineage_id to match the updated root entity
-                # This is critical to avoid the "entity tree already registered" error
-                new_tree.root_ecs_id = new_root_ecs_id
+                # Update tree mappings to be consistent with new ECS IDs
+                update_tree_mappings_after_versioning(new_tree, id_mapping)
+                
+                # Update the tree's lineage_id to match the updated root entity
                 new_tree.lineage_id = root_entity.lineage_id
                 
                 cls.register_entity_tree(new_tree)
