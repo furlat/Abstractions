@@ -22,6 +22,7 @@ import inspect
 import functools
 import re
 import time
+import json
 import weakref
 from contextlib import asynccontextmanager
 import logging
@@ -282,9 +283,11 @@ class RelationshipRemovedEvent(Event[T], Generic[T]):
 class SystemEvent(Event[BaseModel]):
     """Base class for system events that don't have a specific subject."""
     def __init__(self, **data):
-        # System events don't have a subject
-        data['subject_type'] = None
-        data['subject_id'] = None
+        # System events don't have a subject, but validation requires both or neither
+        if 'subject_type' not in data:
+            data['subject_type'] = None
+        if 'subject_id' not in data:
+            data['subject_id'] = None
         super().__init__(**data)
 
 
@@ -517,14 +520,15 @@ class EventBus:
             if event.id not in parent.children_ids:
                 parent.children_ids.append(event.id)
             
-            # Update child completion tracking
+            # Update child completion tracking based on phase
             if event.phase == EventPhase.COMPLETED:
-                parent.completed_children += 1
+                parent.completed_children = getattr(parent, 'completed_children', 0) + 1
             elif event.phase == EventPhase.FAILED:
-                parent.failed_children += 1
+                parent.failed_children = getattr(parent, 'failed_children', 0) + 1
             
             # Check if parent should complete
-            if (parent.completed_children + parent.failed_children) >= parent.pending_children:
+            total_children_done = getattr(parent, 'completed_children', 0) + getattr(parent, 'failed_children', 0)
+            if total_children_done >= parent.pending_children:
                 # Notify waiters
                 for future in self._child_futures.get(parent.id, []):
                     if not future.done():
@@ -546,18 +550,27 @@ class EventBus:
         for base_type in event_type.__mro__:
             if base_type in self._type_subscriptions:
                 for sub in self._type_subscriptions[base_type]:
+                    # Check if weak reference is still alive
+                    if sub.is_weak and sub.get_handler() is None:
+                        continue
                     if id(sub) not in seen and sub.matches(event):
                         handlers.append(sub)
                         seen.add(id(sub))
         
         # Pattern-based matching
         for sub in self._pattern_subscriptions:
+            # Check if weak reference is still alive
+            if sub.is_weak and sub.get_handler() is None:
+                continue
             if id(sub) not in seen and sub.matches(event):
                 handlers.append(sub)
                 seen.add(id(sub))
         
         # Predicate-based matching
         for sub in self._predicate_subscriptions:
+            # Check if weak reference is still alive
+            if sub.is_weak and sub.get_handler() is None:
+                continue
             if id(sub) not in seen and sub.matches(event):
                 handlers.append(sub)
                 seen.add(id(sub))
@@ -611,10 +624,12 @@ class EventBus:
         Returns:
             The completed parent event
         """
-        # Set parent to STARTED phase
+        # Set parent to STARTED phase with proper initialization
         parent_event = parent_event.evolve(
             phase=EventPhase.STARTED,
-            pending_children=len(child_generators)
+            pending_children=len(child_generators),
+            completed_children=0,
+            failed_children=0
         )
         
         # Track as pending parent
@@ -632,8 +647,22 @@ class EventBus:
         # Wait for all children
         child_results = await asyncio.gather(*child_tasks, return_exceptions=True)
         
+        # Count successful vs failed children
+        successful_children = 0
+        failed_children = []
+        
+        for result in child_results:
+            if isinstance(result, Exception):
+                failed_children.append(result)
+            else:
+                successful_children += 1
+        
+        # Update parent tracking
+        if parent_event.id in self._pending_parents:
+            self._pending_parents[parent_event.id].completed_children = successful_children
+            self._pending_parents[parent_event.id].failed_children = len(failed_children)
+        
         # Determine final parent phase
-        failed_children = [r for r in child_results if isinstance(r, Exception)]
         if failed_children:
             final_phase = EventPhase.FAILED
             error_msg = f"Failed with {len(failed_children)} child errors"
@@ -641,12 +670,17 @@ class EventBus:
             final_phase = EventPhase.COMPLETED
             error_msg = None
         
+        # Get final counts from tracked parent
+        tracked_parent = self._pending_parents.get(parent_event.id, parent_event)
+        final_completed = getattr(tracked_parent, 'completed_children', successful_children)
+        final_failed = getattr(tracked_parent, 'failed_children', len(failed_children))
+        
         # Emit parent completion
         completion_event = parent_event.evolve(
             phase=final_phase,
             error=error_msg,
-            completed_children=parent_event.completed_children,
-            failed_children=parent_event.failed_children
+            completed_children=final_completed,
+            failed_children=final_failed
         )
         await self.emit(completion_event)
         
@@ -665,15 +699,20 @@ class EventBus:
         """Emit a child event with parent tracking."""
         try:
             child_event = await generator()
-            child_event.parent_id = parent_id
+            
+            # Update child event with parent info
+            if not hasattr(child_event, 'parent_id') or child_event.parent_id is None:
+                child_event = child_event.evolve(parent_id=parent_id)
             
             # Set root_id if not set
             if child_event.root_id is None:
                 if parent_id in self._pending_parents:
                     parent = self._pending_parents[parent_id]
-                    child_event.root_id = parent.root_id or parent.id
+                    child_event = child_event.evolve(
+                        root_id=parent.root_id or parent.id
+                    )
                 else:
-                    child_event.root_id = parent_id
+                    child_event = child_event.evolve(root_id=parent_id)
             
             await self.emit(child_event)
             return child_event
@@ -900,14 +939,13 @@ def emit_events(
         
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
-            # For sync methods, run in asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're already in an async context
-                future = asyncio.ensure_future(async_wrapper(*args, **kwargs))
-                return future
-            else:
-                # Run in new event loop
+            # For sync methods, check if we're in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, create a task
+                return asyncio.create_task(async_wrapper(*args, **kwargs))
+            except RuntimeError:
+                # No event loop, create one
                 return asyncio.run(async_wrapper(*args, **kwargs))
         
         # Return appropriate wrapper
@@ -963,7 +1001,13 @@ def track_state_transition(
         
         @functools.wraps(func)
         def sync_wrapper(self, *args, **kwargs):
-            return asyncio.run(async_wrapper(self, *args, **kwargs))
+            try:
+                loop = asyncio.get_running_loop()
+                # Already in async context, create task
+                return asyncio.create_task(async_wrapper(self, *args, **kwargs))
+            except RuntimeError:
+                # No event loop running
+                return asyncio.run(async_wrapper(self, *args, **kwargs))
         
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
     
@@ -1089,34 +1133,48 @@ class EventSerializer:
     @staticmethod
     def to_json(event: Event) -> str:
         """Convert event to JSON string."""
-        return event.model_dump_json(
-            exclude_none=True,
-            by_alias=True
-        )
+        # First convert to dict with proper handling
+        data = EventSerializer.to_dict(event)
+        return json.dumps(data)
     
     @staticmethod
     def to_dict(event: Event) -> Dict[str, Any]:
         """Convert event to dictionary."""
-        data = event.model_dump(exclude_none=True)
+        # Create a custom dict that handles Type serialization
+        data = {}
         
-        # Convert special types
-        if 'subject_type' in data and data['subject_type']:
-            data['subject_type'] = data['subject_type'].__name__
-        if 'actor_type' in data and data['actor_type']:
-            data['actor_type'] = data['actor_type'].__name__
-        
-        # Convert UUIDs to strings
-        for key in ['id', 'subject_id', 'actor_id', 'parent_id', 'root_id', 'lineage_id']:
-            if key in data and data[key]:
-                data[key] = str(data[key])
-        
-        # Convert context UUIDs
-        if 'context' in data:
-            data['context'] = {k: str(v) for k, v in data['context'].items()}
-        
-        # Convert children IDs
-        if 'children_ids' in data:
-            data['children_ids'] = [str(cid) for cid in data['children_ids']]
+        # Manually handle each field to control serialization
+        for field_name, field_info in event.model_fields.items():
+            value = getattr(event, field_name)
+            
+            if value is None:
+                continue
+                
+            # Special handling for Type fields
+            if field_name in ['subject_type', 'actor_type']:
+                if value is not None:
+                    data[field_name] = value.__name__ if hasattr(value, '__name__') else str(value)
+            # Special handling for relationship event types
+            elif field_name in ['source_type', 'target_type'] and hasattr(event, field_name):
+                if value is not None:
+                    data[field_name] = value.__name__ if hasattr(value, '__name__') else str(value)
+            # UUID fields
+            elif isinstance(value, UUID):
+                data[field_name] = str(value)
+            # UUID lists
+            elif isinstance(value, list) and value and isinstance(value[0], UUID):
+                data[field_name] = [str(v) for v in value]
+            # UUID dicts
+            elif isinstance(value, dict) and any(isinstance(v, UUID) for v in value.values()):
+                data[field_name] = {k: str(v) if isinstance(v, UUID) else v for k, v in value.items()}
+            # Datetime
+            elif isinstance(value, datetime):
+                data[field_name] = value.isoformat()
+            # Enum
+            elif isinstance(value, Enum):
+                data[field_name] = value.value
+            else:
+                data[field_name] = value
         
         return data
     
@@ -1225,13 +1283,13 @@ class EventBusMonitor:
 # Create and start global event bus
 _event_bus = EventBus()
 
-# Start event processor on import
-try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(_event_bus.start())
-except RuntimeError:
-    # No event loop running yet
-    pass
+# Don't automatically start the event bus on import - let tests control it
+# try:
+#     loop = asyncio.get_running_loop()
+#     loop.create_task(_event_bus.start())
+# except RuntimeError:
+#     # No event loop running yet
+#     pass
 
 # Export main components
 __all__ = [
