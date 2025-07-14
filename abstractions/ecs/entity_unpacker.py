@@ -371,35 +371,35 @@ class ContainerReconstructor:
         
         # Step 3: Determine the best unpacking strategy
         if runtime_analysis.pattern.value == "single_entity":
-            return cls._handle_single_entity_enhanced(result, combined_metadata, execution_id)
+            return cls._handle_single_entity_with_metadata(result, combined_metadata, execution_id)
             
         elif runtime_analysis.pattern.value in ["tuple_entities", "list_entities"]:
-            return cls._handle_sequence_unpack_enhanced(result, runtime_analysis, combined_metadata, execution_id)
+            return cls._handle_sequence_unpack_with_metadata(result, runtime_analysis, combined_metadata, execution_id)
             
         elif runtime_analysis.pattern.value == "dict_entities":
-            return cls._handle_dict_unpack_enhanced(result, runtime_analysis, combined_metadata, execution_id)
+            return cls._handle_dict_unpack_with_metadata(result, runtime_analysis, combined_metadata, execution_id)
             
         elif runtime_analysis.pattern.value == "mixed_container":
-            return cls._handle_mixed_unpack_enhanced(result, runtime_analysis, combined_metadata, execution_id)
+            return cls._handle_mixed_unpack_with_metadata(result, runtime_analysis, combined_metadata, execution_id)
             
         elif runtime_analysis.pattern.value == "nested_structure":
-            return cls._handle_nested_unpack_enhanced(result, runtime_analysis, combined_metadata, execution_id)
+            return cls._handle_nested_unpack_with_metadata(result, runtime_analysis, combined_metadata, execution_id)
             
         elif runtime_analysis.pattern.value == "non_entity":
-            return cls._handle_non_entity_enhanced(result, combined_metadata, output_entity_class, execution_id)
+            return cls._handle_non_entity_with_metadata(result, combined_metadata, output_entity_class, execution_id)
             
         else:
             # Fallback: wrap in output entity
             return cls._handle_fallback_wrapping(result, combined_metadata, output_entity_class, execution_id)
     
     @classmethod
-    def _handle_single_entity_enhanced(
+    def _handle_single_entity_with_metadata(
         cls, 
         result: Any, 
         metadata: Dict[str, Any], 
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced single entity handling."""
+        """Handle single entity returns with comprehensive metadata tracking."""
         return UnpackingResult(
             primary_entities=[result],
             container_entity=None,
@@ -411,14 +411,14 @@ class ContainerReconstructor:
         )
     
     @classmethod
-    def _handle_sequence_unpack_enhanced(
+    def _handle_sequence_unpack_with_metadata(
         cls, 
         result: Any, 
         runtime_analysis,
         metadata: Dict[str, Any], 
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced sequence unpacking with detailed metadata."""
+        """Unpack sequence containers with detailed metadata tracking."""
         entities = runtime_analysis.entities
         
         # Add sequence-specific metadata
@@ -438,14 +438,14 @@ class ContainerReconstructor:
         )
     
     @classmethod
-    def _handle_dict_unpack_enhanced(
+    def _handle_dict_unpack_with_metadata(
         cls, 
         result: Any, 
         runtime_analysis,
         metadata: Dict[str, Any], 
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced dictionary unpacking with key preservation."""
+        """Unpack dictionary containers with key preservation and metadata tracking."""
         entities = runtime_analysis.entities
         
         # Extract keys for reconstruction
@@ -466,14 +466,14 @@ class ContainerReconstructor:
         )
     
     @classmethod
-    def _handle_mixed_unpack_enhanced(
+    def _handle_mixed_unpack_with_metadata(
         cls, 
         result: Any, 
         runtime_analysis,
         metadata: Dict[str, Any], 
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced mixed container unpacking."""
+        """Unpack mixed entity/non-entity containers with structure preservation."""
         entities = runtime_analysis.entities
         non_entity_data = runtime_analysis.non_entity_data
         
@@ -497,14 +497,14 @@ class ContainerReconstructor:
         )
     
     @classmethod
-    def _handle_nested_unpack_enhanced(
+    def _handle_nested_unpack_with_metadata(
         cls, 
         result: Any, 
         runtime_analysis,
         metadata: Dict[str, Any], 
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced nested structure unpacking."""
+        """Unpack nested structures with complexity analysis and metadata tracking."""
         entities = runtime_analysis.entities
         
         # Calculate structure complexity
@@ -525,14 +525,14 @@ class ContainerReconstructor:
         )
     
     @classmethod
-    def _handle_non_entity_enhanced(
+    def _handle_non_entity_with_metadata(
         cls, 
         result: Any, 
         metadata: Dict[str, Any], 
         output_entity_class: Optional[type],
         execution_id: UUID
     ) -> UnpackingResult:
-        """Enhanced non-entity handling with optional output entity class."""
+        """Handle non-entity results with optional output entity class wrapping."""
         if output_entity_class:
             # Use the provided output entity class
             try:

@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 import hashlib
 from functools import partial
 
-from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity, create_dynamic_entity_class
+from abstractions.ecs.entity import Entity, EntityRegistry, build_entity_tree, find_modified_entities, FunctionExecution, ConfigEntity, create_dynamic_entity_class, EntityFactory
 from abstractions.ecs.ecs_address_parser import EntityReferenceResolver, InputPatternClassifier, ECSAddressParser
 from abstractions.ecs.functional_api import create_composite_entity, resolve_data_with_tracking, create_composite_entity_with_pattern_detection, borrow_from_address
 from abstractions.ecs.return_type_analyzer import ReturnTypeAnalyzer, QuickPatternDetector
@@ -41,7 +41,7 @@ class FunctionSignatureCache:
     """Separate caches for input and output models to prevent collisions."""
     
     _input_cache: Dict[str, Tuple[Optional[Type[Entity]], str]] = {}   # input_hash → (input_model, pattern)
-    _output_cache: Dict[str, Union[Tuple[Type[Entity], str], Tuple[Type[Entity], str, Dict[str, Any]]]] = {}  # output_hash → (output_model, pattern, analysis)
+    _output_cache: Dict[str, Tuple[Type[Entity], str, Dict[str, Any]]] = {}  # output_hash → (output_model, pattern, analysis)
     
     @classmethod
     def get_or_create_input_model(cls, func: Callable, function_name: str) -> Tuple[Optional[Type[Entity]], str]:
@@ -79,34 +79,17 @@ class FunctionSignatureCache:
     
     @classmethod  
     def get_or_create_output_model(cls, func: Callable, function_name: str) -> Tuple[Type[Entity], str, Dict[str, Any]]:
-        """Cache output signature → output entity model + enhanced return analysis."""
+        """Cache output signature → output entity model + comprehensive return analysis."""
         
         output_hash = cls._hash_output_signature(func)
         
         if output_hash in cls._output_cache:
-            # Update cache to return 3-tuple for backward compatibility
-            cached_result = cls._output_cache[output_hash]
-            if len(cached_result) == 2:
-                # Legacy 2-tuple, enhance it
-                output_model, pattern = cached_result
-                type_hints = get_type_hints(func)
-                return_type = type_hints.get('return', None)
-                if return_type is None:
-                    raise ValueError(
-                        f"Function '{func.__name__}' missing return type annotation. "
-                        f"All registered functions must have proper type hints for return values. "
-                        f"Please add a return type annotation like '-> Entity' or '-> List[Entity]'."
-                    )
-                analysis = QuickPatternDetector.analyze_type_signature(return_type)
-                enhanced_result = (output_model, pattern, analysis)
-                cls._output_cache[output_hash] = enhanced_result
-                return enhanced_result
-            else:
-                return cached_result
+            # Cache hit - return cached 3-tuple result
+            return cls._output_cache[output_hash]
         
         output_model = create_entity_from_function_signature(func, "Output", function_name)
         
-        # ✅ ENHANCED: Use Phase 2 return analysis
+        # Use Phase 2 return analysis
         type_hints = get_type_hints(func)
         return_type = type_hints.get('return', None)
         if return_type is None:
@@ -117,8 +100,8 @@ class FunctionSignatureCache:
             )
         analysis = QuickPatternDetector.analyze_type_signature(return_type)
         
-        # Extract pattern from analysis, fall back to basic classification
-        pattern = analysis.get("pattern", cls._classify_return_pattern(return_type))
+        # Extract pattern from analysis (always present)
+        pattern = analysis["pattern"]
         
         result = (output_model, pattern, analysis)
         cls._output_cache[output_hash] = result
@@ -147,24 +130,13 @@ class FunctionSignatureCache:
         return_type = type_hints.get('return', 'Any')
         return hashlib.md5(str(return_type).encode()).hexdigest()
     
-    @classmethod
-    def _classify_return_pattern(cls, return_type: Type) -> str:
-        """Classify return pattern for output processing."""
-        # Basic classification - can be enhanced with ReturnTypeAnalyzer integration
-        if hasattr(return_type, '__origin__') and return_type.__origin__ is tuple:
-            return "tuple_return"
-        elif hasattr(return_type, '__origin__') and return_type.__origin__ in [list, List]:
-            return "list_return"
-        elif hasattr(return_type, '__origin__') and return_type.__origin__ in [dict, Dict]:
-            return "dict_return"
-        else:
-            return "single_return"
     
     @classmethod
     def clear_cache(cls):
-        """Clear both caches (useful for testing)."""
+        """Clear both caches to ensure consistent format."""
         cls._input_cache.clear()
         cls._output_cache.clear()
+        print("🔄 Cache cleared - enforcing consistent 3-tuple format")
     
     @classmethod
     def get_cache_stats(cls) -> Dict[str, int]:
@@ -206,7 +178,7 @@ def create_entity_from_function_signature(
                     f"All registered functions must have complete type hints."
                 )
             
-            # NEW: Skip ONLY top-level ConfigEntity parameters
+            # Skip ONLY top-level ConfigEntity parameters
             if is_top_level_config_entity(param_type):
                 continue  # Exclude from auto-generated input entity
                 
@@ -234,21 +206,21 @@ def create_entity_from_function_signature(
         else:
             field_definitions['result'] = (return_type, ...)
     
-    # Create Entity subclass using create_model
+    # Create Entity subclass using EntityFactory
     entity_class_name = f"{function_name}{entity_type}Entity"
-    EntityClass = create_model(
+    EntityClass = EntityFactory.create_entity_class(
         entity_class_name,
-        __base__=Entity,
-        __module__=func.__module__,
-        **field_definitions
+        field_definitions,
+        base_class=Entity,
+        module_name=func.__module__,
+        qualname_parent=function_name
     )
-    EntityClass.__qualname__ = f"{function_name}.{entity_class_name}"
     return EntityClass
 
 
 @dataclass
 class FunctionMetadata:
-    """Enhanced metadata with ConfigEntity and Phase 2 return analysis support."""
+    """Function metadata with ConfigEntity and Phase 2 return analysis support."""
     name: str
     signature_str: str
     docstring: Optional[str]
@@ -263,7 +235,7 @@ class FunctionMetadata:
     input_pattern: str   # "config_entity_pattern" | "standard_pattern"
     output_pattern: str  # "single_return" | "tuple_return" | etc.
     
-    # ✅ NEW: Phase 2 return analysis integration
+    # Phase 2 return analysis integration
     return_analysis: Dict[str, Any] = field(default_factory=dict)        # Full Phase 2 analysis metadata
     supports_unpacking: bool = False                                     # Unpacking capability flag
     expected_output_count: int = 1                                       # Expected entity count
@@ -296,7 +268,7 @@ class FunctionMetadata:
                 if is_top_level_config_entity(param_type):
                     self.config_entity_types.append(param_type)
         
-        # ✅ NEW: Initialize Phase 2 return analysis fields
+        # Initialize Phase 2 return analysis fields
         if self.return_analysis:
             self.supports_unpacking = self.return_analysis.get('supports_unpacking', False)
             expected_count = self.return_analysis.get('expected_entity_count', 1)
@@ -316,9 +288,20 @@ class CallableRegistry:
     
     _functions: Dict[str, FunctionMetadata] = {}
     
+    # Clear cache on startup to ensure consistent 3-tuple format
+    @classmethod
+    def _ensure_cache_consistency(cls):
+        """Ensure cache uses consistent 3-tuple format only."""
+        # Clear any mixed format cache entries from previous versions
+        FunctionSignatureCache.clear_cache()
+    
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls._ensure_cache_consistency()
+    
     @classmethod
     def register(cls, name: str) -> Callable:
-        """Enhanced registration with separate signature caching."""
+        """Register functions with comprehensive signature caching and analysis."""
         
         def decorator(func: Callable) -> Callable:
             # Validate function has proper type hints
@@ -326,11 +309,11 @@ class CallableRegistry:
             if 'return' not in type_hints:
                 raise ValueError(f"Function {func.__name__} must have return type hint")
             
-            # ✅ ENHANCED: Use enhanced signature caching with Phase 2 analysis
+            # ✅ Use signature caching with Phase 2 return analysis
             input_entity_class, input_pattern = FunctionSignatureCache.get_or_create_input_model(func, name)
             output_entity_class, output_pattern, return_analysis = FunctionSignatureCache.get_or_create_output_model(func, name)
             
-            # ✅ NEW: Extract unpacking metadata from Phase 2 analysis
+            # Extract unpacking metadata from Phase 2 analysis
             supports_unpacking = return_analysis.get('supports_unpacking', False)
             expected_output_count = return_analysis.get('expected_entity_count', 1)
             
@@ -353,15 +336,15 @@ class CallableRegistry:
                 output_entity_class=output_entity_class,
                 input_pattern=input_pattern,              # Input pattern classification
                 output_pattern=output_pattern,            # Output pattern classification
-                return_analysis=return_analysis,          # ✅ NEW: Full Phase 2 analysis metadata
-                supports_unpacking=supports_unpacking,    # ✅ NEW: Unpacking capability flag
-                expected_output_count=expected_output_count,  # ✅ NEW: Expected entity count
+                return_analysis=return_analysis,          # Full Phase 2 analysis metadata
+                supports_unpacking=supports_unpacking,    # Unpacking capability flag
+                expected_output_count=expected_output_count,  # Expected entity count
                 serializable_signature=cls._create_serializable_signature(func)
             )
             
             cls._functions[name] = metadata
             
-            print(f"✅ Registered '{name}' with enhanced return analysis (input_pattern: {input_pattern}, output_pattern: {output_pattern}, unpacking: {supports_unpacking})")
+            print(f"Registered '{name}' with return analysis (input_pattern: {input_pattern}, output_pattern: {output_pattern}, unpacking: {supports_unpacking})")
             return func
         
         return decorator
@@ -458,7 +441,7 @@ class CallableRegistry:
     
     @classmethod
     async def _execute_async(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
-        """Execute function with enhanced strategy detection."""
+        """Execute function with comprehensive strategy detection and routing."""
         # Step 1: Get function metadata
         metadata = cls.get_metadata(func_name)
         if not metadata:
@@ -613,31 +596,33 @@ class CallableRegistry:
                 await cls._record_execution_failure(None, metadata.name, str(e), None, None)
                 raise
             
-            # Create output entity
-            if isinstance(result, Entity):
-                output_entity = result
-                output_entity.promote_to_root()
+            # Check if Pure ConfigEntity function needs multi-entity processing
+            is_multi_entity = (metadata.supports_unpacking and
+                              (metadata.expected_output_count > 1 or
+                               metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+
+            if is_multi_entity:
+                # Route to multi-entity processing path (same logic as transactional path)
+                execution_id = uuid4()
+                return await cls._finalize_multi_entity_result(
+                    result, metadata, {}, None, execution_id  # Empty object_identity_map for Pure ConfigEntity
+                )
             else:
-                # Determine the correct field name from the output entity class
-                field_names = list(metadata.output_entity_class.model_fields.keys())
-                # Exclude entity system fields
-                data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
-                                                                  'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
-                                                                  'root_ecs_id', 'root_live_id', 'from_storage', 
-                                                                  'untyped_data', 'attribute_source'}]
-                if data_fields:
-                    # Use the first available data field
-                    output_entity = metadata.output_entity_class(**{data_fields[0]: result})
+                # Continue with existing single-entity path
+                if isinstance(result, Entity):
+                    output_entity = result
+                    output_entity.promote_to_root()
                 else:
-                    raise ValueError(f"No data fields available in output entity class {metadata.output_entity_class.__name__}")
-                output_entity.promote_to_root()
-            
-            # Record execution with ConfigEntity tracking
-            await cls._record_function_execution_with_config(
-                None, output_entity, metadata.name, list(config_entities.values())
-            )
-            
-            return output_entity
+                    # Use unified output entity creation method
+                    output_entity = cls._create_output_entity_from_result(result, metadata.output_entity_class, metadata.name)
+                    output_entity.promote_to_root()
+                
+                # Record execution with ConfigEntity tracking
+                await cls._record_function_execution_with_config(
+                    None, output_entity, metadata.name, list(config_entities.values())
+                )
+                
+                return output_entity
     
     @classmethod
     def create_config_entity_from_primitives(
@@ -759,7 +744,7 @@ class CallableRegistry:
             object_identity_map = {}  # Empty since borrowing path doesn't track object identity the same way
             execution_id = uuid4()
             
-            return await cls._finalize_transactional_result_enhanced(
+            return await cls._finalize_multi_entity_result(
                 result, metadata, object_identity_map, input_entity, execution_id
             )
         else:
@@ -772,7 +757,7 @@ class CallableRegistry:
             output_entity.promote_to_root()
             
             # Record function execution relationship
-            await cls._record_function_execution(input_entity, output_entity, metadata.name)
+            await cls._record_basic_execution(input_entity, output_entity, metadata.name)
             
             return output_entity
     
@@ -814,13 +799,13 @@ class CallableRegistry:
                           (metadata.expected_output_count > 1 or 
                            metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
         if is_multi_entity:
-            # Use enhanced result processing for multi-entity returns
-            return await cls._finalize_transactional_result_enhanced(
+            # Use multi-entity result processing for multi-entity returns
+            return await cls._finalize_multi_entity_result(
                 result, metadata, object_identity_map, input_entity, execution_id
             )
         else:
-            # Use traditional result processing for single-entity returns
-            return await cls._finalize_transactional_result(result, metadata, object_identity_map)
+            # Use single-entity result processing for single-entity returns
+            return await cls._finalize_single_entity_result(result, metadata, object_identity_map)
     
     @classmethod
     async def _prepare_transactional_inputs(cls, kwargs: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Entity], List[Entity], Dict[int, Entity]]:
@@ -930,14 +915,14 @@ class CallableRegistry:
         return "creation", None
     
     @classmethod
-    async def _finalize_transactional_result(
-        cls, 
-        result: Any, 
-        metadata: FunctionMetadata, 
+    async def _finalize_single_entity_result(
+        cls,
+        result: Any,
+        metadata: FunctionMetadata,
         object_identity_map: Dict[int, Entity]
     ) -> Entity:
         """
-        Enhanced result finalization with object identity-based semantic detection.
+        Single-entity result finalization with object identity-based semantic detection.
         """
         
         # Type validation (handle functools.partial objects)
@@ -976,30 +961,23 @@ class CallableRegistry:
             
             return result
         
-        # Handle non-entity results - wrap in output entity
-        if isinstance(result, dict):
-            output_entity = metadata.output_entity_class(**result)
-        elif isinstance(result, BaseModel):
-            # Extract fields from BaseModel (like AnalysisResult)
-            output_entity = metadata.output_entity_class(**result.model_dump())
-        else:
-            # For primitive results, wrap in a "result" field
-            output_entity = metadata.output_entity_class(**{"result": result})
+        # Handle non-entity results - use unified entity creation method
+        output_entity = cls._create_output_entity_from_result(result, metadata.output_entity_class, metadata.name)
         
         output_entity.promote_to_root()
         return output_entity
     
     @classmethod
-    async def _finalize_transactional_result_enhanced(
-        cls, 
-        result: Any, 
-        metadata: FunctionMetadata, 
+    async def _finalize_multi_entity_result(
+        cls,
+        result: Any,
+        metadata: FunctionMetadata,
         object_identity_map: Dict[int, Entity],
         input_entity: Optional[Entity] = None,
         execution_id: Optional[UUID] = None
     ) -> Union[Entity, List[Entity]]:
         """
-        Enhanced result processing with Phase 2 unpacking integration.
+        Multi-entity result processing with Phase 2 unpacking integration.
         
         This method integrates the EntityUnpacker to handle multi-entity returns
         while maintaining all existing semantic detection capabilities.
@@ -1050,8 +1028,8 @@ class CallableRegistry:
         if len(final_entities) > 1:
             await cls._setup_sibling_relationships(final_entities, execution_id)
         
-        # Step 5: Record enhanced execution metadata
-        await cls._record_enhanced_function_execution(
+        # Step 5: Record multi-entity execution metadata
+        await cls._record_multi_entity_execution(
             input_entity, final_entities, metadata.name, execution_id,
             unpacking_result, semantic_results
         )
@@ -1131,18 +1109,18 @@ class CallableRegistry:
             EntityRegistry.version_entity(entity)
     
     @classmethod
-    async def _record_enhanced_function_execution(
-        cls, 
-        input_entity: Optional[Entity], 
-        output_entities: List[Entity], 
-        function_name: str, 
+    async def _record_multi_entity_execution(
+        cls,
+        input_entity: Optional[Entity],
+        output_entities: List[Entity],
+        function_name: str,
         execution_id: UUID,
-        unpacking_result: Any, 
+        unpacking_result: Any,
         semantic_results: List[str],
-        config_entities: Optional[List[Any]] = None, 
+        config_entities: Optional[List[Any]] = None,
         execution_duration: float = 0.0
     ) -> FunctionExecution:
-        """Record enhanced function execution with complete Phase 2 metadata."""
+        """Record multi-entity function execution with complete Phase 2 metadata."""
         
         execution_record = FunctionExecution(
             ecs_id=execution_id,
@@ -1185,6 +1163,44 @@ class CallableRegistry:
         return [all_ids]  # Single group containing all entities
     
     @classmethod
+    def _create_output_entity_from_result(
+        cls,
+        result: Any,
+        output_entity_class: Type[Entity],
+        function_name: str = "unknown"
+    ) -> Entity:
+        """
+        Create output entity from function result using consistent field detection logic.
+        
+        This method consolidates the proven field detection pattern to ensure
+        consistent behavior across all execution paths.
+        """
+        
+        # Handle different result types
+        if isinstance(result, dict):
+            output_entity = output_entity_class(**result)
+        elif isinstance(result, BaseModel):
+            # Extract fields from BaseModel (like AnalysisResult, UserStats, etc.)
+            output_entity = output_entity_class(**result.model_dump())
+        else:
+            # Single return value - determine the correct field name from the output entity class
+            field_names = list(output_entity_class.model_fields.keys())
+            # Exclude entity system fields and Phase 4 fields
+            data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at',
+                                                                'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                                                'root_ecs_id', 'root_live_id', 'from_storage',
+                                                                'untyped_data', 'attribute_source',
+                                                                'derived_from_function', 'derived_from_execution_id',
+                                                                'sibling_output_entities', 'output_index'}]
+            if data_fields:
+                # Use the first available data field
+                output_entity = output_entity_class(**{data_fields[0]: result})
+            else:
+                raise ValueError(f"No data fields available in output entity class {output_entity_class.__name__}")
+        
+        return output_entity
+    
+    @classmethod
     async def _create_output_entity_with_provenance(
         cls,
         result: Any,
@@ -1198,26 +1214,8 @@ class CallableRegistry:
         Leverages attribute_source system for full audit trails.
         """
         
-        # Handle different result types
-        if isinstance(result, dict):
-            output_entity = output_entity_class(**result)
-        elif isinstance(result, BaseModel):
-            output_entity = output_entity_class(**result.model_dump())
-        else:
-            # Single return value - determine the correct field name from the output entity class
-            field_names = list(output_entity_class.model_fields.keys())
-            # Exclude entity system fields and Phase 4 fields
-            data_fields = [f for f in field_names if f not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
-                                                                'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
-                                                                'root_ecs_id', 'root_live_id', 'from_storage', 
-                                                                'untyped_data', 'attribute_source',
-                                                                'derived_from_function', 'derived_from_execution_id',
-                                                                'sibling_output_entities', 'output_index'}]
-            if data_fields:
-                # Use the first available data field
-                output_entity = output_entity_class(**{data_fields[0]: result})
-            else:
-                raise ValueError(f"No data fields available in output entity class {output_entity_class.__name__}")
+        # Use the consolidated method for consistent field detection
+        output_entity = cls._create_output_entity_from_result(result, output_entity_class, function_name)
         
         # Set Phase 4 provenance fields after entity creation
         if hasattr(output_entity, 'derived_from_function'):
@@ -1249,13 +1247,13 @@ class CallableRegistry:
         return output_entity
     
     @classmethod
-    async def _record_function_execution(
+    async def _record_basic_execution(
         cls,
         input_entity: Entity,
-        output_entity: Entity, 
+        output_entity: Entity,
         function_name: str
     ) -> None:
-        """Record function execution with enhanced tracking."""
+        """Record basic function execution with standard tracking."""
         # Create FunctionExecution entity for audit trail
         execution_record = FunctionExecution(
             function_name=function_name,
@@ -1328,8 +1326,8 @@ class CallableRegistry:
             output_entity = result
             output_entity.promote_to_root()
         else:
-            # Wrap non-entity result
-            output_entity = metadata.output_entity_class(**{"result": result})
+            # Handle non-entity result using consistent field detection
+            output_entity = cls._create_output_entity_from_result(result, metadata.output_entity_class, metadata.name)
             output_entity.promote_to_root()
         
         # Record execution
@@ -1357,8 +1355,8 @@ class CallableRegistry:
             output_entity = result
             output_entity.promote_to_root()
         else:
-            # Wrap non-entity result
-            output_entity = metadata.output_entity_class(**{"result": result})
+            # Handle non-entity result using consistent field detection
+            output_entity = cls._create_output_entity_from_result(result, metadata.output_entity_class, metadata.name)
             output_entity.promote_to_root()
         
         # Record execution (no input entity, no config entity)

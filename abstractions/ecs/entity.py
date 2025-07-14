@@ -1412,12 +1412,17 @@ class EntityRegistry():
     def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
         """ Core function to version an entity, currently working only for root entities, what this function does is:
         1) check if function is registered , if not delegate to reigister()
-        2) get the stored tree snapshot for the entity 
-        3) compute the new tree 
+        2) get the stored tree snapshot for the entity
+        3) compute the new tree
         4) compute the diff between the two trees if no diff return False
-        5) update the ecs_id for all changed entities in the tree, update their root_ecs_id, 
+        5) update the ecs_id for all changed entities in the tree, update their root_ecs_id,
         6) register the new tree in the tree_registry under the new root_ecs_id key mantaining the lineage intact"""
         """ Version an entity """
+        
+        # Handle None entity gracefully
+        if entity is None:
+            return False  # No versioning needed for None entity
+            
         if not entity.root_ecs_id:
             raise ValueError("entity has no root_ecs_id for versioning we only support versioning of root entities for now")
         
@@ -1499,7 +1504,7 @@ class Entity(BaseModel):
         description="Tracks the source entity for each attribute"
     )
     
-    # ✅ NEW: Phase 4 sibling relationship tracking fields
+    # Phase 4 sibling relationship tracking fields
     derived_from_function: Optional[str] = Field(default=None, description="Function that created or modified this entity")
     derived_from_execution_id: Optional[UUID] = Field(default=None, description="Execution ID that created or modified this entity")
     sibling_output_entities: List[UUID] = Field(default_factory=list, description="Other entities created by the same function execution")
@@ -1976,7 +1981,7 @@ class FunctionExecution(Entity):
     performance_metrics: Dict[str, Any] = Field(default_factory=dict)  # Execution time, memory usage, etc.
     input_pattern_classification: Dict[str, Any] = Field(default_factory=dict)  # From Phase 1
     
-    # ✅ NEW: Phase 4 integration fields
+    # Phase 4 integration fields
     execution_duration: Optional[float] = Field(default=None, description="Function execution time in seconds")
     semantic_classifications: List[str] = Field(default_factory=list, description="Semantic results per output entity")
     execution_pattern: str = Field(default="standard", description="Execution strategy used")
@@ -2010,6 +2015,107 @@ class FunctionExecution(Entity):
         if semantic not in self.semantic_classifications:
             self.semantic_classifications.append(semantic)
     
+
+# EntityFactory for class creation consolidation
+class EntityFactory:
+    """
+    Simple factory for consistent entity class creation across the system.
+    
+    Consolidates duplicate create_model() patterns while keeping it focused
+    on CLASS creation only (no instance-level concerns like execution tracking).
+    """
+    
+    @staticmethod
+    def create_entity_class(
+        class_name: str,
+        field_definitions: Dict[str, Any],
+        base_class: Optional[Type['Entity']] = None,
+        module_name: Optional[str] = None,
+        qualname_parent: Optional[str] = None
+    ) -> Type[Entity]:
+        """
+        Create dynamic entity class with consistent behavior.
+        
+        Args:
+            class_name: Name for the dynamic class
+            field_definitions: Dict mapping field names to (type, default) tuples or values
+            base_class: Base Entity class (defaults to Entity)
+            module_name: Module name for the created class (auto-detected if None)
+            qualname_parent: For nested qualname construction (e.g., "function_name")
+            
+        Returns:
+            Dynamic Entity subclass with proper metadata
+        """
+        # Set default base class (Entity is now available)
+        if base_class is None:
+            base_class = Entity
+        
+        # Auto-detect module if not provided
+        if module_name is None:
+            module_name = EntityFactory._detect_caller_module()
+        
+        # Process field definitions for Pydantic compatibility
+        processed_fields = EntityFactory._process_field_definitions(field_definitions)
+        
+        # Create the dynamic class
+        DynamicClass = create_model(
+            class_name,
+            __base__=base_class,
+            __module__=module_name,
+            **processed_fields
+        )
+        
+        # Set proper qualname for debugging
+        if qualname_parent:
+            DynamicClass.__qualname__ = f"{qualname_parent}.{class_name}"
+        else:
+            DynamicClass.__qualname__ = class_name
+        
+        return DynamicClass
+    
+    @staticmethod
+    def _detect_caller_module() -> str:
+        """Auto-detect the calling module from the call stack."""
+        import inspect
+        
+        frame = inspect.currentframe()
+        try:
+            # Skip EntityFactory methods to find the actual caller
+            while frame and (
+                frame.f_code.co_filename.endswith('entity.py') or
+                frame.f_code.co_name.startswith('_') or
+                frame.f_code.co_name in ('create_entity_class', 'create_dynamic_entity_class')
+            ):
+                frame = frame.f_back
+            
+            if frame:
+                module = inspect.getmodule(frame)
+                if module:
+                    return module.__name__
+        finally:
+            del frame
+        
+        return "__main__"
+    
+    @staticmethod  
+    def _process_field_definitions(field_defs: Dict[str, Any]) -> Dict[str, Any]:
+        """Process field definitions into Pydantic-compatible format."""
+        processed = {}
+        
+        for field_name, field_spec in field_defs.items():
+            # Handle different field specification formats
+            if isinstance(field_spec, tuple) and len(field_spec) == 2:
+                # (type, default) tuple format
+                field_type, default_value = field_spec
+                processed[field_name] = (field_type, default_value)
+            else:
+                # Direct value - infer type
+                field_type = type(field_spec) if field_spec is not None else Any
+                processed[field_name] = (field_type, field_spec)
+                
+        return processed
+
+
 
 
 class ConfigEntity(Entity):
@@ -2076,17 +2182,18 @@ class ConfigEntity(Entity):
             )
         """
         
-        ConfigEntityClass = create_model(
+        # Use EntityFactory for consistent class creation
+        from typing import cast
+        ConfigEntityClass = EntityFactory.create_entity_class(
             class_name,
-            __base__=cls,  # Inherit from ConfigEntity
-            __module__=module_name,
-            **field_definitions
+            field_definitions,
+            base_class=cls,  # Inherit from ConfigEntity
+            module_name=module_name,
+            qualname_parent=None  # ConfigEntity classes don't need parent qualification
         )
         
-        # Set proper qualname for debugging
-        ConfigEntityClass.__qualname__ = class_name
-        
-        return ConfigEntityClass
+        # Cast to correct type (runtime type is correct, just helping type checker)
+        return cast(Type['ConfigEntity'], ConfigEntityClass)
 
 
 def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, Any]) -> Type[Entity]:
@@ -2101,25 +2208,18 @@ def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, An
         Dynamic Entity subclass
     """
     
-    # Process field definitions
-    pydantic_fields = {}
-    for field_name, field_spec in field_definitions.items():
-        if isinstance(field_spec, tuple) and len(field_spec) == 2:
-            field_type, default_value = field_spec
-            pydantic_fields[field_name] = (field_type, default_value)
-        else:
-            # Infer type from value
-            field_type = type(field_spec)
-            pydantic_fields[field_name] = (field_type, field_spec)
-    
-    # Create the dynamic class
-    DynamicClass = create_model(
+    # Use EntityFactory for consistent class creation
+    return EntityFactory.create_entity_class(
         class_name,
-        __base__=Entity,
-        **pydantic_fields
+        field_definitions,
+        base_class=Entity,
+        module_name=None,  # Auto-detect
+        qualname_parent=None
     )
-    
-    return DynamicClass
+
+
+
+
 
 
 

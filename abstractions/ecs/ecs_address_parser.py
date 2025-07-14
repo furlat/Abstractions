@@ -273,7 +273,7 @@ class ECSAddressParser:
 
 
 class EntityReferenceResolver:
-    """Enhanced resolver that handles entity reference resolution with tracking."""
+    """Resolver that handles entity reference resolution with comprehensive tracking."""
     
     def __init__(self):
         self.resolved_entities: set[UUID] = set()
