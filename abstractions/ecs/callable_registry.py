@@ -514,12 +514,12 @@ class CallableRegistry:
         # Strategy determination based on correct recasting rules
         if len(entity_params) == 1 and not primitive_params and not function_expects_config_entity and not config_params:
             return "single_entity_direct"       # Pure single entity, no recasting needed
+        elif len(entity_params) >= 2:
+            return "multi_entity_composite"     # 2+ entities (+ anything) → 1 unified entity (highest priority)
         elif function_expects_config_entity or config_params:
-            return "single_entity_with_config"  # Config entity handling (highest priority)
+            return "single_entity_with_config"  # Config entity handling (after multi-entity check)
         elif len(entity_params) == 1 and primitive_params:
             return "single_entity_with_config"  # 1 entity + primitives → 1 entity + config (primitives become config)
-        elif len(entity_params) >= 2:
-            return "multi_entity_composite"     # 2+ entities (+ anything) → 1 unified entity
         elif len(entity_params) == 0 and not primitive_params:
             return "no_inputs"                  # No inputs → execute function directly
         else:
