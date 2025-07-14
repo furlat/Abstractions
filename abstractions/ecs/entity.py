@@ -15,6 +15,9 @@ from collections import deque
 import inspect
 from pydantic import create_model
 
+# Event system imports for automatic event emission
+from abstractions.events.events import emit_events, StateTransitionEvent, ModifyingEvent, ModifiedEvent
+
 # Edge type enum
 class EdgeType(str, Enum):
     """Type of edge between entities"""
@@ -1409,6 +1412,18 @@ class EntityRegistry():
             return cls.get_live_root_from_entity(entity)
         
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, entity, force_versioning=False: ModifyingEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            fields=["ecs_id", "version"]
+        ),
+        created_factory=lambda result, cls, entity, force_versioning=False: ModifiedEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            fields=["ecs_id", "version"]
+        )
+    )
     def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
         """ Core function to version an entity, currently working only for root entities, what this function does is:
         1) check if function is registered , if not delegate to reigister()
@@ -1699,6 +1714,15 @@ class Entity(BaseModel):
             return None
   
 
+    @emit_events(
+        creating_factory=lambda self: StateTransitionEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="child_entity",
+            to_state="root_entity",
+            transition_reason="promotion"
+        )
+    )
     def promote_to_root(self) -> None:
         """
         Promote the entity to the root of its tree
@@ -1708,6 +1732,15 @@ class Entity(BaseModel):
         self.update_ecs_ids()
         EntityRegistry.register_entity(self)
     
+    @emit_events(
+        creating_factory=lambda self: StateTransitionEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="attached_entity",
+            to_state="detached_entity",
+            transition_reason="detachment"
+        )
+    )
     def detach(self) -> None:
         """
         This has to be called after the entity has been removed from its parent python object
@@ -1813,6 +1846,16 @@ class Entity(BaseModel):
 
 
 
+    @emit_events(
+        creating_factory=lambda self, new_root_entity: StateTransitionEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="root_entity",
+            to_state="attached_entity",
+            transition_reason="attachment",
+            metadata={"new_root_id": str(new_root_entity.ecs_id)}
+        )
+    )
     def attach(self, new_root_entity: "Entity") -> None:
         """
         This has to be attached when a previously root entity is added as subentity to a new root parent entity

@@ -29,6 +29,9 @@ from abstractions.ecs.return_type_analyzer import ReturnTypeAnalyzer, QuickPatte
 from abstractions.ecs.entity_unpacker import EntityUnpacker, ContainerReconstructor
 import concurrent.futures
 
+# Event system imports for automatic event emission
+from abstractions.events.events import emit_events, ProcessingEvent, ProcessedEvent
+
 
 def is_top_level_config_entity(param_type: Optional[Type]) -> bool:
     """Detect ConfigEntity only at function signature top-level."""
@@ -355,6 +358,26 @@ class CallableRegistry:
         return asyncio.run(cls.aexecute(func_name, **kwargs))
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, func_name, **kwargs: ProcessingEvent(
+            subject_type=None,
+            subject_id=None,
+            process_name="function_execution",
+            metadata={
+                "function_name": func_name,
+                "input_count": len(kwargs)
+            }
+        ),
+        created_factory=lambda result, cls, func_name, **kwargs: ProcessedEvent(
+            subject_type=type(result[0]) if isinstance(result, list) else type(result),
+            subject_id=result[0].ecs_id if isinstance(result, list) else result.ecs_id,
+            process_name="function_execution",
+            result_summary={
+                "function_name": func_name,
+                "output_count": len(result) if isinstance(result, list) else 1
+            }
+        )
+    )
     async def aexecute(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
         """Execute function using entity-native patterns (async)."""
         return await cls._execute_async(func_name, **kwargs)

@@ -916,73 +916,106 @@ def emit_events(
             return result
     """
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            bus = get_event_bus()
-            start_time = time.time()
-            
-            # Create starting event
-            if creating_factory:
-                start_event = creating_factory(*args, **kwargs)
-                if include_args:
-                    start_event.metadata['args'] = str(args)
-                    start_event.metadata['kwargs'] = str(kwargs)
-                await bus.emit(start_event)
-                lineage_id = start_event.lineage_id
-            else:
-                lineage_id = uuid4()
-            
-            try:
-                # Execute method
-                result = await func(*args, **kwargs)
+        # Detect if function is async or sync
+        is_async = inspect.iscoroutinefunction(func)
+        
+        if is_async:
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                bus = get_event_bus()
+                start_time = time.time()
                 
-                # Create completion event
-                if created_factory:
-                    end_event = created_factory(result, *args, **kwargs)
-                    end_event.lineage_id = lineage_id
-                    if include_timing:
-                        end_event.duration_ms = (time.time() - start_time) * 1000
-                    await bus.emit(end_event)
-                
-                return result
-                
-            except Exception as e:
-                # Create failure event
-                if failed_factory:
-                    error_event = failed_factory(e, *args, **kwargs)
-                    error_event.lineage_id = lineage_id
-                    if include_timing:
-                        error_event.duration_ms = (time.time() - start_time) * 1000
-                    await bus.emit(error_event)
+                # Create starting event
+                if creating_factory:
+                    start_event = creating_factory(*args, **kwargs)
+                    if include_args:
+                        start_event.metadata['args'] = str(args)
+                        start_event.metadata['kwargs'] = str(kwargs)
+                    await bus.emit(start_event)
+                    lineage_id = start_event.lineage_id
                 else:
-                    # Default failure event
-                    error_event = Event(
-                        type=f"{func.__name__}.failed",
-                        phase=EventPhase.FAILED,
-                        lineage_id=lineage_id,
-                        error=str(e),
-                        metadata={'function': func.__name__}
-                    )
-                    if include_timing:
-                        error_event.duration_ms = (time.time() - start_time) * 1000
-                    await bus.emit(error_event)
-                raise
-        
-        @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            # For sync methods, check if we're in an event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, create a task
-                return asyncio.create_task(async_wrapper(*args, **kwargs))
-            except RuntimeError:
-                # No event loop, create one
-                return asyncio.run(async_wrapper(*args, **kwargs))
-        
-        # Return appropriate wrapper
-        if asyncio.iscoroutinefunction(func):
+                    lineage_id = uuid4()
+                
+                try:
+                    # Execute async method
+                    result = await func(*args, **kwargs)
+                    
+                    # Create completion event
+                    if created_factory:
+                        end_event = created_factory(result, *args, **kwargs)
+                        end_event.lineage_id = lineage_id
+                        if include_timing:
+                            end_event.duration_ms = (time.time() - start_time) * 1000
+                        await bus.emit(end_event)
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Create failure event
+                    if failed_factory:
+                        error_event = failed_factory(e, *args, **kwargs)
+                        error_event.lineage_id = lineage_id
+                        if include_timing:
+                            error_event.duration_ms = (time.time() - start_time) * 1000
+                        await bus.emit(error_event)
+                    raise
+            
             return async_wrapper
+        
         else:
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                bus = get_event_bus()
+                start_time = time.time()
+                
+                # Create starting event
+                if creating_factory:
+                    start_event = creating_factory(*args, **kwargs)
+                    if include_args:
+                        start_event.metadata['args'] = str(args)
+                        start_event.metadata['kwargs'] = str(kwargs)
+                    # Use asyncio.create_task for async event emission in sync context
+                    try:
+                        asyncio.create_task(bus.emit(start_event))
+                    except RuntimeError:
+                        # No event loop running, skip event
+                        pass
+                    lineage_id = start_event.lineage_id
+                else:
+                    lineage_id = uuid4()
+                
+                try:
+                    # Execute sync method
+                    result = func(*args, **kwargs)
+                    
+                    # Create completion event
+                    if created_factory:
+                        end_event = created_factory(result, *args, **kwargs)
+                        end_event.lineage_id = lineage_id
+                        if include_timing:
+                            end_event.duration_ms = (time.time() - start_time) * 1000
+                        # Use asyncio.create_task for async event emission in sync context
+                        try:
+                            asyncio.create_task(bus.emit(end_event))
+                        except RuntimeError:
+                            # No event loop running, skip event
+                            pass
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Create failure event
+                    if failed_factory:
+                        error_event = failed_factory(e, *args, **kwargs)
+                        error_event.lineage_id = lineage_id
+                        if include_timing:
+                            error_event.duration_ms = (time.time() - start_time) * 1000
+                        try:
+                            asyncio.create_task(bus.emit(error_event))
+                        except RuntimeError:
+                            pass
+                    raise
+            
             return sync_wrapper
     
     return decorator

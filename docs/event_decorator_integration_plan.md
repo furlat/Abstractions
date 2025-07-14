@@ -1,76 +1,52 @@
-# Event Decorator Integration Plan
+# Event Decorator Integration Plan (ACTUALLY CORRECTED)
 
 ## Overview
-Integrate event decorators directly into CallableRegistry and Entity classes to automatically emit events for all operations, eliminating the need for manual event emission via bridge functions.
+After reviewing the shame file, the correct approach is:
+1. **CallableRegistry operations**: DON'T use decorators - use bridge functions for operations that need events
+2. **Entity lifecycle methods**: Use decorators on actual entity state transitions
+3. **Function execution**: Only emit events about actual entities being processed, not synthetic tracking entities
 
 ## Current State
-- ✅ Event decorators available in `abstractions/events/events.py`:
-  - `@on` - Event subscription
-  - `@emit_events` - Method event emission
-  - `@track_state_transition` - State change tracking
-  - `@create_event_chain` - Event chain creation
+- ✅ Event decorators available in `abstractions/events/events.py`
 - ✅ Bridge functions working in `abstractions/events/bridge.py`
 - ✅ CallableRegistry entity-native pattern working perfectly
 - ✅ Entity lifecycle methods (promote_to_root, detach, attach) working
 
-## Phase 1: CallableRegistry Event Integration
+## CORRECTED Phase 1: CallableRegistry Event Integration
 
 ### 1.1 Function Registration Events
-**File**: `abstractions/ecs/callable_registry.py`
-**Method**: `register()` decorator (lines 303-350)
+**CORRECT APPROACH**: Function registration is a **registry operation**, NOT an entity operation.
 
-**Changes**:
+**DON'T ADD DECORATORS** - Instead, use bridge functions when applications need to track function registrations:
+
 ```python
-@classmethod
-def register(cls, name: str) -> Callable:
-    """Register functions with automatic event emission."""
-    
-    def decorator(func: Callable) -> Callable:
-        # Existing registration logic...
-        
-        # ADD: Emit function registration event
-        from abstractions.events.bridge import emit_creation_events
-        
-        # Create function metadata entity for event
-        func_entity = Entity()
-        func_entity.function_name = name
-        func_entity.function_signature = str(signature(func))
-        func_entity.promote_to_root()
-        
-        # Emit registration event asynchronously
-        async def emit_registration():
-            await emit_creation_events(func_entity, f"function_registered_{name}")
-        
-        # Schedule emission (don't block registration)
-        asyncio.create_task(emit_registration())
-        
-        return func
+# Application code that needs to track registrations:
+@CallableRegistry.register("my_function")
+def my_function(...):
+    pass
+
+# Then if needed, emit events about the registration:
+await emit_processing_events(
+    operation_name="function_registered",
+    metadata={"function_name": "my_function"}
+)
 ```
 
-### 1.2 Function Execution Events
-**File**: `abstractions/ecs/callable_registry.py`
-**Method**: `aexecute()` (lines 358-361)
+### 1.2 Function Execution Events  
+**CORRECT APPROACH**: Only emit events about the **actual input/output entities**, not synthetic tracking entities.
 
-**Changes**:
+**DON'T ADD DECORATORS** - Instead, applications can use bridge functions with actual entities:
+
 ```python
-@classmethod
-@emit_events(
-    creating_factory=lambda cls, func_name, **kwargs: ProcessingEvent(
-        subject_type=Entity,
-        subject_id=uuid4(),
-        process_name=f"execute_{func_name}",
-        metadata={"function_name": func_name, "input_count": len(kwargs)}
-    ),
-    created_factory=lambda result, cls, func_name, **kwargs: ProcessedEvent(
-        subject_type=type(result[0]) if isinstance(result, list) else type(result),
-        subject_id=result[0].ecs_id if isinstance(result, list) else result.ecs_id,
-        process_name=f"execute_{func_name}",
-        result_summary={"output_count": len(result) if isinstance(result, list) else 1}
-    )
+# In application code:
+result = await CallableRegistry.aexecute("my_function", input_entity=my_entity)
+
+# Then emit events about the actual entities processed:
+await emit_processing_events(
+    my_entity,  # Real input entity
+    operation_name="function_executed",
+    metadata={"function_name": "my_function"}
 )
-async def aexecute(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
-    """Execute function with automatic event emission."""
-    return await cls._execute_async(func_name, **kwargs)
 ```
 
 ## Phase 2: Entity Lifecycle Event Integration
@@ -172,7 +148,7 @@ def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> boo
 ```python
 # ADD these imports:
 from abstractions.events.events import emit_events, ProcessingEvent, ProcessedEvent
-from abstractions.events.bridge import emit_creation_events
+# NOTE: No bridge imports needed - we're using decorators directly
 ```
 
 **File**: `abstractions/ecs/entity.py` (top of file)
@@ -212,12 +188,22 @@ from abstractions.events.events import emit_events, StateTransitionEvent, Modify
 - Event emission is async and non-blocking
 - Bridge functions remain available for custom events
 - All changes are in method signatures, not core logic
+- **NO SYNTHETIC ENTITIES**: Events observe existing operations, don't create fake entities
 
 ## Implementation Order
-1. CallableRegistry.register() - function registration events
-2. CallableRegistry.aexecute() - function execution events  
-3. Entity.promote_to_root() - entity promotion events
-4. Entity.detach() - entity detachment events
-5. Entity.attach() - entity attachment events
-6. EntityRegistry.version_entity() - entity versioning events
+1. ~~CallableRegistry.register() - DON'T ADD DECORATORS~~ (Use bridge functions in applications)
+2. ~~CallableRegistry.aexecute() - DON'T ADD DECORATORS~~ (Use bridge functions in applications)
+3. Entity.promote_to_root() - entity promotion events (CORRECT - add decorators)
+4. Entity.detach() - entity detachment events (CORRECT - add decorators)
+5. Entity.attach() - entity attachment events (CORRECT - add decorators)
+6. EntityRegistry.version_entity() - entity versioning events (CORRECT - add decorators)
 7. Testing and validation
+
+## Key Corrections Made
+- **Function Registration**: DON'T use decorators - registry operations aren't entity operations
+- **Function Execution**: DON'T use decorators - let applications emit events about actual entities
+- **Entity Operations**: ADD decorators for actual entity lifecycle events
+- **No Synthetic Entities**: Never create entities just to satisfy event system requirements
+
+## The Shame File Lesson
+The shame file shows that **only actual entity operations** should have automatic event emission via decorators. Registry operations should use bridge functions when applications need events, not automatic decoration.
