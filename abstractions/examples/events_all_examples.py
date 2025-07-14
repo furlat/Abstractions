@@ -14,9 +14,9 @@ import json
 import weakref
 
 # Import the events module itself for bus override in tests
-import abstractions.ecs.events as events
+import abstractions.events.events as events
 # Import all event system components
-from abstractions.ecs.events import (
+from abstractions.events.events import (
     # Core
     Event, EventPhase, EventPriority, EventBus, get_event_bus,
     # Event types

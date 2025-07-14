@@ -43,6 +43,16 @@ def get_event_bus() -> 'EventBus':
     global _event_bus
     if _event_bus is None:
         _event_bus = EventBus()
+    
+    # Auto-start if not running and we're in an async context
+    try:
+        loop = asyncio.get_running_loop()
+        if not _event_bus._processor_task:
+            loop.create_task(_event_bus.start())
+    except RuntimeError:
+        # No event loop running - will be started when called from async context
+        pass
+    
     return _event_bus
 
 
@@ -383,6 +393,7 @@ class EventBus:
         # Performance tracking
         self._event_counts: Dict[str, int] = defaultdict(int)
         self._handler_timings: Dict[str, List[float]] = defaultdict(list)
+        self._max_handler_timings: int = 1000  # Limit handler timing history
         
         # Bus state
         self._is_processing = False
@@ -484,15 +495,25 @@ class EventBus:
         # Remove from type subscriptions
         for event_type in subscription.event_types:
             if event_type in self._type_subscriptions:
-                self._type_subscriptions[event_type].remove(subscription)
+                try:
+                    self._type_subscriptions[event_type].remove(subscription)
+                    # Clean up empty lists
+                    if not self._type_subscriptions[event_type]:
+                        del self._type_subscriptions[event_type]
+                except ValueError:
+                    pass  # Subscription not in list
         
         # Remove from pattern subscriptions
-        if subscription in self._pattern_subscriptions:
+        try:
             self._pattern_subscriptions.remove(subscription)
+        except ValueError:
+            pass  # Subscription not in list
         
         # Remove from predicate subscriptions
-        if subscription in self._predicate_subscriptions:
+        try:
             self._predicate_subscriptions.remove(subscription)
+        except ValueError:
+            pass  # Subscription not in list
     
     async def emit(self, event: Event) -> Event:
         """
@@ -549,9 +570,11 @@ class EventBus:
         event_type = type(event)
         for base_type in event_type.__mro__:
             if base_type in self._type_subscriptions:
-                for sub in self._type_subscriptions[base_type]:
+                for sub in self._type_subscriptions[base_type][:]:  # Copy to avoid modification during iteration
                     # Check if weak reference is still alive
                     if sub.is_weak and sub.get_handler() is None:
+                        # Remove dead weak reference
+                        self._type_subscriptions[base_type].remove(sub)
                         continue
                     if id(sub) not in seen and sub.matches(event):
                         handlers.append(sub)
@@ -597,10 +620,15 @@ class EventBus:
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(None, handler, event)
                 
-                # Track timing
+                # Track timing (with memory limit)
                 elapsed = time.time() - start_time
                 handler_name = f"{handler.__module__}.{handler.__name__}"
-                self._handler_timings[handler_name].append(elapsed)
+                timing_list = self._handler_timings[handler_name]
+                timing_list.append(elapsed)
+                
+                # Limit memory usage by keeping only recent timings
+                if len(timing_list) > self._max_handler_timings:
+                    timing_list[:] = timing_list[-self._max_handler_timings//2:]  # Keep last half
                 
             except Exception as e:
                 logger.error(
@@ -685,7 +713,8 @@ class EventBus:
         await self.emit(completion_event)
         
         # Cleanup
-        del self._pending_parents[parent_event.id]
+        if parent_event.id in self._pending_parents:
+            del self._pending_parents[parent_event.id]
         if parent_event.id in self._child_futures:
             del self._child_futures[parent_event.id]
         
@@ -790,6 +819,8 @@ class EventBus:
             'event_counts': dict(self._event_counts),
             'pending_parents': len(self._pending_parents),
             'history_size': len(self._history),
+            'queue_size': self._event_queue.qsize(),
+            'processing': self._processor_task is not None and not self._processor_task.done(),
             'subscriptions': {
                 'type_based': sum(len(subs) for subs in self._type_subscriptions.values()),
                 'pattern_based': len(self._pattern_subscriptions),
@@ -1283,13 +1314,14 @@ class EventBusMonitor:
 # Create and start global event bus
 _event_bus = EventBus()
 
-# Don't automatically start the event bus on import - let tests control it
-# try:
-#     loop = asyncio.get_running_loop()
-#     loop.create_task(_event_bus.start())
-# except RuntimeError:
-#     # No event loop running yet
-#     pass
+# Auto-start event bus if in an async context
+try:
+    loop = asyncio.get_running_loop()
+    if _event_bus and not _event_bus._processor_task:
+        loop.create_task(_event_bus.start())
+except RuntimeError:
+    # No event loop running yet - will be started when get_event_bus() is called
+    pass
 
 # Export main components
 __all__ = [
