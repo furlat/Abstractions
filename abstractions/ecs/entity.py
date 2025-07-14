@@ -18,6 +18,18 @@ from pydantic import create_model
 # Event system imports for automatic event emission
 from abstractions.events.events import emit_events, StateTransitionEvent, ModifyingEvent, ModifiedEvent
 
+from abstractions.events.entity_events import (
+    EntityRegistrationEvent, EntityRegisteredEvent,
+    EntityVersioningEvent, EntityVersionedEvent,
+    EntityPromotionEvent, EntityPromotedEvent,
+    EntityDetachmentEvent, EntityDetachedEvent,
+    EntityAttachmentEvent, EntityAttachedEvent,
+    DataBorrowingEvent, DataBorrowedEvent,
+    IDUpdateEvent, IDUpdatedEvent,
+    TreeBuildingEvent, TreeBuiltEvent,
+    ChangeDetectionEvent, ChangesDetectedEvent
+)
+
 # Edge type enum
 class EdgeType(str, Enum):
     """Type of edge between entities"""
@@ -596,6 +608,31 @@ def process_field_value(
                     distance_map=distance_map
                 )
 
+@emit_events(
+    creating_factory=lambda root_entity: TreeBuildingEvent(
+        subject_type=type(root_entity),
+        subject_id=root_entity.ecs_id,
+        process_name="tree_building",
+        root_entity_type=type(root_entity).__name__,
+        root_entity_id=root_entity.ecs_id,
+        building_method="full_build",
+        starting_from_storage=False,
+        has_existing_tree=False
+    ),
+    created_factory=lambda result, root_entity: TreeBuiltEvent(
+        subject_type=type(root_entity),
+        subject_id=root_entity.ecs_id,
+        process_name="tree_building",
+        root_entity_type=type(root_entity).__name__,
+        root_entity_id=root_entity.ecs_id,
+        build_successful=True,
+        node_count=result.node_count,
+        edge_count=result.edge_count,
+        max_depth=result.max_depth,
+        build_duration_ms=None,
+        entities_processed=result.node_count
+    )
+)
 def build_entity_tree(root_entity: "Entity") -> EntityTree:
     """
     Build a complete entity tree from a root entity in a single pass.
@@ -1344,6 +1381,33 @@ class EntityRegistry():
 
 
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, entity: EntityRegistrationEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            process_name="entity_registration",
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            is_root_entity=entity.is_root_entity(),
+            has_existing_tree=False,
+            registration_type="new_entity",
+            expected_tree_nodes=None,
+            expected_tree_edges=None
+        ),
+        created_factory=lambda result, cls, entity: EntityRegisteredEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            process_name="entity_registration",
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            registration_successful=True,
+            tree_node_count=0,  # Will be populated by future enhancement
+            tree_edge_count=0,  # Will be populated by future enhancement
+            tree_max_depth=0,   # Will be populated by future enhancement
+            new_lineage_created=True,
+            type_registry_updated=True
+        )
+    )
     def register_entity(cls, entity: "Entity") -> None:
         """ Register an entity in the registry when an entity is registered in the tree registry its
          1) its tree is constructed and indexed by the root_ecs_id
@@ -1413,15 +1477,26 @@ class EntityRegistry():
         
     @classmethod
     @emit_events(
-        creating_factory=lambda cls, entity, force_versioning=False: ModifyingEvent(
+        creating_factory=lambda cls, entity, force_versioning=False: EntityVersioningEvent(
             subject_type=type(entity),
             subject_id=entity.ecs_id,
-            fields=["ecs_id", "version"]
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            force_versioning=force_versioning,
+            has_stored_version=cls.get_stored_tree(entity.root_ecs_id) is not None if entity.root_ecs_id else False,
+            change_detection_required=not force_versioning,
+            expected_changes=None
         ),
-        created_factory=lambda result, cls, entity, force_versioning=False: ModifiedEvent(
+        created_factory=lambda result, cls, entity, force_versioning=False: EntityVersionedEvent(
             subject_type=type(entity),
             subject_id=entity.ecs_id,
-            fields=["ecs_id", "version"]
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            version_created=result,
+            entities_modified=0,  # Will be populated by future enhancement
+            new_ids_created=[],   # Will be populated by future enhancement
+            tree_mappings_updated=result,
+            versioning_duration_ms=None
         )
     )
     def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
@@ -1715,12 +1790,32 @@ class Entity(BaseModel):
   
 
     @emit_events(
-        creating_factory=lambda self: StateTransitionEvent(
+        creating_factory=lambda self: EntityPromotionEvent(
             subject_type=type(self),
             subject_id=self.ecs_id,
             from_state="child_entity",
             to_state="root_entity",
-            transition_reason="promotion"
+            transition_reason="promotion",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            was_orphan=self.is_orphan(),
+            had_root_reference=self.root_ecs_id is not None,
+            current_root_id=self.root_ecs_id,
+            promotion_reason="manual"
+        ),
+        created_factory=lambda result, self: EntityPromotedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="child_entity",
+            to_state="root_entity",
+            transition_reason="promotion",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            promotion_successful=True,
+            new_root_id=self.ecs_id,
+            registry_updated=True,
+            ids_updated=True,
+            promotion_duration_ms=None
         )
     )
     def promote_to_root(self) -> None:
@@ -1733,12 +1828,31 @@ class Entity(BaseModel):
         EntityRegistry.register_entity(self)
     
     @emit_events(
-        creating_factory=lambda self: StateTransitionEvent(
+        creating_factory=lambda self: EntityDetachmentEvent(
             subject_type=type(self),
             subject_id=self.ecs_id,
             from_state="attached_entity",
             to_state="detached_entity",
-            transition_reason="detachment"
+            transition_reason="detachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            current_root_id=self.root_ecs_id,
+            detachment_scenario="manual_detach",
+            requires_promotion=not self.is_root_entity()
+        ),
+        created_factory=lambda result, self: EntityDetachedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="attached_entity",
+            to_state="detached_entity",
+            transition_reason="detachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            detachment_successful=True,
+            was_promoted=True,
+            new_root_id=self.ecs_id,
+            old_tree_versioned=True,
+            detachment_duration_ms=None
         )
     )
     def detach(self) -> None:
@@ -1790,6 +1904,36 @@ class Entity(BaseModel):
         7) if copy is False we version the old root entity and the new entity otherwise only the new entity
         """
 
+    @emit_events(
+        creating_factory=lambda self, source_entity, target_field, self_field: DataBorrowingEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            process_name="data_borrowing",
+            borrower_type=type(self).__name__,
+            borrower_id=self.ecs_id,
+            source_type=type(source_entity).__name__,
+            source_id=source_entity.ecs_id,
+            source_field=target_field,
+            target_field=self_field,
+            data_type=type(getattr(source_entity, target_field)).__name__,
+            is_container_data=isinstance(getattr(source_entity, target_field), (list, dict, set, tuple)),
+            requires_deep_copy=True
+        ),
+        created_factory=lambda result, self, source_entity, target_field, self_field: DataBorrowedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            process_name="data_borrowing",
+            borrower_type=type(self).__name__,
+            borrower_id=self.ecs_id,
+            source_type=type(source_entity).__name__,
+            source_id=source_entity.ecs_id,
+            borrowing_successful=True,
+            field_name=target_field,
+            provenance_tracked=True,
+            container_elements=None,  # Will be populated if container
+            borrowing_duration_ms=None
+        )
+    )
     def borrow_attribute_from(self, source_entity: "Entity", target_field: str, self_field: str) -> None:
         """
         Borrow an attribute from another entity and set it to the self field with provenance tracking.
@@ -1847,13 +1991,33 @@ class Entity(BaseModel):
 
 
     @emit_events(
-        creating_factory=lambda self, new_root_entity: StateTransitionEvent(
+        creating_factory=lambda self, new_root_entity: EntityAttachmentEvent(
             subject_type=type(self),
             subject_id=self.ecs_id,
             from_state="root_entity",
             to_state="attached_entity",
             transition_reason="attachment",
-            metadata={"new_root_id": str(new_root_entity.ecs_id)}
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            target_root_type=type(new_root_entity).__name__,
+            target_root_id=new_root_entity.ecs_id,
+            lineage_change_required=self.lineage_id != new_root_entity.lineage_id,
+            same_lineage=self.lineage_id == new_root_entity.lineage_id
+        ),
+        created_factory=lambda result, self, new_root_entity: EntityAttachedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="root_entity",
+            to_state="attached_entity",
+            transition_reason="attachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            attachment_successful=True,
+            old_root_id=self.ecs_id,
+            new_root_id=new_root_entity.ecs_id,
+            lineage_updated=True,
+            ids_updated=True,
+            attachment_duration_ms=None
         )
     )
     def attach(self, new_root_entity: "Entity") -> None:

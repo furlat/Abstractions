@@ -29,8 +29,68 @@ from abstractions.ecs.return_type_analyzer import ReturnTypeAnalyzer, QuickPatte
 from abstractions.ecs.entity_unpacker import EntityUnpacker, ContainerReconstructor
 import concurrent.futures
 
+def extract_entity_uuids(kwargs: Dict[str, Any]) -> Tuple[List[UUID], List[str]]:
+    """Extract UUIDs and types from kwargs for event tracking."""
+    entity_ids = []
+    entity_types = []
+    
+    for param_name, value in kwargs.items():
+        if isinstance(value, Entity):
+            entity_ids.append(value.ecs_id)
+            entity_types.append(type(value).__name__)
+        elif isinstance(value, str) and value.startswith('@'):
+            # Extract UUID from address format
+            try:
+                uuid_part = value[1:].split('.')[0]
+                entity_ids.append(UUID(uuid_part))
+                entity_types.append("AddressReference")
+            except (ValueError, IndexError):
+                pass
+    
+    return entity_ids, entity_types
+
+def extract_config_entity_uuids(config_entities: List[Any]) -> List[UUID]:
+    """Extract UUIDs from config entities."""
+    return [ce.ecs_id for ce in config_entities if hasattr(ce, 'ecs_id')]
+
+def generate_execution_context() -> Dict[str, Any]:
+    """Generate execution context with UUID tracking."""
+    execution_id = uuid4()
+    execution_start_time = time.time()
+    
+    return {
+        'execution_id': execution_id,
+        'start_time': execution_start_time,
+        'entity_tracking': {
+            'input_entities': [],
+            'created_entities': [],
+            'modified_entities': [],
+            'config_entities': []
+        }
+    }
+
+def propagate_execution_context(context: Dict[str, Any], event_data: Dict[str, Any]):
+    """Propagate execution context to events."""
+    event_data['execution_id'] = context['execution_id']
+    event_data['execution_duration_ms'] = (time.time() - context['start_time']) * 1000
+    
+    # Merge entity tracking
+    event_data.update(context['entity_tracking'])
+
 # Event system imports for automatic event emission
 from abstractions.events.events import emit_events, ProcessingEvent, ProcessedEvent
+from abstractions.events.callable_events import (
+    FunctionExecutionEvent, FunctionExecutedEvent,
+    StrategyDetectionEvent, StrategyDetectedEvent,
+    InputPreparationEvent, InputPreparedEvent,
+    SemanticAnalysisEvent, SemanticAnalyzedEvent,
+    UnpackingEvent, UnpackedEvent,
+    ResultFinalizationEvent, ResultFinalizedEvent,
+    ConfigEntityCreationEvent, ConfigEntityCreatedEvent,
+    PartialExecutionEvent, PartialExecutedEvent,
+    TransactionalExecutionEvent, TransactionalExecutedEvent,
+    ValidationEvent, ValidatedEvent
+)
 
 
 def is_top_level_config_entity(param_type: Optional[Type]) -> bool:
@@ -359,23 +419,36 @@ class CallableRegistry:
     
     @classmethod
     @emit_events(
-        creating_factory=lambda cls, func_name, **kwargs: ProcessingEvent(
-            subject_type=None,
-            subject_id=None,
+        creating_factory=lambda cls, func_name, **kwargs: FunctionExecutionEvent(
             process_name="function_execution",
-            metadata={
-                "function_name": func_name,
-                "input_count": len(kwargs)
-            }
+            function_name=func_name,
+            execution_strategy=None,  # Will be determined during execution
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            input_entity_types=extract_entity_uuids(kwargs)[1],
+            input_parameter_count=len(kwargs),
+            input_entity_count=len([v for v in kwargs.values() if isinstance(v, Entity)]),
+            input_primitive_count=len([v for v in kwargs.values() if not isinstance(v, Entity)]),
+            is_async=cls.get_metadata(func_name).is_async if cls.get_metadata(func_name) else False,
+            uses_config_entity=cls.get_metadata(func_name).uses_config_entity if cls.get_metadata(func_name) else False,
+            expected_output_count=cls.get_metadata(func_name).expected_output_count if cls.get_metadata(func_name) else 1,
+            execution_pattern="determining"
         ),
-        created_factory=lambda result, cls, func_name, **kwargs: ProcessedEvent(
-            subject_type=type(result[0]) if isinstance(result, list) else type(result),
-            subject_id=result[0].ecs_id if isinstance(result, list) else result.ecs_id,
+        created_factory=lambda result, cls, func_name, **kwargs: FunctionExecutedEvent(
             process_name="function_execution",
-            result_summary={
-                "function_name": func_name,
-                "output_count": len(result) if isinstance(result, list) else 1
-            }
+            function_name=func_name,
+            execution_successful=True,
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            output_entity_ids=[result.ecs_id] if isinstance(result, Entity) else [e.ecs_id for e in result] if isinstance(result, list) else [],
+            created_entity_ids=[],  # Will be populated during execution
+            modified_entity_ids=[],  # Will be populated during execution
+            config_entity_ids=[],  # Will be populated during execution
+            execution_record_id=None,  # Will be populated during execution
+            execution_strategy="completed",
+            output_entity_count=1 if isinstance(result, Entity) else len(result) if isinstance(result, list) else 0,
+            semantic_results=[],  # Will be populated during execution
+            execution_duration_ms=0.0,  # Will be calculated during execution
+            total_events_generated=0,  # Will be calculated during execution
+            execution_id=None  # Will be populated during execution
         )
     )
     async def aexecute(cls, func_name: str, **kwargs) -> Union[Entity, List[Entity]]:
@@ -419,6 +492,35 @@ class CallableRegistry:
         return input_entity
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, kwargs, metadata: StrategyDetectionEvent(
+            process_name="strategy_detection",
+            function_name=metadata.name,
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            input_entity_types=extract_entity_uuids(kwargs)[1],
+            config_entity_ids=[],  # Will be populated during detection
+            entity_type_mapping={str(uuid): type_name for uuid, type_name in zip(*extract_entity_uuids(kwargs))},
+            input_types={name: type(value).__name__ for name, value in kwargs.items()},
+            entity_count=len([v for v in kwargs.values() if isinstance(v, Entity)]),
+            config_entity_count=0,  # Will be calculated
+            primitive_count=len([v for v in kwargs.values() if not isinstance(v, Entity)]),
+            has_metadata=metadata is not None,
+            detection_method="signature_analysis"
+        ),
+        created_factory=lambda result, cls, kwargs, metadata: StrategyDetectedEvent(
+            process_name="strategy_detection",
+            function_name=metadata.name,
+            detection_successful=True,
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            config_entity_ids=[],  # Will be populated
+            entity_type_mapping={str(uuid): type_name for uuid, type_name in zip(*extract_entity_uuids(kwargs))},
+            detected_strategy=result,
+            strategy_reasoning=f"Detected {result} based on input analysis",
+            execution_path="determined_from_strategy",
+            decision_factors=[],
+            confidence_level="high"
+        )
+    )
     def _detect_execution_strategy(cls, kwargs: Dict[str, Any], metadata: FunctionMetadata) -> str:
         """Detect execution strategy based on input composition."""
         
@@ -490,6 +592,33 @@ class CallableRegistry:
             return await cls._execute_borrowing(metadata, kwargs, classification)
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, metadata, kwargs: InputPreparationEvent(
+            process_name="input_preparation",
+            function_name=metadata.name,
+            preparation_type="config_creation",
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            entity_count=len([v for v in kwargs.values() if isinstance(v, Entity)]),
+            requires_isolation=False,
+            requires_config_entity=metadata.uses_config_entity,
+            pattern_classification="partial_execution",
+            borrowing_operations_needed=0
+        ),
+        created_factory=lambda result, cls, metadata, kwargs: InputPreparedEvent(
+            process_name="input_preparation",
+            function_name=metadata.name,
+            preparation_successful=True,
+            input_entity_ids=extract_entity_uuids(kwargs)[0],
+            created_entities=[],  # Will be populated with created entity UUIDs
+            config_entities_created=[],  # Will be populated with config entity UUIDs
+            execution_copy_ids=[],  # Will be populated with execution copy UUIDs
+            borrowed_from_entities=[],  # Will be populated with borrowed entity UUIDs
+            object_identity_map_size=0,
+            isolation_successful=True,
+            borrowing_operations_completed=0,
+            preparation_duration_ms=0.0
+        )
+    )
     async def _execute_with_partial(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any]) -> Union[Entity, List[Entity]]:
         """Execute using functools.partial for single_entity_with_config pattern."""
         
@@ -648,6 +777,28 @@ class CallableRegistry:
                 return output_entity
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, function_name, primitive_params, expected_config_type: ConfigEntityCreationEvent(
+            process_name="config_entity_creation",
+            function_name=function_name,
+            source_entity_ids=[],  # Config entities created from primitives
+            config_type="dynamic" if expected_config_type is None else "explicit",
+            expected_config_class=expected_config_type.__name__ if expected_config_type else None,
+            primitive_params_count=len(primitive_params),
+            has_expected_type=expected_config_type is not None
+        ),
+        created_factory=lambda config_entity, cls, function_name, primitive_params, expected_config_type: ConfigEntityCreatedEvent(
+            process_name="config_entity_creation",
+            function_name=function_name,
+            creation_successful=True,
+            config_entity_id=config_entity.ecs_id,
+            source_entity_ids=[],  # Created from primitives
+            config_entity_type=type(config_entity).__name__,
+            fields_populated=len(primitive_params),
+            registered_in_ecs=True,
+            creation_duration_ms=0.0
+        )
+    )
     def create_config_entity_from_primitives(
         cls,
         function_name: str,
@@ -785,6 +936,30 @@ class CallableRegistry:
             return output_entity
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, metadata, kwargs, classification: TransactionalExecutionEvent(
+            process_name="transactional_execution",
+            function_name=metadata.name,
+            isolated_entity_ids=extract_entity_uuids(kwargs)[0],
+            execution_copy_ids=[],  # Will be populated during execution
+            isolated_entities_count=len([v for v in kwargs.values() if isinstance(v, Entity)]),
+            has_object_identity_map=True,
+            isolation_successful=True,
+            transaction_id=uuid4()
+        ),
+        created_factory=lambda result, cls, metadata, kwargs, classification: TransactionalExecutedEvent(
+            process_name="transactional_execution",
+            function_name=metadata.name,
+            execution_successful=True,
+            isolated_entity_ids=extract_entity_uuids(kwargs)[0],
+            output_entity_ids=[result.ecs_id] if isinstance(result, Entity) else [e.ecs_id for e in result] if isinstance(result, list) else [],
+            execution_copy_ids=[],  # Will be populated during execution
+            output_entities_count=1 if isinstance(result, Entity) else len(result) if isinstance(result, list) else 0,
+            semantic_analysis_completed=True,
+            transaction_duration_ms=0.0,
+            transaction_id=uuid4()
+        )
+    )
     async def _execute_transactional(cls, metadata: FunctionMetadata, kwargs: Dict[str, Any], classification: Optional[Dict[str, str]] = None) -> Union[Entity, List[Entity]]:
         """
         Enhanced execute with complete semantic detection and Phase 2 unpacking.
@@ -909,6 +1084,32 @@ class CallableRegistry:
                     EntityRegistry.version_entity(entity)
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, result, object_identity_map: SemanticAnalysisEvent(
+            process_name="semantic_analysis",
+            function_name="semantic_analysis",  # Will be passed from context
+            input_entity_ids=[e.ecs_id for e in object_identity_map.values()],
+            result_entity_ids=[result.ecs_id] if isinstance(result, Entity) else [],
+            result_type=type(result).__name__,
+            analysis_method="object_identity",
+            has_object_identity_map=len(object_identity_map) > 0,
+            input_entity_count=len(object_identity_map),
+            result_entity_count=1 if isinstance(result, Entity) else 0
+        ),
+        created_factory=lambda semantic_result, cls, result, object_identity_map: SemanticAnalyzedEvent(
+            process_name="semantic_analysis",
+            function_name="semantic_analysis",
+            analysis_successful=True,
+            input_entity_ids=[e.ecs_id for e in object_identity_map.values()],
+            result_entity_ids=[result.ecs_id] if isinstance(result, Entity) else [],
+            analyzed_entity_ids=[result.ecs_id] if isinstance(result, Entity) else [],
+            original_entity_id=semantic_result[1].ecs_id if semantic_result[1] else None,
+            semantic_type=semantic_result[0],
+            confidence_level="high",
+            analysis_duration_ms=0.0,
+            entities_analyzed=1
+        )
+    )
     def _detect_execution_semantic(cls, result: Entity, object_identity_map: Dict[int, Entity]) -> Tuple[str, Optional[Entity]]:
         """
         Core semantic detection using Python object identity.
@@ -991,6 +1192,30 @@ class CallableRegistry:
         return output_entity
     
     @classmethod
+    @emit_events(
+        creating_factory=lambda cls, result, metadata, object_identity_map, input_entity, execution_id: UnpackingEvent(
+            process_name="result_unpacking",
+            function_name=metadata.name,
+            source_entity_ids=[input_entity.ecs_id] if input_entity else [],
+            unpacking_pattern=metadata.output_pattern,
+            expected_entity_count=metadata.expected_output_count,
+            container_type=type(result).__name__,
+            supports_unpacking=metadata.supports_unpacking,
+            requires_container_entity=True
+        ),
+        created_factory=lambda unpacked_result, cls, result, metadata, object_identity_map, input_entity, execution_id: UnpackedEvent(
+            process_name="result_unpacking",
+            function_name=metadata.name,
+            unpacking_successful=True,
+            source_entity_ids=[input_entity.ecs_id] if input_entity else [],
+            unpacked_entity_ids=[e.ecs_id for e in unpacked_result if isinstance(e, Entity)],
+            container_entity_id=unpacked_result.container_entity.ecs_id if hasattr(unpacked_result, 'container_entity') and unpacked_result.container_entity else None,
+            sibling_entity_ids=[e.ecs_id for e in unpacked_result if isinstance(e, Entity)],
+            unpacked_entity_count=len([e for e in unpacked_result if isinstance(e, Entity)]),
+            sibling_relationships_created=len([e for e in unpacked_result if isinstance(e, Entity)]) > 1,
+            unpacking_duration_ms=0.0
+        )
+    )
     async def _finalize_multi_entity_result(
         cls,
         result: Any,
@@ -1011,7 +1236,7 @@ class CallableRegistry:
         
         # Step 1: Use EntityUnpacker for sophisticated result analysis
         unpacking_result = ContainerReconstructor.unpack_with_signature_analysis(
-            result, 
+            result,
             metadata.return_analysis,
             metadata.output_entity_class,
             execution_id

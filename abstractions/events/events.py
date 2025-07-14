@@ -27,6 +27,15 @@ import weakref
 from contextlib import asynccontextmanager
 import logging
 
+# Import context management functions
+from abstractions.events.context import (
+    get_current_parent_event,
+    push_event_context,
+    pop_event_context,
+    get_context_statistics,
+    validate_context_balance
+)
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -888,7 +897,14 @@ def emit_events(
     include_args: bool = False
 ) -> Callable:
     """
-    Decorator that emits events around method execution.
+    Decorator that emits events around method execution with automatic parent-child linking.
+    
+    This decorator creates a complete event lifecycle around method execution:
+    1. Creates and emits a 'creating' event before method execution
+    2. Automatically links events to parent context if available
+    3. Manages context stack for nested event hierarchies
+    4. Creates completion or failure events after execution
+    5. Provides timing and debugging information
     
     Args:
         creating_factory: Function to create the 'started' event
@@ -896,6 +912,24 @@ def emit_events(
         failed_factory: Function to create the 'failed' event
         include_timing: Whether to include execution time
         include_args: Whether to include method arguments in metadata
+    
+    Automatic Parent Linking:
+        Events are automatically linked to any parent event in the current context stack.
+        This creates proper hierarchical relationships:
+        - parent_id: Set to current parent event's ID
+        - root_id: Set to root event's ID (or parent's root_id)
+        - lineage_id: Inherited from parent event
+        
+    Context Management:
+        The decorator automatically manages the context stack:
+        - Pushes start event to context before method execution
+        - Pops from context after method completion (in finally block)
+        - Nested decorated methods automatically become children
+        
+    Error Handling:
+        - Context stack is always properly cleaned up in finally block
+        - Failed events are created and linked to parent context
+        - Context isolation works correctly across async tasks and threads
         
     Example:
         @emit_events(
@@ -912,8 +946,15 @@ def emit_events(
             )
         )
         async def analyze(self, data):
-            # ... method implementation ...
-            return result
+            # This method's events will be children of any parent context
+            # Any decorated methods called from here will be grandchildren
+            return await self.process_data(data)
+            
+    Backward Compatibility:
+        - No signature changes - existing code works unchanged
+        - Automatic nesting is enabled by default and safe
+        - Events without parents work exactly as before
+        - Minimal performance overhead: O(1) context operations
     """
     def decorator(func: Callable) -> Callable:
         # Detect if function is async or sync
@@ -925,27 +966,70 @@ def emit_events(
                 bus = get_event_bus()
                 start_time = time.time()
                 
+                # Get current parent from context stack
+                parent_event = get_current_parent_event()
+                
                 # Create starting event
+                start_event = None
                 if creating_factory:
                     start_event = creating_factory(*args, **kwargs)
+                    
+                    # Apply automatic parent linking
+                    if parent_event:
+                        parent_id = getattr(parent_event, 'id', None)
+                        parent_root_id = getattr(parent_event, 'root_id', None)
+                        parent_lineage_id = getattr(parent_event, 'lineage_id', None)
+                        
+                        if parent_id:
+                            start_event.parent_id = parent_id
+                        if parent_root_id or parent_id:
+                            start_event.root_id = parent_root_id or parent_id
+                        if parent_lineage_id:
+                            start_event.lineage_id = parent_lineage_id
+                    else:
+                        # No parent - this is a root event
+                        start_event.root_id = start_event.id
+                    
+                    # Add arguments metadata
                     if include_args:
                         start_event.metadata['args'] = str(args)
                         start_event.metadata['kwargs'] = str(kwargs)
+                    
+                    # Push to context stack BEFORE emitting
+                    push_event_context(start_event)
+                    
+                    # Emit the start event
                     await bus.emit(start_event)
                     lineage_id = start_event.lineage_id
                 else:
                     lineage_id = uuid4()
                 
                 try:
-                    # Execute async method
+                    # Execute async method (nested calls will see start_event as parent)
                     result = await func(*args, **kwargs)
                     
                     # Create completion event
                     if created_factory:
                         end_event = created_factory(result, *args, **kwargs)
                         end_event.lineage_id = lineage_id
+                        
+                        # Apply automatic parent linking to completion event
+                        if parent_event:
+                            parent_id = getattr(parent_event, 'id', None)
+                            parent_root_id = getattr(parent_event, 'root_id', None)
+                            
+                            if parent_id:
+                                end_event.parent_id = parent_id
+                            if parent_root_id or parent_id:
+                                end_event.root_id = parent_root_id or parent_id
+                        else:
+                            # No parent - this is a root event
+                            end_event.root_id = end_event.id
+                        
+                        # Add timing information
                         if include_timing:
                             end_event.duration_ms = (time.time() - start_time) * 1000
+                        
                         await bus.emit(end_event)
                     
                     return result
@@ -955,10 +1039,31 @@ def emit_events(
                     if failed_factory:
                         error_event = failed_factory(e, *args, **kwargs)
                         error_event.lineage_id = lineage_id
+                        
+                        # Apply automatic parent linking to error event
+                        if parent_event:
+                            parent_id = getattr(parent_event, 'id', None)
+                            parent_root_id = getattr(parent_event, 'root_id', None)
+                            
+                            if parent_id:
+                                error_event.parent_id = parent_id
+                            if parent_root_id or parent_id:
+                                error_event.root_id = parent_root_id or parent_id
+                        else:
+                            # No parent - this is a root event
+                            error_event.root_id = error_event.id
+                        
+                        # Add timing information
                         if include_timing:
                             error_event.duration_ms = (time.time() - start_time) * 1000
+                        
                         await bus.emit(error_event)
                     raise
+                
+                finally:
+                    # Pop from context stack (critical for cleanup)
+                    if start_event:
+                        pop_event_context()
             
             return async_wrapper
         
@@ -968,33 +1073,76 @@ def emit_events(
                 bus = get_event_bus()
                 start_time = time.time()
                 
+                # Get current parent from context stack
+                parent_event = get_current_parent_event()
+                
                 # Create starting event
+                start_event = None
                 if creating_factory:
                     start_event = creating_factory(*args, **kwargs)
+                    
+                    # Apply automatic parent linking
+                    if parent_event:
+                        parent_id = getattr(parent_event, 'id', None)
+                        parent_root_id = getattr(parent_event, 'root_id', None)
+                        parent_lineage_id = getattr(parent_event, 'lineage_id', None)
+                        
+                        if parent_id:
+                            start_event.parent_id = parent_id
+                        if parent_root_id or parent_id:
+                            start_event.root_id = parent_root_id or parent_id
+                        if parent_lineage_id:
+                            start_event.lineage_id = parent_lineage_id
+                    else:
+                        # No parent - this is a root event
+                        start_event.root_id = start_event.id
+                    
+                    # Add arguments metadata
                     if include_args:
                         start_event.metadata['args'] = str(args)
                         start_event.metadata['kwargs'] = str(kwargs)
-                    # Use asyncio.create_task for async event emission in sync context
+                    
+                    # Push to context stack BEFORE emitting
+                    push_event_context(start_event)
+                    
+                    # Emit the start event
                     try:
                         asyncio.create_task(bus.emit(start_event))
                     except RuntimeError:
                         # No event loop running, skip event
                         pass
+                    
                     lineage_id = start_event.lineage_id
                 else:
                     lineage_id = uuid4()
                 
                 try:
-                    # Execute sync method
+                    # Execute sync method (nested calls will see start_event as parent)
                     result = func(*args, **kwargs)
                     
                     # Create completion event
                     if created_factory:
                         end_event = created_factory(result, *args, **kwargs)
                         end_event.lineage_id = lineage_id
+                        
+                        # Apply automatic parent linking to completion event
+                        if parent_event:
+                            parent_id = getattr(parent_event, 'id', None)
+                            parent_root_id = getattr(parent_event, 'root_id', None)
+                            
+                            if parent_id:
+                                end_event.parent_id = parent_id
+                            if parent_root_id or parent_id:
+                                end_event.root_id = parent_root_id or parent_id
+                        else:
+                            # No parent - this is a root event
+                            end_event.root_id = end_event.id
+                        
+                        # Add timing information
                         if include_timing:
                             end_event.duration_ms = (time.time() - start_time) * 1000
-                        # Use asyncio.create_task for async event emission in sync context
+                        
+                        # Emit completion event
                         try:
                             asyncio.create_task(bus.emit(end_event))
                         except RuntimeError:
@@ -1008,13 +1156,35 @@ def emit_events(
                     if failed_factory:
                         error_event = failed_factory(e, *args, **kwargs)
                         error_event.lineage_id = lineage_id
+                        
+                        # Apply automatic parent linking to error event
+                        if parent_event:
+                            parent_id = getattr(parent_event, 'id', None)
+                            parent_root_id = getattr(parent_event, 'root_id', None)
+                            
+                            if parent_id:
+                                error_event.parent_id = parent_id
+                            if parent_root_id or parent_id:
+                                error_event.root_id = parent_root_id or parent_id
+                        else:
+                            # No parent - this is a root event
+                            error_event.root_id = error_event.id
+                        
+                        # Add timing information
                         if include_timing:
                             error_event.duration_ms = (time.time() - start_time) * 1000
+                        
+                        # Emit error event
                         try:
                             asyncio.create_task(bus.emit(error_event))
                         except RuntimeError:
                             pass
                     raise
+                
+                finally:
+                    # Pop from context stack (critical for cleanup)
+                    if start_event:
+                        pop_event_context()
             
             return sync_wrapper
     

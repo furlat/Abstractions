@@ -5,8 +5,8 @@ A distributed, data-centric system that brings functional programming principles
 ## Setup
 
 ```bash
-git clone -b maybe_cursed_who_knows https://github.com/furlat/Abstractions.git
-cd Abstractions
+git clone https://github.com/your-org/abstractions.git
+cd abstractions
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
@@ -44,7 +44,6 @@ Behind this simple API, the framework automatically:
 - Tracked data lineage through the transformation
 - Established provenance (which function created which data)
 - Enabled distributed access via string addressing
-- Emitted events that track the transformation (you can observe these if needed)
 
 You can now reference this data from anywhere using its address:
 
@@ -62,8 +61,6 @@ print(f"Retrieved: {student_name} with GPA {student_gpa}")
 ## What this solves
 
 Traditional data processing systems force you to choose between functional purity and practical data management. Pure functional languages give you immutability and composability but struggle with identity and state. Object-oriented systems give you identity and encapsulation but make functional composition difficult. Distributed systems add another layer where you must manually serialize, address, and track data across boundaries.
-
-Another challenge is observability - when transformations happen, you often can't see what triggered what or how changes flow through your system.
 
 This framework unifies these paradigms: your data lives as **entities** with persistent identity, your logic lives as **pure functions** that transform entities, and the system automatically handles **distributed addressing**, **versioning**, and **provenance tracking**. 
 
@@ -179,24 +176,6 @@ for norm in normalized:
 
 This provenance tracking supports **data lineage queries**, **reproducible computations**, and **debugging of data flows** across distributed systems.
 
-### Event-driven observation
-
-The framework emits events when entities change or functions execute. These events contain only UUID references and basic metadata - they don't duplicate your data. You can use them to observe what's happening in your system:
-
-```python
-from abstractions.events.events import get_event_bus, on
-
-# Observe function executions
-@on(lambda event: event.type == "function_executed")
-async def log_function_calls(event):
-    print(f"Function {event.function_name} completed")
-
-# The events contain references, not data
-# This lets you track what's happening without affecting performance
-```
-
-Events work well for debugging, monitoring, and building reactive systems. They're designed to be lightweight - you can ignore them entirely if you don't need them.
-
 ### Multi-entity transformations and unpacking
 
 The framework natively handles functions that produce multiple entities, automatically managing their relationships and distribution:
@@ -294,76 +273,6 @@ batch_results = await CallableRegistry.execute_batch([
 
 This concurrency model scales naturally to distributed systems where different nodes process the same data. Since entities are immutable and every transformation creates new versions, there's no shared mutable state to coordinate. The framework handles all the complexity of maintaining consistency and tracking lineage across concurrent executions.
 
-### Multi-step reactive cascades
-
-You can combine async execution with event handlers to create cascading computations that work across distributed systems. Here's a simple example that processes student data in multiple steps:
-
-```python
-# Step 1: Process individual students
-@CallableRegistry.register("process_student")
-async def process_student(student: Student) -> ProcessedStudent:
-    # Some processing work
-    return ProcessedStudent(
-        student_id=student.ecs_id,
-        processed_gpa=student.gpa * 1.1,  # Example processing
-        status="processed"
-    )
-
-# Step 2: When students are processed, collect them for batch analysis
-processed_students = []
-
-@on(lambda event: event.type == "created" and event.subject_type == ProcessedStudent)
-async def collect_processed_student(event):
-    processed_students.append(event.subject_id)
-    
-    # When we have enough students, trigger batch analysis
-    if len(processed_students) >= 10:
-        batch = processed_students[:10]
-        processed_students.clear()
-        await CallableRegistry.aexecute("analyze_batch", student_ids=batch)
-
-# Step 3: Analyze batches and create reports
-@CallableRegistry.register("analyze_batch")
-async def analyze_batch(student_ids: List[str]) -> BatchReport:
-    # Fetch the processed students
-    students = [EntityRegistry.get_stored_entity(id) for id in student_ids]
-    
-    # Simple map-reduce pattern
-    avg_gpa = sum(s.processed_gpa for s in students) / len(students)
-    
-    return BatchReport(
-        batch_size=len(students),
-        average_gpa=avg_gpa,
-        student_ids=student_ids
-    )
-
-# Step 4: When reports are created, trigger final aggregation
-reports = []
-
-@on(lambda event: event.type == "created" and event.subject_type == BatchReport)
-async def aggregate_reports(event):
-    reports.append(event.subject_id)
-    
-    # Every 3 reports, create a summary
-    if len(reports) >= 3:
-        batch_reports = reports[:3]
-        reports.clear()
-        await CallableRegistry.aexecute("create_summary", report_ids=batch_reports)
-
-# Usage: Just process students, everything else happens automatically
-for student in students:
-    await CallableRegistry.aexecute("process_student", student=student)
-
-# The system automatically:
-# 1. Processes each student individually (async)
-# 2. Collects processed students into batches of 10
-# 3. Analyzes each batch to create reports
-# 4. Aggregates reports into summaries
-# This creates a simple map-reduce pipeline through events
-```
-
-This pattern creates emergent behavior where the system automatically organizes work into batches and aggregates results without central coordination. Each step only knows about its immediate inputs and outputs, but the event system coordinates the overall flow.
-
 ## Core concepts for distributed data processing
 
 ### Entity as distributed data unit
@@ -385,18 +294,10 @@ Functions are the unit of computation that can be deployed and executed anywhere
 ### Address as distributed reference
 
 String addresses provide a universal way to reference data across systems:
-- **Human readable** - `@uuid.field.subfield` is self-documenting
+- **Human readable** - `@uuid.field.subfield` is self-documenting  
 - **Network portable** - strings work across any transport
 - **Lazy resolution** - addresses are resolved only when needed
 - **Access control ready** - addresses can be filtered by permissions
-
-### Event as optional signal
-
-The framework emits events to signal when things happen:
-- **UUID-based** - events contain entity IDs, not copies of data
-- **Hierarchical** - events can be grouped by operation
-- **Optional** - you can ignore events entirely if you don't need them
-- **Reactive** - events can trigger other functions automatically
 
 ## Implementation architecture for distributed systems
 
@@ -484,17 +385,6 @@ notification_service.send(
     student=f"@{report.ecs_id}.student_id",
     grade=f"@{report.ecs_id}.letter_grade"
 )
-
-# React to new grade reports (optional)
-from abstractions.events.events import on
-
-@on(lambda event: event.type == "created" and event.subject_type == GradeReport)
-async def handle_new_grade_report(event):
-    # Send notification when grades are calculated
-    await send_notification(event.subject_id)
-
-# The rest of your code stays the same
-# Events are just a way to react to changes if you need to
 ```
 
 ## Why this approach scales
@@ -502,11 +392,10 @@ async def handle_new_grade_report(event):
 This framework scales well with distributed systems:
 
 1. **Data is naturally distributed** - The framework embraces this rather than hiding it
-2. **Computation follows data** - Functions can execute wherever data lives
+2. **Computation follows data** - Functions can execute wherever data lives  
 3. **Everything needs tracking** - Built-in provenance eliminates custom audit code
 4. **Immutability simplifies distribution** - No distributed state synchronization problems
 5. **Addresses enable loose coupling** - Services can share data without tight integration
-6. **Observability helps understanding** - Events help you understand what's happening as systems grow
 
 By making these distributed patterns first-class concepts in the framework, you get the benefits of functional programming (immutability, composability, testability) with the pragmatic needs of distributed systems (identity, addressing, versioning) in a single coherent model.
 
