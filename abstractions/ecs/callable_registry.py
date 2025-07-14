@@ -52,7 +52,7 @@ class FunctionSignatureCache:
             return cls._input_cache[input_hash]
         
         # Create input model with ConfigEntity exclusion
-        input_model = create_entity_from_function_signature_enhanced(func, "Input", function_name)
+        input_model = create_entity_from_function_signature(func, "Input", function_name)
         
         # Determine if this function uses ConfigEntity pattern
         sig = signature(func)
@@ -104,7 +104,7 @@ class FunctionSignatureCache:
             else:
                 return cached_result
         
-        output_model = create_entity_from_function_signature_enhanced(func, "Output", function_name)
+        output_model = create_entity_from_function_signature(func, "Output", function_name)
         
         # ✅ ENHANCED: Use Phase 2 return analysis
         type_hints = get_type_hints(func)
@@ -176,12 +176,20 @@ class FunctionSignatureCache:
         }
 
 
-def create_entity_from_function_signature_enhanced(
+def create_entity_from_function_signature(
     func: Callable,
     entity_type: str,  # "Input" or "Output"
     function_name: str
 ) -> Type[Entity]:
-    """Enhanced to exclude top-level ConfigEntity parameters from input entity creation."""
+    """
+    Entity factory using create_model with ConfigEntity exclusion.
+    
+    Leverages:
+    - Pydantic's create_model for robust dynamic class creation
+    - Entity base class for full versioning/registry integration
+    - Proper field type preservation (no Any type degradation)
+    - ConfigEntity exclusion for proper separation of concerns
+    """
     
     sig = signature(func)
     type_hints = get_type_hints(func)
@@ -294,83 +302,6 @@ class FunctionMetadata:
             expected_count = self.return_analysis.get('expected_entity_count', 1)
             # Handle -1 (unknown count) by defaulting to 1
             self.expected_output_count = max(expected_count, 1) if expected_count != -1 else 1
-
-
-def create_entity_from_function_signature(
-    func: Callable,
-    entity_type: str,  # "Input" or "Output"  
-    function_name: str
-) -> Type[Entity]:
-    """
-    Entity factory using create_model - proven dynamic class creation pattern.
-    
-    Leverages:
-    - Pydantic's create_model for robust dynamic class creation
-    - Entity base class for full versioning/registry integration
-    - Proper field type preservation (no Any type degradation)
-    """
-    
-    # Step 1: Extract function signature
-    sig = signature(func)
-    type_hints = get_type_hints(func)
-    
-    # Step 2: Build field definitions for create_model
-    field_definitions: Dict[str, Any] = {}
-    
-    if entity_type == "Input":
-        # Remove return type for input entity
-        type_hints.pop('return', None)
-        
-        for param in sig.parameters.values():
-            param_type = type_hints.get(param.name, None)
-            if param_type is None:
-                raise ValueError(
-                    f"Function '{func.__name__}' parameter '{param.name}' missing type annotation. "
-                    f"All registered functions must have complete type hints."
-                )
-            
-            if param.default is param.empty:
-                # Required field
-                field_definitions[param.name] = (param_type, ...)
-            else:
-                # Optional field with default
-                field_definitions[param.name] = (param_type, param.default)
-                
-    elif entity_type == "Output":
-        # Handle return type
-        return_type = type_hints.get('return', None)
-        if return_type is None:
-            raise ValueError(
-                f"Function '{func.__name__}' missing return type annotation. "
-                f"All registered functions must have proper type hints for return values."
-            )
-        
-        if isinstance(return_type, type) and issubclass(return_type, BaseModel):
-            # If return type is already a Pydantic model, extract its fields
-            for field_name, field_info in return_type.model_fields.items():
-                field_type = return_type.__annotations__.get(field_name, Any)
-                if hasattr(field_info, 'default') and field_info.default is not ...:
-                    field_definitions[field_name] = (field_type, field_info.default)
-                else:
-                    field_definitions[field_name] = (field_type, ...)
-        else:
-            # Simple return type
-            field_definitions['result'] = (return_type, ...)
-    
-    # Step 3: Create Entity subclass using create_model
-    entity_class_name = f"{function_name}{entity_type}Entity"
-    
-    EntityClass = create_model(
-        entity_class_name,
-        __base__=Entity,  # Inherit from our Entity system
-        __module__=func.__module__,
-        **field_definitions
-    )
-    
-    # Step 4: Set proper qualname for debugging
-    EntityClass.__qualname__ = f"{function_name}.{entity_class_name}"
-    
-    return EntityClass
 
 
 
