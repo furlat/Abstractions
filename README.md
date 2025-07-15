@@ -170,11 +170,10 @@ for s in students:
 
 normalized = CallableRegistry.execute("normalize_grades", cohort=students)
 
-# Each output entity knows its provenance
+# Each output entity tracks its lineage and versioning
 for norm in normalized:
-    execution = EntityRegistry.get_function_execution(norm.ecs_id)
-    print(f"{norm.name} was created by {execution.function_name}")
-    print(f"From inputs: {execution.input_entity_ids}")
+    print(f"{norm.name} was created with lineage {norm.lineage_id}")
+    print(f"Entity ID: {norm.ecs_id}, derived from original student data")
 ```
 
 This provenance tracking supports **data lineage queries**, **reproducible computations**, and **debugging of data flows** across distributed systems.
@@ -215,7 +214,8 @@ def analyze_performance(student: Student) -> Tuple[Assessment, Recommendation]:
     return assessment, recommendation
 
 # Automatic unpacking and relationship tracking
-assessment, rec = CallableRegistry.execute("analyze_performance", student=student)
+result = CallableRegistry.execute("analyze_performance", student=student)
+assessment, rec = result  # Tuple is automatically unpacked
 
 # Entities know they're siblings from the same computation
 print(assessment.sibling_output_entities)  # [rec.ecs_id]
@@ -238,14 +238,14 @@ result = CallableRegistry.execute("update_gpa",
     new_gpa=3.9
 )
 
-# Pattern 3: Batch transformation (parallel processing)
-results = CallableRegistry.execute_batch([
-    {"func_name": "update_gpa", "student": s, "new_gpa": s.gpa + 0.1}
+# Pattern 3: Async transformation (concurrent processing)
+results = await asyncio.gather(*[
+    CallableRegistry.aexecute("update_gpa", student=s, new_gpa=s.gpa + 0.1)
     for s in students
 ])
 
 # Pattern 4: Composite transformation (data from multiple sources)
-analysis = CallableRegistry.execute("cross_reference_analysis",
+analysis = await CallableRegistry.aexecute("cross_reference_analysis",
     student=f"@{student_id}",          # From service A
     transcript=f"@{transcript_id}",     # From service B  
     recommendations=f"@{recs_id}"       # From service C
@@ -272,18 +272,16 @@ async def analyze_grades_async(student: Student, grades: List[float]) -> Analysi
     return AnalysisResult(avg=sum(grades)/len(grades))
 
 # Execute concurrently without interference
-batch_results = await CallableRegistry.execute_batch([
-    {
-        "func_name": "analyze_grades",
-        "student": f"@{student_id}",
-        "grades": [3.8, 3.9, 3.7]
-    },
-    {
-        "func_name": "analyze_grades_async", 
-        "student": f"@{student_id}",  # Same student, no problem!
-        "grades": [3.8, 3.9, 3.7, 4.0]
-    }
-])
+batch_results = await asyncio.gather(
+    CallableRegistry.aexecute("analyze_grades",
+        student=f"@{student_id}",
+        grades=[3.8, 3.9, 3.7]
+    ),
+    CallableRegistry.aexecute("analyze_grades_async", 
+        student=f"@{student_id}",  # Same student, no problem!
+        grades=[3.8, 3.9, 3.7, 4.0]
+    )
+)
 
 # Each execution:
 # 1. Gets its own immutable copy of input entities
@@ -410,11 +408,25 @@ The framework is architected to support distributed deployment patterns:
 
 **Execution Engine**: Supports multiple execution strategies from local in-process to distributed map-reduce patterns while maintaining the same API.
 
+## Validated examples and patterns
+
+The framework includes comprehensive examples demonstrating real-world usage patterns:
+
+- **[01_basic_entity_transformation.py](examples/readme_examples/01_basic_entity_transformation.py)** - Core entity operations and transformations (sync + async)
+- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries (sync + async)  
+- **[03_multi_entity_transformations.py](examples/readme_examples/03_multi_entity_transformations.py)** - Tuple unpacking and sibling relationships (sync + async)
+- **[04_distributed_grade_processing.py](examples/readme_examples/04_distributed_grade_processing.py)** - Complex multi-stage data pipelines (sync + async)
+- **[05_reactive_cascades.py](examples/readme_examples/05_reactive_cascades.py)** - Event-driven reactive workflows (async only)
+
+Each example includes comprehensive test suites validating the documented behavior and can be run directly to see the framework in action.
+
 ## Real-world example: Distributed grade processing pipeline
 
 ```python
 from abstractions.ecs import Entity, CallableRegistry
 from typing import List, Dict, Tuple
+from datetime import datetime
+from pydantic import Field
 
 # Define entities for a distributed gradebook system
 class Assignment(Entity):
@@ -465,8 +477,8 @@ def calculate_weighted_grade(
         letter_grade=_calculate_letter_grade(weighted_avg)
     )
 
-# Execute across distributed data
-report = CallableRegistry.execute("calculate_weighted_grade",
+# Execute across distributed data (use aexecute for async)
+report = await CallableRegistry.aexecute("calculate_weighted_grade",
     # Submissions might come from one service
     submissions=f"@{submission_collection_id}.items",
     # Assignments from another service

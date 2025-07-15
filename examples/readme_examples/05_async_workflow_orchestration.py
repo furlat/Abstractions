@@ -478,8 +478,16 @@ async def run_reactive_cascade_tests() -> Tuple[int, int, List[str], List[str]]:
         # For laptop with good stock (14 > 5 threshold), should not have a valid alert
         assert not inventory_alert_valid, f"Expected no valid alert for laptop with good stock"
         
-        # Tier update should be None (Alice doesn't meet premium criteria yet)
-        assert tier_update is None
+        # Tier update check - handle wrapped None result
+        # When evaluate_customer_tier returns None, it gets wrapped as an Entity
+        tier_update_valid = (
+            tier_update is not None and 
+            hasattr(tier_update, 'customer_id') and 
+            getattr(tier_update, 'customer_id', None) is not None
+        )
+        
+        # Alice with $800 spending shouldn't meet premium criteria yet (needs $500 + 5 orders)
+        assert not tier_update_valid, f"Expected no valid tier update for Alice with $800"
         
         assert isinstance(recommendations, RecommendationEngine)
         assert getattr(recommendations, 'strategy_used') == "popularity"

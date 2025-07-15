@@ -1428,6 +1428,26 @@ class EventSerializer:
         if 'children_ids' in data:
             data['children_ids'] = [UUID(cid) for cid in data['children_ids']]
         
+        # Convert type strings back to types (simple approach)
+        # Try to resolve from caller's globals - if anything fails, just skip it
+        try:
+            import inspect
+            frame = inspect.currentframe()
+            if frame and frame.f_back:
+                caller_globals = frame.f_back.f_globals
+                
+                for field_name in ['subject_type', 'actor_type', 'source_type', 'target_type']:
+                    if field_name in data and isinstance(data[field_name], str):
+                        type_name = data[field_name]
+                        resolved_type = caller_globals.get(type_name)
+                        if resolved_type and inspect.isclass(resolved_type):
+                            data[field_name] = resolved_type
+                        # If not found, leave as string and let validation handle it
+        except Exception:
+            # If frame inspection fails for any reason, just skip type resolution
+            # This ensures deserialization doesn't break in edge cases
+            pass
+        
         # Determine event class from type
         event_type = data.get('type', '')
         
