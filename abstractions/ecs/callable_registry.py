@@ -1462,7 +1462,40 @@ class CallableRegistry:
         Leverages attribute_source system for full audit trails.
         """
         
-        # Use the consolidated method for consistent field detection
+        # Quick fix: If result is already an Entity, return it directly with provenance
+        if isinstance(result, Entity):
+            output_entity = result
+            
+            # Set Phase 4 provenance fields after entity creation
+            if hasattr(output_entity, 'derived_from_function'):
+                output_entity.derived_from_function = function_name
+            
+            # Set up complete provenance tracking only for non-system fields
+            for field_name in output_entity.model_fields:
+                if field_name not in {'ecs_id', 'live_id', 'created_at', 'forked_at', 
+                                     'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
+                                     'root_ecs_id', 'root_live_id', 'from_storage', 
+                                     'untyped_data', 'attribute_source',
+                                     'derived_from_function', 'derived_from_execution_id',
+                                     'sibling_output_entities', 'output_index'}:
+                    
+                    field_value = getattr(output_entity, field_name)
+                    
+                    # Container-aware provenance (leverages proven patterns)
+                    if isinstance(field_value, list):
+                        output_entity.attribute_source[field_name] = [
+                            input_entity.ecs_id for _ in field_value
+                        ]
+                    elif isinstance(field_value, dict):
+                        output_entity.attribute_source[field_name] = {
+                            str(k): input_entity.ecs_id for k in field_value.keys()
+                        }
+                    else:
+                        output_entity.attribute_source[field_name] = input_entity.ecs_id
+            
+            return output_entity
+        
+        # Use the consolidated method for non-entity results only
         output_entity = cls._create_output_entity_from_result(result, output_entity_class, function_name)
         
         # Set Phase 4 provenance fields after entity creation
