@@ -749,9 +749,8 @@ class CallableRegistry:
                 raise
             
             # Check if Pure ConfigEntity function needs multi-entity processing
-            is_multi_entity = (metadata.supports_unpacking and
-                              (metadata.expected_output_count > 1 or
-                               metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+            is_multi_entity = (metadata.expected_output_count > 1 or
+                              metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return', 'non_entity'])
 
             if is_multi_entity:
                 # Route to multi-entity processing path (same logic as transactional path)
@@ -888,8 +887,8 @@ class CallableRegistry:
         if not execution_entity:
             raise ValueError("Failed to create isolated execution environment")
         
-        # Execute function with entity boundaries
-        function_args = execution_entity.model_dump(exclude={
+        # Execute function with entity boundaries - preserve Entity objects
+        excluded_fields = {
             'ecs_id', 'live_id', 'created_at', 'forked_at', 
             'previous_ecs_id', 'lineage_id', 'old_ids', 'old_ecs_id',
             'root_ecs_id', 'root_live_id', 'from_storage', 
@@ -897,7 +896,13 @@ class CallableRegistry:
             # Phase 4 fields
             'derived_from_function', 'derived_from_execution_id', 
             'sibling_output_entities', 'output_index'
-        })
+        }
+        
+        # Extract function arguments while preserving Entity objects
+        function_args = {}
+        for field_name, field_value in execution_entity.__dict__.items():
+            if field_name not in excluded_fields and not field_name.startswith('_'):
+                function_args[field_name] = field_value
         
         try:
             if metadata.is_async:
@@ -910,9 +915,8 @@ class CallableRegistry:
             raise
         
         # Check if result needs enhanced processing for multi-entity returns
-        is_multi_entity = (metadata.supports_unpacking and 
-                          (metadata.expected_output_count > 1 or 
-                           metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+        is_multi_entity = (metadata.expected_output_count > 1 or 
+                          metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return', 'non_entity'])
         if is_multi_entity:
             # Use enhanced result processing for multi-entity returns
             object_identity_map = {}  # Empty since borrowing path doesn't track object identity the same way
@@ -993,9 +997,8 @@ class CallableRegistry:
             raise
         
         # Step 3: Enhanced finalization with Phase 2 unpacking
-        is_multi_entity = (metadata.supports_unpacking and 
-                          (metadata.expected_output_count > 1 or 
-                           metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return']))
+        is_multi_entity = (metadata.expected_output_count > 1 or 
+                          metadata.output_pattern in ['list_return', 'tuple_return', 'dict_return', 'non_entity'])
         if is_multi_entity:
             # Use multi-entity result processing for multi-entity returns
             return await cls._finalize_multi_entity_result(

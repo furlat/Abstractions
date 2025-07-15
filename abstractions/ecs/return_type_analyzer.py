@@ -42,7 +42,8 @@ class ReturnAnalysis:
         non_entity_data: Dict[str, Any],
         unpacking_strategy: str,
         container_metadata: Dict[str, Any],
-        sibling_groups: List[List[int]]  # Groups of entity indices that are siblings
+        sibling_groups: List[List[int]],  # Groups of entity indices that are siblings
+        force_unpack: bool = False  # Whether force unpacking was used
     ):
         self.pattern = pattern
         self.entity_count = entity_count
@@ -51,18 +52,20 @@ class ReturnAnalysis:
         self.unpacking_strategy = unpacking_strategy
         self.container_metadata = container_metadata
         self.sibling_groups = sibling_groups
+        self.force_unpack = force_unpack
 
 
 class ReturnTypeAnalyzer:
     """Sophisticated analyzer for function return patterns."""
     
     @classmethod
-    def analyze_return(cls, result: Any) -> ReturnAnalysis:
+    def analyze_return(cls, result: Any, force_unpack: bool = False) -> ReturnAnalysis:
         """
         Analyze function return and determine comprehensive unpacking strategy.
         
         Args:
             result: The function return value to analyze
+            force_unpack: If True, force unpacking for containers (default: False)
             
         Returns:
             ReturnAnalysis with complete classification and unpacking strategy
@@ -74,7 +77,7 @@ class ReturnTypeAnalyzer:
         entities, non_entity_data, container_metadata = cls._extract_entities_and_metadata(result, pattern)
         
         # Step 3: Determine unpacking strategy
-        unpacking_strategy = cls._determine_unpacking_strategy(pattern, len(entities), result)
+        unpacking_strategy = cls._determine_unpacking_strategy(pattern, len(entities), result, force_unpack)
         
         # Step 4: Identify sibling groups (entities that should be linked)
         sibling_groups = cls._identify_sibling_groups(result, entities, pattern)
@@ -86,7 +89,8 @@ class ReturnTypeAnalyzer:
             non_entity_data=non_entity_data,
             unpacking_strategy=unpacking_strategy,
             container_metadata=container_metadata,
-            sibling_groups=sibling_groups
+            sibling_groups=sibling_groups,
+            force_unpack=force_unpack
         )
     
     @classmethod
@@ -283,28 +287,44 @@ class ReturnTypeAnalyzer:
         return entities, non_entity_data, container_metadata
     
     @classmethod
-    def _determine_unpacking_strategy(cls, pattern: ReturnPattern, entity_count: int, original_result: Any = None) -> str:
-        """Determine the appropriate unpacking strategy."""
+    def _determine_unpacking_strategy(cls, pattern: ReturnPattern, entity_count: int, original_result: Any = None, force_unpack: bool = False) -> str:
+        """
+        Determine the appropriate unpacking strategy.
+        
+        Args:
+            pattern: The return pattern classification
+            entity_count: Number of entities in the result
+            original_result: The original result value
+            force_unpack: If True, force unpacking for containers (default: False)
+            
+        Returns:
+            String indicating the unpacking strategy
+            
+        Design:
+            - Default behavior: Only unpack Tuple[Entity, Entity] (safe by default)
+            - Force unpacking: Allow explicit unpacking of containers when requested
+            - Core principle: Never unpack to atomic data, only to pure entities
+        """
         if pattern == ReturnPattern.SINGLE_ENTITY:
             return "none"  # No unpacking needed
-        elif pattern in [ReturnPattern.TUPLE_ENTITIES, ReturnPattern.LIST_ENTITIES]:
+        elif pattern == ReturnPattern.TUPLE_ENTITIES:
+            # Only tuple of pure entities gets unpacked by default
             return "sequence_unpack"
-        elif pattern == ReturnPattern.DICT_ENTITIES:
-            return "dict_unpack"
-        elif pattern == ReturnPattern.MIXED_CONTAINER:
-            return "mixed_unpack"
-        elif pattern == ReturnPattern.NESTED_STRUCTURE:
-            return "nested_unpack"
-        elif pattern == ReturnPattern.NON_ENTITY and original_result is not None:
-            # Handle empty containers as their container type, not wrapped
-            if isinstance(original_result, (list, tuple)) and len(original_result) == 0:
+        elif force_unpack and pattern in [ReturnPattern.LIST_ENTITIES, ReturnPattern.DICT_ENTITIES, ReturnPattern.NESTED_STRUCTURE]:
+            # Explicit force unpacking for containers
+            if pattern == ReturnPattern.LIST_ENTITIES:
                 return "sequence_unpack"
-            elif isinstance(original_result, dict) and len(original_result) == 0:
+            elif pattern == ReturnPattern.DICT_ENTITIES:
                 return "dict_unpack"
-            else:
-                return "wrap_in_entity"
+            elif pattern == ReturnPattern.NESTED_STRUCTURE:
+                return "nested_unpack"
+        elif pattern == ReturnPattern.NON_ENTITY and original_result is not None:
+            # Handle empty containers - wrap them instead of unpacking
+            return "wrap_in_entity"
         else:
-            return "wrap_in_entity"  # Non-entity results get wrapped
+            # Default: wrap everything else in container entities
+            # This includes: LIST_ENTITIES, DICT_ENTITIES, MIXED_CONTAINER, NESTED_STRUCTURE
+            return "wrap_in_entity"
     
     @classmethod
     def _identify_sibling_groups(
@@ -441,7 +461,7 @@ class QuickPatternDetector:
             return None  # Needs full analysis
     
     @classmethod
-    def analyze_type_signature(cls, return_type: Any) -> Dict[str, Any]:
+    def analyze_type_signature(cls, return_type: Any, force_unpack: bool = False) -> Dict[str, Any]:
         """
         Analyze function return type signature for registration-time analysis.
         
@@ -450,6 +470,7 @@ class QuickPatternDetector:
         
         Args:
             return_type: The function's return type annotation
+            force_unpack: If True, force unpacking for containers (default: False)
             
         Returns:
             Dict containing analysis metadata for function registration
@@ -518,8 +539,8 @@ class QuickPatternDetector:
         elif origin in (list, typing.List):
             metadata["pattern"] = "list_return"
             metadata["container_type"] = "list"
-            metadata["supports_unpacking"] = True
-            metadata["expected_entity_count"] = -1  # Unknown at registration time
+            metadata["supports_unpacking"] = force_unpack  # Only unpack if explicitly requested
+            metadata["expected_entity_count"] = -1 if force_unpack else 1  # Unknown if unpacking, 1 if wrapping
             
             if args:
                 element_type = args[0]
@@ -533,8 +554,8 @@ class QuickPatternDetector:
         elif origin in (dict, typing.Dict):
             metadata["pattern"] = "dict_return"
             metadata["container_type"] = "dict"
-            metadata["supports_unpacking"] = True
-            metadata["expected_entity_count"] = -1  # Unknown at registration time
+            metadata["supports_unpacking"] = force_unpack  # Only unpack if explicitly requested
+            metadata["expected_entity_count"] = -1 if force_unpack else 1  # Unknown if unpacking, 1 if wrapping
             
             if len(args) >= 2:
                 key_type, value_type = args[0], args[1]

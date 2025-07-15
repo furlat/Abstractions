@@ -213,26 +213,23 @@ async def run_tests_async() -> Tuple[int, int, List[str], List[str]]:
         students = [alice, bob, charlie]
         batch_result = await CallableRegistry.aexecute("batch_analyze_performance_async", students=students)
         
-        assert isinstance(batch_result, list)
-        assert len(batch_result) == 3
+        # With type-safe wrapping, List[Tuple[...]] returns a single WrapperEntity
+        assert isinstance(batch_result, Entity)
+        assert hasattr(batch_result, 'wrapped_value'), "Expected WrapperEntity with wrapped_value attribute"
         
-        # Handle Union[Entity, List[Entity]] return type
-        if isinstance(batch_result, list):
-            # For List[Tuple[Assessment, Recommendation]], we get a list of entities
-            assert len(batch_result) >= 2  # At least 2 students worth of results
-            
-            # Check if we have Assessment and Recommendation entities
-            assessments = [item for item in batch_result if isinstance(item, Assessment)]
-            recommendations = [item for item in batch_result if isinstance(item, Recommendation)]
-            
-            assert len(assessments) == 3  # One for each student
-            assert len(recommendations) == 3  # One for each student
-            
-            # Check reasoning contains async marker
-            for rec in recommendations:
-                assert "Async batch analysis" in rec.reasoning
-        else:
-            assert False, f"Expected list for batch return, got {type(batch_result)}"
+        # Extract the wrapped list (type-safe access)
+        wrapped_list = getattr(batch_result, 'wrapped_value')
+        assert isinstance(wrapped_list, list)
+        assert len(wrapped_list) == 3  # One tuple per student
+        
+        # Check each tuple contains Assessment and Recommendation
+        for item in wrapped_list:
+            assert isinstance(item, tuple)
+            assert len(item) == 2
+            assessment, recommendation = item
+            assert isinstance(assessment, Assessment)
+            assert isinstance(recommendation, Recommendation)
+            assert "Async batch analysis" in recommendation.reasoning
     
     try:
         await test_async_batch_processing()
