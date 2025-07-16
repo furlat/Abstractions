@@ -73,7 +73,10 @@ async def demonstrate_async_patterns():
     for i, result in enumerate(batch_results):
         if isinstance(result, list):
             result = result[0] if result else None
-        print(f"  Result {i+1}: avg={result.avg:.2f}, type={result.analysis_type}")
+        if result and isinstance(result, AnalysisResult):
+            print(f"  Result {i+1}: avg={result.avg:.2f}, type={result.analysis_type}")
+        else:
+            print(f"  Result {i+1}: No valid result")
     
     return batch_results
 

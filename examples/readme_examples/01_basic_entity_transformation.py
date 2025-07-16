@@ -51,7 +51,7 @@ class DeanListResult(Entity):
 @CallableRegistry.register("calculate_dean_list")
 def calculate_dean_list(student: Student, threshold: float = 3.7) -> DeanListResult:
     return DeanListResult(
-        student_id=student.ecs_id,
+        student_id=str(student.ecs_id),
         qualified=student.gpa >= threshold,
         margin=student.gpa - threshold
     )

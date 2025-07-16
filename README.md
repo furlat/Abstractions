@@ -112,7 +112,7 @@ class DeanListResult(Entity):
 @CallableRegistry.register("calculate_dean_list")
 def calculate_dean_list(student: Student, threshold: float = 3.7) -> DeanListResult:
     return DeanListResult(
-        student_id=student.ecs_id,
+        student_id=str(student.ecs_id),
         qualified=student.gpa >= threshold,
         margin=student.gpa - threshold
     )
@@ -372,7 +372,10 @@ batch_results = await asyncio.gather(
 for i, result in enumerate(batch_results):
     if isinstance(result, list):
         result = result[0] if result else None
-    print(f"Result {i+1}: avg={result.avg:.2f}, type={result.analysis_type}")
+    if result and isinstance(result, AnalysisResult):
+        print(f"Result {i+1}: avg={result.avg:.2f}, type={result.analysis_type}")
+    else:
+        print(f"Result {i+1}: No valid result")
 
 # Each execution:
 # 1. Gets its own immutable copy of input entities
