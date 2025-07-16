@@ -86,8 +86,9 @@ def apply_bonus(student: Student, bonus: float) -> Student:
     student.gpa = min(4.0, student.gpa + bonus)
     return student
 
-updated = CallableRegistry.execute("apply_bonus", 
-    student=original, bonus=0.2)
+# Execute the transformation
+bonus_result = CallableRegistry.execute("apply_bonus", student=original, bonus=0.2)
+updated = bonus_result if not isinstance(bonus_result, list) else bonus_result[0]
 
 # Both versions coexist - complete history preserved
 assert original.gpa == 3.0  # Original unchanged
@@ -102,6 +103,11 @@ This model supports distributed processing because entities are self-contained d
 Functions become the unit of logic in the system. Functions are registered and managed by the framework. This registration provides metadata extraction and automatic integration with the entity lifecycle:
 
 ```python
+class DeanListResult(Entity):
+    student_id: str = ""
+    qualified: bool = False
+    margin: float = 0.0
+
 # Functions declare their data dependencies via type hints
 @CallableRegistry.register("calculate_dean_list")
 def calculate_dean_list(student: Student, threshold: float = 3.7) -> DeanListResult:
@@ -110,6 +116,14 @@ def calculate_dean_list(student: Student, threshold: float = 3.7) -> DeanListRes
         qualified=student.gpa >= threshold,
         margin=student.gpa - threshold
     )
+
+# Execute the dean list calculation
+student = Student(name="Alice", gpa=3.8)
+student.promote_to_root()
+dean_result = CallableRegistry.execute("calculate_dean_list", student=student, threshold=3.7)
+dean_list_result = dean_result if not isinstance(dean_result, list) else dean_result[0]
+
+print(f"Qualified: {dean_list_result.qualified}, Margin: {dean_list_result.margin}")
 
 # The framework automatically:
 # 1. Creates input/output entity models from signatures
@@ -125,20 +139,27 @@ This approach creates a **distributed function registry** where any function can
 The framework implements a unified addressing scheme that makes all entity data accessible via string addresses. String addresses serve as the foundation for distributed data processing:
 
 ```python
+from abstractions.ecs.functional_api import get
+
 # Local entity access
 student = Student(name="Carol", gpa=3.9)
 student.promote_to_root()
 
 # Same data accessible via string address
-student_data = {
-    "name": f"@{student.ecs_id}.name",
-    "gpa": f"@{student.ecs_id}.gpa"
-}
+student_name = get(f"@{student.ecs_id}.name")
+student_gpa = get(f"@{student.ecs_id}.gpa")
+
+print(f"Retrieved: {student_name} with GPA {student_gpa}")
+
+class Course(Entity):
+    name: str = ""
+    credits: int = 0
+    grade: str = ""
 
 # Compose new entities from distributed data sources
 @CallableRegistry.register("create_transcript")
-def create_transcript(name: str, gpa: float, courses: List[str]) -> Transcript:
-    return Transcript(student_name=name, final_gpa=gpa, course_list=courses)
+def create_transcript(name: str, gpa: float, courses: List[str]) -> Course:
+    return Course(name=f"Transcript for {name}", credits=len(courses), grade=f"GPA: {gpa}")
 
 # Execute with mixed local and remote data
 transcript = CallableRegistry.execute("create_transcript",
@@ -146,6 +167,8 @@ transcript = CallableRegistry.execute("create_transcript",
     gpa=f"@{student.ecs_id}.gpa",        # From entity  
     courses=["Math", "Physics", "CS"]     # Direct data
 )
+transcript_result = transcript if not isinstance(transcript, list) else transcript[0]
+print(f"Created: {transcript_result.name}")
 ```
 
 This addressing provides **location transparency** - your functions don't need to know where data lives, just how to address it. The framework handles resolution, whether the entity is in local memory, a remote cache, or a distributed store.
@@ -168,10 +191,14 @@ students = [Student(name=f"S{i}", gpa=3.0+i*0.2) for i in range(5)]
 for s in students:
     s.promote_to_root()
 
-normalized = CallableRegistry.execute("normalize_grades", cohort=students)
+# Execute the normalization
+normalized_result = CallableRegistry.execute("normalize_grades", cohort=students)
+normalized = normalized_result if isinstance(normalized_result, list) else [normalized_result]
+
+print(f"Normalized {len(normalized)} students")
 
 # Each output entity tracks its lineage and versioning
-for norm in normalized:
+for i, norm in enumerate(normalized[:3]):  # Show first 3
     print(f"{norm.name} was created with lineage {norm.lineage_id}")
     print(f"Entity ID: {norm.ecs_id}, derived from original student data")
 ```
@@ -243,12 +270,25 @@ def analyze_performance(student: Student) -> Tuple[Assessment, Recommendation]:
     return assessment, recommendation
 
 # Automatic unpacking and relationship tracking
+student = Student(name="Alice", gpa=3.8)
+student.promote_to_root()
+
 result = CallableRegistry.execute("analyze_performance", student=student)
-assessment, rec = result  # Tuple is automatically unpacked
+
+# Handle Union[Entity, List[Entity]] return type
+if isinstance(result, list):
+    assessment, recommendation = result[0], result[1]
+else:
+    assessment, recommendation = result
+
+print(f"Assessment: {assessment.performance_level}")
+print(f"Recommendation: {recommendation.action}")
 
 # Entities know they're siblings from the same computation
-print(assessment.sibling_output_entities)  # [rec.ecs_id]
-print(rec.sibling_output_entities)         # [assessment.ecs_id]
+if hasattr(assessment, 'sibling_output_entities'):
+    print(f"Assessment siblings: {assessment.sibling_output_entities}")
+if hasattr(recommendation, 'sibling_output_entities'):
+    print(f"Recommendation siblings: {recommendation.sibling_output_entities}")
 ```
 
 This enables **complex data flows** where single computations produce multiple related outputs that may be consumed by different downstream systems.
@@ -314,6 +354,9 @@ async def analyze_grades_async(student: Student, grades: List[float]) -> Analysi
     )
 
 # Execute concurrently without interference
+student = Student(name="TestStudent", gpa=3.5)
+student.promote_to_root()
+
 batch_results = await asyncio.gather(
     CallableRegistry.aexecute("analyze_grades",
         student=f"@{student.ecs_id}",
@@ -324,6 +367,12 @@ batch_results = await asyncio.gather(
         grades=[3.8, 3.9, 3.7, 4.0]
     )
 )
+
+# Results processed concurrently without interference
+for i, result in enumerate(batch_results):
+    if isinstance(result, list):
+        result = result[0] if result else None
+    print(f"Result {i+1}: avg={result.avg:.2f}, type={result.analysis_type}")
 
 # Each execution:
 # 1. Gets its own immutable copy of input entities
@@ -340,6 +389,8 @@ You can combine async execution with event handlers to create cascading computat
 
 ```python
 from abstractions.events.events import Event, CreatedEvent, on, emit
+from uuid import UUID, uuid4
+from pydantic import BaseModel, Field
 
 class ProcessedStudent(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -348,8 +399,18 @@ class ProcessedStudent(BaseModel):
     processing_notes: str = ""
     status: str = "processed"
 
+class BatchReport(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    batch_id: str
+    student_count: int = 0
+    average_gpa: float = 0.0
+    batch_status: str = "completed"
+
 class StudentProcessedEvent(CreatedEvent[ProcessedStudent]):
     type: str = "student.processed"
+
+class BatchCompletedEvent(CreatedEvent[BatchReport]):
+    type: str = "batch.completed"
 
 # Global collections for event-driven batching
 processed_students: List[UUID] = []
@@ -384,6 +445,30 @@ async def collect_processed_students(event: StudentProcessedEvent):
             batch = processed_students[:3]
             processed_students.clear()
             await trigger_batch_analysis(batch)
+
+async def trigger_batch_analysis(batch_students):
+    """Process a batch of students."""
+    print(f"Processing batch of {len(batch_students)} students...")
+    
+    # Create batch report
+    batch_report = BatchReport(
+        batch_id=f"BATCH_{len(batch_students)}",
+        student_count=len(batch_students),
+        average_gpa=3.6,  # Simplified calculation
+        batch_status="completed"
+    )
+    
+    # Emit batch completion event
+    await emit(BatchCompletedEvent(
+        subject_type=BatchReport,
+        subject_id=batch_report.id,
+        created_id=batch_report.id
+    ))
+
+# Usage: Just process students, everything else happens automatically
+students = [Student(name=f"Student_{i}", gpa=3.0 + i*0.1) for i in range(7)]
+for student in students:
+    await process_student(student)
 
 # Step 3: Analyze batches and create reports
 @CallableRegistry.register("analyze_batch")
@@ -539,8 +624,21 @@ def calculate_weighted_grade(
         student_id=submissions[0].student_id if submissions else "",
         assignments=grade_map,
         weighted_average=weighted_avg,
-        letter_grade=_calculate_letter_grade(weighted_avg)
+        letter_grade=calculate_letter_grade(weighted_avg)
     )
+
+def calculate_letter_grade(weighted_avg: float) -> str:
+    """Helper function to calculate letter grade from weighted average."""
+    if weighted_avg >= 90:
+        return "A"
+    elif weighted_avg >= 80:
+        return "B"
+    elif weighted_avg >= 70:
+        return "C"
+    elif weighted_avg >= 60:
+        return "D"
+    else:
+        return "F"
 
 # Execute across distributed data (use aexecute for async)
 report = await CallableRegistry.aexecute("calculate_weighted_grade",
