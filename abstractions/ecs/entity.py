@@ -1,1500 +1,2434 @@
-############################################################
-# entity.py
-############################################################
-
-"""
-Entity System with Hierarchical Version Control
-
-This module implements a hierarchical entity system with version control capabilities.
-Key concepts:
-
-1. ENTITY IDENTITY AND STATE:
-   - Each entity has both an `id` (version identifier) and a `live_id` (memory state identifier)
-   - Entities are hashable by (id, live_id) combination to distinguish warm/cold copies
-   - Cold snapshots are stored versions, warm copies are in-memory working versions
-
-2. HIERARCHICAL STRUCTURE:
-   - Entities can contain other entities (sub-entities) in fields, lists, or dictionaries
-   - The `get_sub_entities()` method recursively discovers all nested entities
-   - Changes in sub-entities trigger parent entity versioning
-
-3. MODIFICATION DETECTION:
-   - `has_modifications()` performs deep comparison of entity trees
-   - Returns both whether changes exist and the set of modified entities
-   - Handles nested changes automatically through recursive comparison
-
-4. FORKING PROCESS:
-   - When changes are detected, affected entities get new IDs
-   - Parent entities automatically fork when sub-entities change
-   - All changes happen in memory first, then are committed to storage
-   - No explicit dependency tracking needed - hierarchy is discovered dynamically
-
-5. STORAGE LAYER:
-   - Stores complete entity trees in a single operation
-   - Uses cold snapshots to preserve version history
-   - Handles circular references and complex hierarchies automatically
-
-Example Usage:
-```python
-# Create and modify an entity
-entity = ComplexEntity(nested=SubEntity(...))
-entity.nested.value = "new"
-
-# Automatic versioning on changes
-if entity.has_modifications(stored_version):
-    new_version = entity.fork()  # Creates new IDs for changed entities
-    
-# Storage handles complete trees
-EntityRegistry.register(new_version)  # Stores all sub-entities
-```
-
-Implementation Notes:
-- No dependency graphs needed - hierarchy is discovered through type hints
-- Warm/cold copy distinction through live_id
-- Bottom-up change propagation through recursive detection
-- Complete tree operations for consistency
-"""
-
-import json
-import inspect
-import importlib
-import sys
-from uuid import UUID, uuid4
-from typing import Dict, Set, List, Optional, Any, Tuple, TypeVar, Callable, cast
-from enum import Enum
-import logging
-from pydantic import BaseModel, Field, ConfigDict
-from typing import (
-    Any, Dict, Optional, Type, TypeVar, List, Protocol, runtime_checkable,
-    Union, Callable, get_args, cast, Self, Set, Tuple, Generic, get_origin, ForwardRef,
-    ClassVar
-)
-from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from copy import deepcopy
-from functools import wraps
+""" Implementing step by step the entity system from
+source docs:  /Users/tommasofurlanello/Documents/Dev/Abstractions/abstractions/ecs/tree_entity.md"""
 
 from pydantic import BaseModel, Field, model_validator
 
-# SQLAlchemy imports for BaseEntitySQL
-from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, JSON, String, Table, Uuid as SQLAUuid
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+from collections import defaultdict
+
+from pydantic import BaseModel, Field, model_validator
+from typing import Dict, List, Set, Tuple, Any, Optional, Type, Union, get_type_hints, get_origin, get_args, Self
+from uuid import UUID, uuid4
+from enum import Enum
+from collections import deque
+import inspect
+from pydantic import create_model
+
+# Event system imports for automatic event emission
+from abstractions.events.events import emit_events, StateTransitionEvent, ModifyingEvent, ModifiedEvent
+
+from abstractions.events.entity_events import (
+    EntityRegistrationEvent, EntityRegisteredEvent,
+    EntityVersioningEvent, EntityVersionedEvent,
+    EntityPromotionEvent, EntityPromotedEvent,
+    EntityDetachmentEvent, EntityDetachedEvent,
+    EntityAttachmentEvent, EntityAttachedEvent,
+    DataBorrowingEvent, DataBorrowedEvent,
+    IDUpdateEvent, IDUpdatedEvent,
+    TreeBuildingEvent, TreeBuiltEvent,
+    ChangeDetectionEvent, ChangesDetectedEvent
 )
-from sqlalchemy.orm import (
-    Mapped, Session, mapped_column, relationship, declarative_base
-)
-from abstractions.ecs.base_registry import BaseRegistry
 
-# Create SQLAlchemy Base for the entity models
-Base = declarative_base()
+# Edge type enum
+class EdgeType(str, Enum):
+    """Type of edge between entities"""
+    DIRECT = "direct"         # Direct field reference
+    LIST = "list"             # Entity in a list
+    DICT = "dict"             # Entity in a dictionary
+    SET = "set"               # Entity in a set
+    TUPLE = "tuple"           # Entity in a tuple
+    HIERARCHICAL = "hierarchical"  # Main ownership path
 
-##############################
+# Edge representation
+class EntityEdge(BaseModel):
+    """Edge between two entities in the tree"""
+    source_id: UUID
+    target_id: UUID
+    edge_type: EdgeType                   # The container type (DIRECT, LIST, DICT, etc.)
+    field_name: str
+    container_index: Optional[int] = None  # For lists and tuples
+    container_key: Optional[Any] = None    # For dictionaries
+    ownership: bool = True                 # Whether this represents an ownership relationship
+    is_hierarchical: bool = False          # Whether this is a hierarchical edge
 
-# 2) Type Definitions
-##############################
+    def __hash__(self):
+        return hash((self.source_id, self.target_id, self.field_name))
 
-# Define type variables
-T = TypeVar('T')
-SQMT = TypeVar('SQMT', bound='SQLModelType')
-T_Self = TypeVar('T_Self', bound='Entity')
-
-# Type for SQL model classes that implement to_entity/from_entity
-class SQLModelType(Protocol):
-    @classmethod
-    def from_entity(cls, entity: 'Entity') -> 'SQLModelType': ...
-    def to_entity(self) -> 'Entity': ...
-    ecs_id: UUID
-    lineage_id: UUID
-
-##############################
-# 3) Core comparison and storage utilities
-##############################
-
-def compare_entity_fields(
-    entity1: Any, 
-    entity2: Any, 
-    exclude_fields: Optional[Set[str]] = None
-) -> Tuple[bool, Dict[str, Dict[str, Any]]]:
+# The main EntityTree class
+class EntityTree(BaseModel):
     """
-    Improved comparison method for entity fields.
-    Compares content rather than references for better change detection.
+    A tree of entities with optimized structure for versioning operations.
+    
+    Maintains:
+    - Complete collection of entities in the tree
+    - Edge relationships between entities
+    - Ancestry paths from each entity to the root
+    - Root entity information
+    """
+    # Basic tree info
+    root_ecs_id: UUID
+    lineage_id: UUID
+    
+    # Node storage - maps entity.ecs_id to the entity object
+    nodes: Dict[UUID, "Entity"] = Field(default_factory=dict)
+    
+    # Edge storage - maps (source_id, target_id) to edge details
+    edges: Dict[Tuple[UUID, UUID], EntityEdge] = Field(default_factory=dict)
+    
+    # Outgoing edges by source - maps entity.ecs_id to list of target IDs
+    outgoing_edges: Dict[UUID, List[UUID]] = Field(default_factory=lambda: defaultdict(list))
+    
+    # Incoming edges by target - maps entity.ecs_id to list of source IDs
+    incoming_edges: Dict[UUID, List[UUID]] = Field(default_factory=lambda: defaultdict(list))
+    
+    # Ancestry paths - maps entity.ecs_id to list of IDs from entity to root
+    ancestry_paths: Dict[UUID, List[UUID]] = Field(default_factory=dict)
+    
+    # Map of live_id to ecs_id for easy lookup
+    live_id_to_ecs_id: Dict[UUID, UUID] = Field(default_factory=dict)
+    
+    # Metadata for debugging and tracking
+    node_count: int = 0
+    edge_count: int = 0
+    max_depth: int = 0
+
+    # Methods for adding entities and edges
+    def add_entity(self, entity: "Entity") -> None:
+        """Add an entity to the tree"""
+        if entity.ecs_id not in self.nodes:
+            self.nodes[entity.ecs_id] = entity
+            self.live_id_to_ecs_id[entity.live_id] = entity.ecs_id
+            self.node_count += 1
+    
+    def add_edge(self, edge: EntityEdge) -> None:
+        """Add an edge to the tree"""
+        edge_key = (edge.source_id, edge.target_id)
+        if edge_key not in self.edges:
+            self.edges[edge_key] = edge
+            self.outgoing_edges[edge.source_id].append(edge.target_id)
+            self.incoming_edges[edge.target_id].append(edge.source_id)
+            self.edge_count += 1
+    
+    def add_direct_edge(self, source: "Entity", target: "Entity", field_name: str, ownership: bool = True) -> None:
+        """Add a direct field reference edge"""
+        edge = EntityEdge(
+            source_id=source.ecs_id,
+            target_id=target.ecs_id,
+            edge_type=EdgeType.DIRECT,
+            field_name=field_name,
+            ownership=ownership
+        )
+        self.add_edge(edge)
+    
+    def add_list_edge(self, source: "Entity", target: "Entity", field_name: str, index: int, ownership: bool = True) -> None:
+        """Add a list container edge"""
+        edge = EntityEdge(
+            source_id=source.ecs_id,
+            target_id=target.ecs_id,
+            edge_type=EdgeType.LIST,
+            field_name=field_name,
+            container_index=index,
+            ownership=ownership
+        )
+        self.add_edge(edge)
+    
+    def add_dict_edge(self, source: "Entity", target: "Entity", field_name: str, key: Any, ownership: bool = True) -> None:
+        """Add a dictionary container edge"""
+        edge = EntityEdge(
+            source_id=source.ecs_id,
+            target_id=target.ecs_id,
+            edge_type=EdgeType.DICT,
+            field_name=field_name,
+            container_key=key,
+            ownership=ownership
+        )
+        self.add_edge(edge)
+    
+    def add_set_edge(self, source: "Entity", target: "Entity", field_name: str, ownership: bool = True) -> None:
+        """Add a set container edge"""
+        edge = EntityEdge(
+            source_id=source.ecs_id,
+            target_id=target.ecs_id,
+            edge_type=EdgeType.SET,
+            field_name=field_name,
+            ownership=ownership
+        )
+        self.add_edge(edge)
+    
+    def add_tuple_edge(self, source: "Entity", target: "Entity", field_name: str, index: int, ownership: bool = True) -> None:
+        """Add a tuple container edge"""
+        edge = EntityEdge(
+            source_id=source.ecs_id,
+            target_id=target.ecs_id,
+            edge_type=EdgeType.TUPLE,
+            field_name=field_name,
+            container_index=index,
+            ownership=ownership
+        )
+        self.add_edge(edge)
+    
+    def set_ancestry_path(self, entity_id: UUID, path: List[UUID]) -> None:
+        """Set the ancestry path for an entity"""
+        self.ancestry_paths[entity_id] = path
+        self.max_depth = max(self.max_depth, len(path))
+    
+    def mark_edge_as_hierarchical(self, source_id: UUID, target_id: UUID) -> None:
+        """Mark an edge as the hierarchical (primary ownership) edge"""
+        edge_key = (source_id, target_id)
+        if edge_key in self.edges:
+            edge = self.edges[edge_key]
+            edge.is_hierarchical = True
+    
+
+    
+    def get_entity(self, entity_id: UUID) -> Optional["Entity"]:
+        """Get an entity by its ID"""
+        return self.nodes.get(entity_id)
+    
+    def get_entity_by_live_id(self, live_id: UUID) -> Optional["Entity"]:
+        """Get an entity by its live ID"""
+        ecs_id = self.live_id_to_ecs_id.get(live_id)
+        if ecs_id:
+            return self.nodes.get(ecs_id)
+        return None
+    
+    def get_edges(self, source_id: UUID, target_id: UUID) -> Optional[EntityEdge]:
+        """Get the edge between two entities"""
+        edge_key = (source_id, target_id)
+        return self.edges.get(edge_key)
+    
+    def get_outgoing_edges(self, entity_id: UUID) -> List[UUID]:
+        """Get all entities that this entity references"""
+        return self.outgoing_edges.get(entity_id, [])
+    
+    def get_incoming_edges(self, entity_id: UUID) -> List[UUID]:
+        """Get all entities that reference this entity"""
+        return self.incoming_edges.get(entity_id, [])
+    
+    def get_ancestry_path(self, entity_id: UUID) -> List[UUID]:
+        """Get the ancestry path from an entity to the root"""
+        return self.ancestry_paths.get(entity_id, [])
+    
+    def get_path_distance(self, entity_id: UUID) -> int:
+        """Get the distance (path length) from an entity to the root"""
+        path = self.ancestry_paths.get(entity_id, [])
+        return len(path)
+    
+    # Convenience methods for tree analysis
+    def is_hierarchical_edge(self, source_id: UUID, target_id: UUID) -> bool:
+        """Check if the edge is a hierarchical (ownership) edge"""
+        edge_key = (source_id, target_id)
+        if edge_key in self.edges:
+            return self.edges[edge_key].is_hierarchical
+        return False
+    
+    def get_hierarchical_parent(self, entity_id: UUID) -> Optional[UUID]:
+        """Get the hierarchical parent of an entity"""
+        for source_id in self.incoming_edges.get(entity_id, []):
+            if self.is_hierarchical_edge(source_id, entity_id):
+                return source_id
+        return None
+    
+    def get_hierarchical_children(self, entity_id: UUID) -> List[UUID]:
+        """Get all hierarchical children of an entity"""
+        children = []
+        for target_id in self.outgoing_edges.get(entity_id, []):
+            if self.is_hierarchical_edge(entity_id, target_id):
+                children.append(target_id)
+        return children
+    
+    def update_live_ids(self) -> None:
+        """ update the live id of all nodes in the tree used when a stored tree is loaded from the registry to enforce immutability
+        and map them to the new live id """
+        root_node = self.get_entity(self.root_ecs_id)
+        if root_node is None:
+            raise ValueError("root node not found in tree")
+        old_root_live_id = root_node.live_id
+        new_root_live_id = uuid4()
+        root_node.live_id = new_root_live_id
+        root_node.root_live_id = new_root_live_id
+        self.live_id_to_ecs_id[new_root_live_id] = self.root_ecs_id
+        # Only remove the old ID if it's in the map
+        if old_root_live_id in self.live_id_to_ecs_id:
+            self.live_id_to_ecs_id.pop(old_root_live_id)
+        for node in self.nodes.values():
+            if node.live_id != new_root_live_id:
+                old_node_live_id = node.live_id  # Save the old ID before changing it
+                node.live_id = uuid4()  # Generate a new ID
+                node.root_live_id = new_root_live_id  # Update the root reference
+                self.live_id_to_ecs_id[node.live_id] = node.ecs_id  # Map new ID to ecs_id
+                # Only remove the old ID if it's in the map
+                if old_node_live_id in self.live_id_to_ecs_id:
+                    self.live_id_to_ecs_id.pop(old_node_live_id)
+
+        # Serialization/deserialization helpers
+
+
+# Functions to build the entity tree
+
+def get_field_ownership(entity: "Entity", field_name: str) -> bool:
+    """
+    Since we're not handling circular references yet, all fields are treated as hierarchical.
+    This is a simplification that will be enhanced later.
     
     Returns:
-        Tuple of (has_modifications, field_diffs_dict)
+        Always returns True for now
     """
-    logger = logging.getLogger("EntityComparison")
-    logger.info(f"Comparing entities: {type(entity1).__name__}({entity1.ecs_id}) vs {type(entity2).__name__}({entity2.ecs_id})")
+    return True
+
+def get_pydantic_field_type_entities(entity: "Entity", field_name: str, detect_non_entities: bool = False) -> Union[Optional[Type], bool]:
+    """
+    Get the entity type from a Pydantic field, handling container types properly.
     
-    if exclude_fields is None:
-        # Use the entity's custom ignore fields method if available
-        if hasattr(entity1, 'get_fields_to_ignore_for_comparison'):
-            exclude_fields = entity1.get_fields_to_ignore_for_comparison()
-        else:
-            # Default implementation fields to exclude
-            exclude_fields = {
-                'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
-                'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-                'sql_root', 'deps_graph', 'is_being_registered'
-            }
+    This function uses Pydantic's model_fields metadata, field annotations, and runtime
+    type checking to determine if a field contains entities or entity containers,
+    even when they're empty.
     
-    # Get field sets for both entities (ensure exclude_fields is a set for proper type checking)
-    exclude_set = set(exclude_fields) if exclude_fields is not None else set()
-    entity1_fields = set(entity1.model_fields.keys()) - exclude_set
-    entity2_fields = set(entity2.model_fields.keys()) - exclude_set
-    
-    logger.debug(f"Comparing {len(entity1_fields)} fields after excluding implementation fields")
-    
-    # Quick check for field set differences
-    if entity1_fields != entity2_fields:
-        diff_fields = entity1_fields.symmetric_difference(entity2_fields)
-        logger.info(f"Schema difference detected: fields {diff_fields} differ between entities")
-        return True, {f: {"type": "schema_change"} for f in diff_fields}
-    
-    # Detailed field comparison
-    field_diffs = {}
-    has_diffs = False
-    
-    # Check fields in first entity
-    for field in entity1_fields:
-        value1 = getattr(entity1, field)
-        value2 = getattr(entity2, field)
+    Args:
+        entity: The entity to inspect
+        field_name: The name of the field to check
+        detect_non_entities: If True, returns None for entity fields and True for non-entity fields
         
-        # If both are entities, compare by ecs_id instead of instance
-        if isinstance(value1, Entity) and isinstance(value2, Entity):
-            if value1.ecs_id != value2.ecs_id:
-                has_diffs = True
-                logger.info(f"Field '{field}' contains different entities: {value1.ecs_id} vs {value2.ecs_id}")
-                field_diffs[field] = {
-                    "type": "modified",
-                    "old_id": str(value2.ecs_id),
-                    "new_id": str(value1.ecs_id)
-                }
-        # If both are lists, compare items individually
-        elif isinstance(value1, list) and isinstance(value2, list):
-            if len(value1) != len(value2):
-                has_diffs = True
-                logger.info(f"Field '{field}' has different list lengths: {len(value1)} vs {len(value2)}")
-                field_diffs[field] = {
-                    "type": "modified",
-                    "old_length": len(value2),
-                    "new_length": len(value1)
-                }
-            else:
-                # For lists of entities, compare by ecs_id
-                if all(isinstance(v, Entity) for v in value1) and all(isinstance(v, Entity) for v in value2):
-                    ids1 = {e.ecs_id for e in value1}
-                    ids2 = {e.ecs_id for e in value2}
-                    if ids1 != ids2:
-                        has_diffs = True
-                        logger.info(f"Field '{field}' contains lists of different entities")
-                        logger.debug(f"List 1 IDs: {ids1}")
-                        logger.debug(f"List 2 IDs: {ids2}")
-                        field_diffs[field] = {
-                            "type": "modified",
-                            "old_ids": [str(id) for id in ids2],
-                            "new_ids": [str(id) for id in ids1]
-                        }
-                # Otherwise compare normally
-                elif value1 != value2:
-                    has_diffs = True
-                    logger.info(f"Field '{field}' has different list contents")
-                    field_diffs[field] = {
-                        "type": "modified",
-                        "old": value2,
-                        "new": value1
-                    }
-        # Special handling for datetime objects to handle timezone differences
-        elif isinstance(value1, datetime) and isinstance(value2, datetime):
-            # Normalize timezones for comparison
-            v1_normalized = value1
-            v2_normalized = value2
-            
-            # Add UTC timezone if missing
-            if not v1_normalized.tzinfo:
-                v1_normalized = v1_normalized.replace(tzinfo=timezone.utc)
-            if not v2_normalized.tzinfo:
-                v2_normalized = v2_normalized.replace(tzinfo=timezone.utc)
+    Returns:
+        If detect_non_entities=False (default):
+            - The Entity type or subclass if the field contains entities
+            - None otherwise
+        If detect_non_entities=True:
+            - None for entity fields
+            - True for non-entity fields
+    """
+    # Skip if field doesn't exist
+    if field_name not in entity.model_fields:
+        return None
+    
+    # First use Pydantic's model_fields which has rich metadata
+    field_info = entity.model_fields[field_name]
+    annotation = field_info.annotation
+    
+    # Check for identity fields that should be ignored in comparisons
+    if field_name in ('ecs_id', 'live_id', 'created_at', 'forked_at', 'previous_ecs_id', 
+                      'old_ids', 'old_ecs_id', 'from_storage', 'attribute_source', 'root_ecs_id', 
+                      'root_live_id', 'lineage_id'):
+        return None
+    
+    # For direct entity instance, handle based on detect_non_entities flag
+    field_value = getattr(entity, field_name)
+    if isinstance(field_value, Entity):
+        return None if detect_non_entities else type(field_value)
+    
+    # First check for container values with entities
+    is_entity_container = False
+    
+    # For populated containers, check content types directly
+    if field_value is not None:
+        # Check list type
+        if isinstance(field_value, list) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
                 
-            # Compare normalized values
-            if v1_normalized != v2_normalized:
-                has_diffs = True
-                logger.info(f"Field '{field}' has different datetime values (after normalization): {v1_normalized} vs {v2_normalized}")
-                field_diffs[field] = {
-                    "type": "modified",
-                    "old": v2_normalized,
-                    "new": v1_normalized
-                }
-        # For all other types, compare normally
-        elif value1 != value2:
-            has_diffs = True
-            logger.info(f"Field '{field}' has different values: {value1} vs {value2}")
-            field_diffs[field] = {
-                "type": "modified",
-                "old": value2,
-                "new": value1
-            }
+        # Check dict type
+        elif isinstance(field_value, dict) and field_value:
+            if any(isinstance(v, Entity) for v in field_value.values()):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for v in field_value.values():
+                        if isinstance(v, Entity):
+                            return type(v)
+                
+        # Check tuple type
+        elif isinstance(field_value, tuple) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
+                
+        # Check set type
+        elif isinstance(field_value, set) and field_value:
+            if any(isinstance(item, Entity) for item in field_value):
+                is_entity_container = True
+                if not detect_non_entities:
+                    # Find the first entity to use its type
+                    for item in field_value:
+                        if isinstance(item, Entity):
+                            return type(item)
     
-    logger.info(f"Comparison result: has_diffs={has_diffs}, found {len(field_diffs)} different fields")
-    return has_diffs, field_diffs
-
-def create_cold_snapshot(entity: 'Entity') -> 'Entity':
-    """
-    Create a cold snapshot of an entity for storage.
-    Ensures proper deep copying and field preservation.
-    """
-    # Create deep copy first
-    snapshot = deepcopy(entity)
+    # If we've determined it's a container with entities
+    if is_entity_container:
+        return None if detect_non_entities else None  # We return type above if not detect_non_entities
     
-    # Ensure from_storage flag is unset
-    snapshot.from_storage = False
+    # If we're looking for non-entity fields and we've gotten this far,
+    # it's a non-entity field
+    if detect_non_entities:
+        return True
     
-    # Return the snapshot
-    return snapshot
-
-##############################
-# 4) The Entity + Diff
-##############################
-
-@runtime_checkable
-class HasID(Protocol):
-    """Protocol requiring an `ecs_id: UUID` field."""
-    ecs_id: UUID
-
-class EntityDiff:
-    """Represents structured differences between entities."""
-    def __init__(self) -> None:
-        self.field_diffs: Dict[str, Dict[str, Any]] = {}
-
-    def add_diff(self, field: str, diff_type: str, old_value: Any = None, new_value: Any = None) -> None:
-        self.field_diffs[field] = {
-            "type": diff_type,
-            "old": old_value,
-            "new": new_value
-        }
-        
-    @classmethod
-    def from_diff_dict(cls, diff_dict: Dict[str, Dict[str, Any]]) -> 'EntityDiff':
-        """Create an EntityDiff from a difference dictionary."""
-        diff = cls()
-        diff.field_diffs = diff_dict
-        return diff
-
-    def has_changes(self) -> bool:
-        """Check if there are any significant differences that require forking."""
-        logger = logging.getLogger("EntityDiff")
-        
-        # Empty diffs = no changes
-        if not self.field_diffs:
-            logger.debug("No field differences found")
-            return False
+    # Directly analyze Pydantic field annotations only if we need to detect entity types
+    if annotation and not detect_non_entities:
+        # Handle direct Entity field type
+        try:
+            # Check if it's an Entity type or subclass
+            if annotation == Entity or (isinstance(annotation, type) and issubclass(annotation, Entity)):
+                return None if detect_non_entities else annotation
+        except TypeError:
+            # Not a class or Entity, continue to other checks
+            pass
             
-        logger.info(f"Checking significance of {len(self.field_diffs)} field differences")
+        # Handle Optional fields
+        origin = get_origin(annotation)
+        if origin is Union:
+            args = get_args(annotation)
+            # Find the non-None type in Optional[T]
+            inner_type = next((arg for arg in args if arg is not type(None)), None)
+            if inner_type:
+                try:
+                    if inner_type == Entity or (isinstance(inner_type, type) and issubclass(inner_type, Entity)):
+                        return None if detect_non_entities else inner_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+                
+            # Handle Optional containers of entities
+            origin = get_origin(inner_type) if inner_type else None
         
-        # For each field, check if it's a significant change (not just implementation details)
-        for field, diff_info in self.field_diffs.items():
-            # Skip implementation fields that don't need to trigger a new version
-            if field in {
-                'id', 'ecs_id', 'live_id', 'from_storage', 'force_parent_fork', 
-                'sql_root', 'created_at', 'parent_id', 'old_ids', 'lineage_id'
-            }:
-                logger.debug(f"Field '{field}' is an implementation detail - not significant")
+        # Handle container types
+        if origin in (list, set, tuple, dict):
+            args = get_args(annotation)
+            if origin is dict and len(args) >= 2:
+                # For dictionaries, check value type (second argument)
+                value_type = args[1]
+                try:
+                    if value_type == Entity or (isinstance(value_type, type) and issubclass(value_type, Entity)):
+                        return None if detect_non_entities else value_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+            elif origin in (list, set, tuple) and args:
+                # For other containers, check first argument
+                item_type = args[0]
+                try:
+                    if item_type == Entity or (isinstance(item_type, type) and issubclass(item_type, Entity)):
+                        return None if detect_non_entities else item_type
+                except TypeError:
+                    # Not a class or Entity, continue to other checks
+                    pass
+    
+    # Check field default factory for extra information
+    # For empty containers created with default_factory, this helps determine item type
+    if field_info.default_factory is not None and not detect_non_entities:
+        # Skip trying to call default_factory, it might not be safely callable here
+        pass
+    
+    # Fallback to type hints as last resort for entity detection
+    if not detect_non_entities:
+        try:
+            # Get type hints for the class
+            hints = get_type_hints(entity.__class__)
+            if field_name not in hints:
+                return None
+            
+            field_type = hints[field_name]
+            
+            # Handle Optional types
+            origin = get_origin(field_type)
+            if origin is Union:
+                args = get_args(field_type)
+                # Check if this is Optional[Entity]
+                field_type = next((arg for arg in args if arg is not type(None)), None)
+                # If we unwrapped an Optional, get its origin
+                if field_type:
+                    origin = get_origin(field_type)
+            
+            # Check if field_type is directly Entity or a subclass
+            if field_type and not origin and (field_type == Entity or issubclass(field_type, Entity)):
+                return None if detect_non_entities else field_type
+            
+            # Handle container types
+            if origin in (list, set, tuple, dict):
+                args = get_args(field_type)
+                if origin is dict and len(args) >= 2:
+                    # For dictionaries, check value type (second argument)
+                    value_type = args[1]
+                    if value_type == Entity or (inspect.isclass(value_type) and issubclass(value_type, Entity)):
+                        return None if detect_non_entities else value_type
+                elif origin in (list, set, tuple) and args:
+                    # For other containers, check first argument
+                    item_type = args[0]
+                    if item_type == Entity or (inspect.isclass(item_type) and issubclass(item_type, Entity)):
+                        return None if detect_non_entities else item_type
+        except Exception:
+            # Fall back to direct instance check if type hint analysis fails
+            pass
+    
+    # If detect_non_entities is True and we've gotten this far without detecting an entity,
+    # return True to indicate this is a non-entity field
+    if detect_non_entities:
+        return True
+        
+    # Otherwise, return None to indicate no entity type was found
+    return None
+
+def process_entity_reference(
+    tree: EntityTree,
+    source: "Entity",
+    target: "Entity",
+    field_name: str,
+    list_index: Optional[int] = None,
+    dict_key: Optional[Any] = None,
+    tuple_index: Optional[int] = None,
+    to_process: Optional[deque] = None,
+    distance_map: Optional[Dict[UUID, int]] = None
+):
+    """Process a single entity reference, updating the tree"""
+    # Get ownership information from the field
+    ownership = True
+    
+    # Add the appropriate edge type
+    if list_index is not None:
+        tree.add_list_edge(source, target, field_name, list_index, ownership)
+    elif dict_key is not None:
+        tree.add_dict_edge(source, target, field_name, dict_key, ownership)
+    elif tuple_index is not None:
+        tree.add_tuple_edge(source, target, field_name, tuple_index, ownership)
+    else:
+        tree.add_direct_edge(source, target, field_name, ownership)
+    
+    # Set the edge type immediately based on ownership
+    edge_key = (source.ecs_id, target.ecs_id)
+    if edge_key in tree.edges:
+        if ownership:
+            tree.mark_edge_as_hierarchical(source.ecs_id, target.ecs_id)
+
+    # Update distance map for shortest path tracking
+    if distance_map is not None:
+        source_distance = distance_map.get(source.ecs_id, float('inf'))
+        target_distance = distance_map.get(target.ecs_id, float('inf'))
+        new_target_distance = source_distance + 1
+        
+        if new_target_distance < target_distance:
+            # Found a shorter path to target
+            distance_map[target.ecs_id] = int(new_target_distance)
+    
+    # Add to processing queue
+    if to_process is not None:
+        to_process.append(target)
+
+def process_field_value(
+    tree: EntityTree,
+    entity: "Entity",
+    field_name: str,
+    value: Any,
+    field_type: Optional[Type],
+    to_process: Optional[deque],
+    distance_map: Optional[Dict[UUID, int]]
+) -> None:
+    """
+    Process an entity field value and add any contained entities to the tree.
+    
+    Args:
+        tree: The entity tree to update
+        entity: The source entity containing the field
+        field_name: The name of the field being processed
+        value: The field value to process
+        field_type: The expected entity type for this field, if known
+        to_process: Queue of entities to process
+        distance_map: Maps entity IDs to their distance from root
+    """
+    # Direct entity reference
+    if isinstance(value, Entity):
+        process_entity_reference(
+            tree=tree,
+            source=entity,
+            target=value,
+            field_name=field_name,
+            to_process=to_process,
+            distance_map=distance_map
+        )
+    
+    # List of entities
+    elif isinstance(value, list) and field_type:
+        for i, item in enumerate(value):
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    tree=tree,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    list_index=i,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Dict of entities
+    elif isinstance(value, dict) and field_type:
+        for k, v in value.items():
+            if isinstance(v, Entity):
+                process_entity_reference(
+                    tree=tree,
+                    source=entity,
+                    target=v,
+                    field_name=field_name,
+                    dict_key=k,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Tuple of entities
+    elif isinstance(value, tuple) and field_type:
+        for i, item in enumerate(value):
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    tree=tree,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    tuple_index=i,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+    
+    # Set of entities
+    elif isinstance(value, set) and field_type:
+        for item in value:
+            if isinstance(item, Entity):
+                process_entity_reference(
+                    tree=tree,
+                    source=entity,
+                    target=item,
+                    field_name=field_name,
+                    to_process=to_process,
+                    distance_map=distance_map
+                )
+
+@emit_events(
+    creating_factory=lambda root_entity: TreeBuildingEvent(
+        subject_type=type(root_entity),
+        subject_id=root_entity.ecs_id,
+        process_name="tree_building",
+        root_entity_type=type(root_entity).__name__,
+        root_entity_id=root_entity.ecs_id,
+        building_method="full_build",
+        starting_from_storage=False,
+        has_existing_tree=False
+    ),
+    created_factory=lambda result, root_entity: TreeBuiltEvent(
+        subject_type=type(root_entity),
+        subject_id=root_entity.ecs_id,
+        process_name="tree_building",
+        root_entity_type=type(root_entity).__name__,
+        root_entity_id=root_entity.ecs_id,
+        build_successful=True,
+        node_count=result.node_count,
+        edge_count=result.edge_count,
+        max_depth=result.max_depth,
+        build_duration_ms=None,
+        entities_processed=result.node_count
+    )
+)
+def build_entity_tree(root_entity: "Entity") -> EntityTree:
+    """
+    Build a complete entity tree from a root entity in a single pass.
+    
+    This algorithm:
+    1. Builds the tree structure and ancestry paths in a single traversal
+    2. Immediately classifies edges based on ownership
+    3. Maintains shortest paths for each entity
+    4. Creates ancestry paths for path-based diffing on-the-fly
+    
+    Args:
+        root_entity: The root entity of the tree
+        
+    Returns:
+        EntityTree: A complete tree of the entity hierarchy
+    """
+    # Initialize the tree
+    tree = EntityTree(
+        root_ecs_id=root_entity.ecs_id,
+        lineage_id=root_entity.lineage_id
+    )
+    
+    # Maps entity ecs_id to its ancestry path (list of entity IDs from root to this entity)
+    ancestry_paths = {root_entity.ecs_id: [root_entity.ecs_id]}
+    
+    # Queue for breadth-first traversal with path information
+    # Each item is (entity, parent_id)
+    # For the root, parent is None
+    # Using direct annotation instead of a type alias
+    to_process: deque[tuple[Entity, Optional[UUID]]] = deque([(root_entity, None)])
+    
+    # Set of processed entities to avoid cycles
+    processed = set()
+    
+    # Add root entity to tree
+    tree.add_entity(root_entity)
+    tree.set_ancestry_path(root_entity.ecs_id, [root_entity.ecs_id])
+    
+    # Process all entities
+    while to_process:
+        entity, parent_id = to_process.popleft()
+        
+        # Raise error if we encounter a circular reference
+        # We don't allow circular entities at this stage
+        if entity.ecs_id in processed and parent_id is not None:
+            raise ValueError(f"Circular entity reference detected: {entity.ecs_id}. Circular entities are not supported Entities must form hierarchical trees.")
+        
+        # If we've seen this entity before but now found a new parent relationship,
+        # we only need to process the edge, not the entity's fields again
+        entity_needs_processing = entity.ecs_id not in processed
+        
+        # Mark as processed
+        processed.add(entity.ecs_id)
+        
+        # Process edge from parent if this isn't the root
+        if parent_id is not None:
+            # Update the edge's hierarchical status - all edges are hierarchical for now
+            edge_key = (parent_id, entity.ecs_id)
+            if edge_key in tree.edges:
+                # Always mark as hierarchical (since we're not handling circular references yet)
+                tree.mark_edge_as_hierarchical(parent_id, entity.ecs_id)
+                
+                # Update ancestry path
+                if parent_id in ancestry_paths:
+                    parent_path = ancestry_paths[parent_id]
+                    entity_path = parent_path + [entity.ecs_id]
+                    
+                    # If we have no path yet or found a shorter path
+                    if entity.ecs_id not in ancestry_paths or len(entity_path) < len(ancestry_paths[entity.ecs_id]):
+                        ancestry_paths[entity.ecs_id] = entity_path
+                        tree.set_ancestry_path(entity.ecs_id, entity_path)
+        
+        # If we've already processed this entity's fields, skip to the next one
+        if not entity_needs_processing:
+            continue
+            
+        # Process all fields if the entity hasn't been processed yet
+        for field_name in entity.model_fields:
+            value = getattr(entity, field_name)
+            
+            # Skip None values
+            if value is None:
                 continue
-                
-            # Any other field change is significant
-            logger.info(f"Field '{field}' has significant changes (type: {diff_info.get('type', 'unknown')})")
-            return True
             
-        # No significant changes found
-        logger.info("No significant changes found - all differences are implementation details")
+            # Get expected type for this field
+            field_type = get_pydantic_field_type_entities(entity, field_name)
+            
+            # Direct entity reference
+            if isinstance(value, Entity):
+                # Add entity to tree if not already present
+                if value.ecs_id not in tree.nodes:
+                    tree.add_entity(value)
+                
+                # Add the appropriate edge type
+                process_entity_reference(
+                    tree=tree,
+                    source=entity,
+                    target=value,
+                    field_name=field_name,
+                    to_process=None,  # We'll handle queue manually
+                    distance_map=None  # Not using distance map in single-pass version
+                )
+                
+                # Add to processing queue
+                to_process.append((value, entity.ecs_id))
+            
+            # List of entities
+            elif isinstance(value, list) and field_type:
+                for i, item in enumerate(value):
+                    if isinstance(item, Entity):
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            tree=tree,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            list_index=i,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
+            
+            # Dict of entities
+            elif isinstance(value, dict) and field_type:
+                for k, v in value.items():
+                    if isinstance(v, Entity):
+                        # Add entity to tree if not already present
+                        if v.ecs_id not in tree.nodes:
+                            tree.add_entity(v)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            tree=tree,
+                            source=entity,
+                            target=v,
+                            field_name=field_name,
+                            dict_key=k,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((v, entity.ecs_id))
+            
+            # Tuple of entities
+            elif isinstance(value, tuple) and field_type:
+                for i, item in enumerate(value):
+                    if isinstance(item, Entity):
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            tree=tree,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            tuple_index=i,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
+            
+            # Set of entities
+            elif isinstance(value, set) and field_type:
+                for item in value:
+                    if isinstance(item, Entity):
+                        # Add entity to tree if not already present
+                        if item.ecs_id not in tree.nodes:
+                            tree.add_entity(item)
+                        
+                        # Add the appropriate edge type
+                        process_entity_reference(
+                            tree=tree,
+                            source=entity,
+                            target=item,
+                            field_name=field_name,
+                            to_process=None,  # We'll handle queue manually
+                            distance_map=None  # Not using distance map in single-pass version
+                        )
+                        
+                        # Add to processing queue
+                        to_process.append((item, entity.ecs_id))
+    
+    # Ensure all entities have an ancestry path
+    # This is just a safety check - all entities should have paths by now
+    for entity_id in tree.nodes:
+        if entity_id not in ancestry_paths:
+            raise ValueError(f"Entity {entity_id} does not have an ancestry path")
+    
+    return tree
+
+def get_non_entity_attributes(entity: "Entity") -> Dict[str, Any]:
+    """
+    Get all non-entity attributes of an entity.
+    
+    This includes primitive types and containers that don't contain entities.
+    Identity fields and entity-containing fields are excluded.
+    
+    Args:
+        entity: The entity to inspect
+        
+    Returns:
+        Dict[str, Any]: Dictionary of field_name -> field_value for non-entity fields
+    """
+    non_entity_attrs = {}
+    
+    # Check all fields
+    for field_name in entity.model_fields:
+        # Use our helper to check if this is a non-entity field
+        if get_pydantic_field_type_entities(entity, field_name, detect_non_entities=True) is True:
+            non_entity_attrs[field_name] = getattr(entity, field_name)
+    
+    return non_entity_attrs
+
+
+def compare_non_entity_attributes(entity1: "Entity", entity2: "Entity") -> bool:
+    """
+    Compare non-entity attributes between two entities.
+    
+    Args:
+        entity1: First entity to compare
+        entity2: Second entity to compare
+        
+    Returns:
+        bool: True if the entities have different non-entity attributes, False if they're the same
+    """
+    # Get non-entity attributes for both entities
+    attrs1 = get_non_entity_attributes(entity1)
+    attrs2 = get_non_entity_attributes(entity2)
+    
+    # Different set of non-entity attributes
+    if set(attrs1.keys()) != set(attrs2.keys()):
+        return True
+    
+    # Empty sets of attributes means no changes
+    if not attrs1 and not attrs2:
+        return False
+    
+    # Compare values of non-entity attributes
+    for field_name, value1 in attrs1.items():
+        value2 = attrs2[field_name]
+        
+        # Direct comparison for non-entity values
+        if value1 != value2:
+            return True
+    
+    # No differences found
+    return False
+
+
+def find_modified_entities(
+    new_tree: EntityTree,
+    old_tree: EntityTree,
+    greedy: bool = True,
+    debug: bool = False
+) -> Union[Set[UUID], Tuple[Set[UUID], Dict[str, Any]]]:
+    """
+    Find entities that have been modified between two trees.
+    
+    Uses a set-based approach to identify changes:
+    1. Compares node sets to identify added/removed entities
+    2. Compares edge sets to identify moved entities (same entity, different parent)
+    3. Checks attribute changes only for entities not already marked for versioning
+    
+    Args:
+        new_tree: The new entity tree
+        old_tree: The old tree (from storage)
+        greedy: If True, stops checking parents once an entity is marked for change
+        debug: If True, collects and returns debugging information
+        
+    Returns:
+        If debug=False:
+            Set[UUID]: Set of entity ecs_ids that need new versions
+        If debug=True:
+            Tuple[Set[UUID], Dict[str, Any]]: Set of modified entity IDs and debugging info
+    """
+    # Set to track entities that need versioning
+    modified_entities = set()
+    
+    # For debugging
+    comparison_count = 0
+    moved_entities = set()
+    unchanged_entities = set()
+    
+    # Step 1: Compare node sets to identify added/removed entities
+    new_entity_ids = set(new_tree.nodes.keys())
+    old_entity_ids = set(old_tree.nodes.keys())
+    
+    added_entities = new_entity_ids - old_entity_ids
+    removed_entities = old_entity_ids - new_entity_ids
+    common_entities = new_entity_ids & old_entity_ids
+    
+    # Mark all added entities and their ancestry paths for versioning
+    for entity_id in added_entities:
+        path = new_tree.get_ancestry_path(entity_id)
+        modified_entities.update(path)
+    
+    # Step 2: Compare edge sets to identify moved entities
+    # Collect all parent-child relationships in both trees
+    new_edges = set()
+    old_edges = set()
+    
+    for (source_id, target_id), edge in new_tree.edges.items():
+        new_edges.add((source_id, target_id))
+        
+    for (source_id, target_id), edge in old_tree.edges.items():
+        old_edges.add((source_id, target_id))
+    
+    # Find edges that exist in new tree but not in old tree
+    added_edges = new_edges - old_edges
+    # Find edges that exist in old tree but not in new tree
+    removed_edges = old_edges - new_edges
+    
+    # Identify moved entities - common entities with different connections
+    for source_id, target_id in added_edges:
+        # If target is a common entity but has a new connection
+        if target_id in common_entities:
+            # Check if this entity has a different parent in the old tree
+            old_parents = set()
+            for old_source_id, old_target_id in old_edges:
+                if old_target_id == target_id:
+                    old_parents.add(old_source_id)
+            
+            new_parents = set()
+            for new_source_id, new_target_id in new_edges:
+                if new_target_id == target_id:
+                    new_parents.add(new_source_id)
+            
+            # If the entity has different parents, it's been moved
+            if old_parents != new_parents:
+                moved_entities.add(target_id)
+                
+                # Mark the entire path for the moved entity for versioning
+                path = new_tree.get_ancestry_path(target_id)
+                modified_entities.update(path)
+    
+    # Step 3: Check attribute changes for remaining common entities
+    # Create a list of remaining entities sorted by path length
+    remaining_entities = []
+    
+    for entity_id in common_entities:
+        if entity_id not in modified_entities and entity_id not in moved_entities:
+            # Get path length as priority (longer paths = higher priority)
+            path_length = len(new_tree.get_ancestry_path(entity_id))
+            remaining_entities.append((path_length, entity_id))
+    
+    # Sort by path length (descending) - process leaf nodes first
+    remaining_entities.sort(reverse=True)
+    
+    # Process entities in order of path length
+    for _, entity_id in remaining_entities:
+        # Skip if already processed
+        if entity_id in modified_entities or entity_id in unchanged_entities:
+            continue
+        
+        # Get the entities to compare
+        new_entity = new_tree.get_entity(entity_id)
+        old_entity = old_tree.get_entity(entity_id)
+        
+        # Ensure both entities are not None before comparing
+        if new_entity is None or old_entity is None:
+            # If either entity is None, mark as changed
+            path = new_tree.get_ancestry_path(entity_id)
+            modified_entities.update(path)
+            continue
+            
+        # Compare the non-entity attributes
+        comparison_count += 1
+        has_changes = compare_non_entity_attributes(new_entity, old_entity)
+        
+        if has_changes:
+            # Mark the entire path as changed
+            path = new_tree.get_ancestry_path(entity_id)
+            modified_entities.update(path)
+            
+            # If greedy, we can skip processing parents now
+            if greedy:
+                continue
+        else:
+            # Mark just this entity as unchanged
+            unchanged_entities.add(entity_id)
+    
+    # Return the debug info if requested
+    if debug:
+        return modified_entities, {
+            "comparison_count": comparison_count,
+            "added_entities": added_entities,
+            "removed_entities": removed_entities,
+            "moved_entities": moved_entities,
+            "unchanged_entities": unchanged_entities
+        }
+    
+    return modified_entities
+
+
+
+def update_tree_mappings_after_versioning(tree: EntityTree, id_mapping: Dict[UUID, UUID]) -> None:
+    """
+    Update all tree mappings to use new ECS IDs after versioning.
+    
+    This fixes the tree desynchronization bug where tree mappings still reference
+    old ECS IDs after entities have been updated with new IDs.
+    
+    Args:
+        tree: The EntityTree to update
+        id_mapping: Maps old_ecs_id -> new_ecs_id for all updated entities
+    """
+    
+    # Step 1: Update nodes mapping
+    updated_nodes = {}
+    for old_ecs_id, entity in tree.nodes.items():
+        new_ecs_id = id_mapping.get(old_ecs_id, old_ecs_id)
+        updated_nodes[new_ecs_id] = entity
+    tree.nodes = updated_nodes
+    
+    # Step 2: Update edges mapping and edge object IDs
+    updated_edges = {}
+    for (old_source_id, old_target_id), edge in tree.edges.items():
+        new_source_id = id_mapping.get(old_source_id, old_source_id)
+        new_target_id = id_mapping.get(old_target_id, old_target_id)
+        
+        # Update edge object's IDs
+        edge.source_id = new_source_id
+        edge.target_id = new_target_id
+        
+        updated_edges[(new_source_id, new_target_id)] = edge
+    tree.edges = updated_edges
+    
+    # Step 3: Update outgoing_edges mapping
+    updated_outgoing = defaultdict(list)
+    for old_source_id, target_list in tree.outgoing_edges.items():
+        new_source_id = id_mapping.get(old_source_id, old_source_id)
+        new_target_list = [id_mapping.get(tid, tid) for tid in target_list]
+        updated_outgoing[new_source_id] = new_target_list
+    tree.outgoing_edges = updated_outgoing
+    
+    # Step 4: Update incoming_edges mapping
+    updated_incoming = defaultdict(list)
+    for old_target_id, source_list in tree.incoming_edges.items():
+        new_target_id = id_mapping.get(old_target_id, old_target_id)
+        new_source_list = [id_mapping.get(sid, sid) for sid in source_list]
+        updated_incoming[new_target_id] = new_source_list
+    tree.incoming_edges = updated_incoming
+    
+    # Step 5: Update ancestry_paths mapping
+    updated_ancestry_paths = {}
+    for old_entity_id, path in tree.ancestry_paths.items():
+        new_entity_id = id_mapping.get(old_entity_id, old_entity_id)
+        new_path = [id_mapping.get(pid, pid) for pid in path]
+        updated_ancestry_paths[new_entity_id] = new_path
+    tree.ancestry_paths = updated_ancestry_paths
+    
+    # Step 6: Update live_id_to_ecs_id mapping
+    for live_id, old_ecs_id in tree.live_id_to_ecs_id.items():
+        if old_ecs_id in id_mapping:
+            tree.live_id_to_ecs_id[live_id] = id_mapping[old_ecs_id]
+    
+    # Step 7: Update tree's root_ecs_id if the root was versioned
+    if tree.root_ecs_id in id_mapping:
+        tree.root_ecs_id = id_mapping[tree.root_ecs_id]
+
+
+def rebuild_tree_from_scratch_after_versioning(tree: EntityTree) -> EntityTree:
+    """
+    EXPENSIVE: Completely rebuild the tree from scratch using current entity state.
+    
+    This is the worst-case scenario method that does a full graph traversal
+    and rebuilds all tree mappings from the ground up. Should only be used
+    for testing consistency against the optimized update method.
+    
+    Args:
+        tree: The EntityTree to rebuild
+        
+    Returns:
+        New EntityTree built from scratch with current entity state
+    """
+    # Get the root entity from current tree
+    root_entity = tree.get_entity(tree.root_ecs_id)
+    if root_entity is None:
+        raise ValueError(f"Root entity {tree.root_ecs_id} not found in tree")
+    
+    # Completely rebuild tree from scratch
+    rebuilt_tree = build_entity_tree(root_entity)
+    
+    # Preserve original lineage_id (build_entity_tree might use entity's current lineage)
+    rebuilt_tree.lineage_id = tree.lineage_id
+    
+    return rebuilt_tree
+
+
+def compare_tree_structures(tree1: EntityTree, tree2: EntityTree, comparison_name: str = "") -> bool:
+    """
+    Compare two EntityTree structures to verify they're equivalent.
+    
+    Used to test that the optimized update method produces the same result
+    as the expensive full rebuild method.
+    
+    Args:
+        tree1: First tree to compare
+        tree2: Second tree to compare
+        comparison_name: Optional name for debugging output
+        
+    Returns:
+        True if trees are structurally equivalent, False otherwise
+    """
+    try:
+        # Check basic properties
+        assert tree1.root_ecs_id == tree2.root_ecs_id, f"Root ECS IDs differ: {tree1.root_ecs_id} vs {tree2.root_ecs_id}"
+        assert tree1.lineage_id == tree2.lineage_id, f"Lineage IDs differ: {tree1.lineage_id} vs {tree2.lineage_id}"
+        assert tree1.node_count == tree2.node_count, f"Node counts differ: {tree1.node_count} vs {tree2.node_count}"
+        assert tree1.edge_count == tree2.edge_count, f"Edge counts differ: {tree1.edge_count} vs {tree2.edge_count}"
+        
+        # Check nodes mapping
+        assert set(tree1.nodes.keys()) == set(tree2.nodes.keys()), "Node keys differ"
+        for ecs_id in tree1.nodes:
+            entity1 = tree1.nodes[ecs_id]
+            entity2 = tree2.nodes[ecs_id]
+            assert entity1.ecs_id == entity2.ecs_id, f"Entity ECS IDs differ for {ecs_id}"
+            assert entity1.live_id == entity2.live_id, f"Entity live IDs differ for {ecs_id}"
+        
+        # Check edges mapping
+        assert set(tree1.edges.keys()) == set(tree2.edges.keys()), "Edge keys differ"
+        for edge_key in tree1.edges:
+            edge1 = tree1.edges[edge_key]
+            edge2 = tree2.edges[edge_key]
+            assert edge1.source_id == edge2.source_id, f"Edge source IDs differ for {edge_key}"
+            assert edge1.target_id == edge2.target_id, f"Edge target IDs differ for {edge_key}"
+            assert edge1.field_name == edge2.field_name, f"Edge field names differ for {edge_key}"
+            assert edge1.edge_type == edge2.edge_type, f"Edge types differ for {edge_key}"
+        
+        # Check ancestry paths
+        assert set(tree1.ancestry_paths.keys()) == set(tree2.ancestry_paths.keys()), "Ancestry path keys differ"
+        for ecs_id in tree1.ancestry_paths:
+            path1 = tree1.ancestry_paths[ecs_id]
+            path2 = tree2.ancestry_paths[ecs_id]
+            assert path1 == path2, f"Ancestry paths differ for {ecs_id}: {path1} vs {path2}"
+        
+        # Check outgoing edges
+        assert set(tree1.outgoing_edges.keys()) == set(tree2.outgoing_edges.keys()), "Outgoing edge keys differ"
+        for ecs_id in tree1.outgoing_edges:
+            targets1 = set(tree1.outgoing_edges[ecs_id])
+            targets2 = set(tree2.outgoing_edges[ecs_id])
+            assert targets1 == targets2, f"Outgoing targets differ for {ecs_id}: {targets1} vs {targets2}"
+        
+        # Check incoming edges
+        assert set(tree1.incoming_edges.keys()) == set(tree2.incoming_edges.keys()), "Incoming edge keys differ"
+        for ecs_id in tree1.incoming_edges:
+            sources1 = set(tree1.incoming_edges[ecs_id])
+            sources2 = set(tree2.incoming_edges[ecs_id])
+            assert sources1 == sources2, f"Incoming sources differ for {ecs_id}: {sources1} vs {sources2}"
+        
+        # Check live_id mappings
+        assert tree1.live_id_to_ecs_id == tree2.live_id_to_ecs_id, "Live ID mappings differ"
+        
+        if comparison_name:
+            print(f"  ✅ Tree structures match for {comparison_name}")
+        return True
+        
+    except AssertionError as e:
+        if comparison_name:
+            print(f"  ❌ Tree structures differ for {comparison_name}: {e}")
         return False
 
 
-logger = logging.getLogger("entity_dependencies")
-
-class CycleStatus(Enum):
-    """Status of cycle detection."""
-    NO_CYCLE = 0
-    CYCLE_DETECTED = 1
-
-class GraphNode(BaseModel):
-    """Represents a node in the entity dependency graph."""
-    # Using Any type for entity since we can't import Entity here without circular imports
-    entity: Any = Field(exclude=True)  # The entity object (excluded from serialization)
-    entity_id: Any  # UUID or other identifier for the entity
-    dependencies: Set[Any] = Field(default_factory=set)  # IDs of entities this entity depends on
-    dependents: Set[Any] = Field(default_factory=set)  # IDs of entities that depend on this entity
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    
-    def add_dependency(self, dep_id: Any) -> None:
-        """Add a dependency to this node."""
-        self.dependencies.add(dep_id)
-        
-    def add_dependent(self, dep_id: Any) -> None:
-        """Add a dependent to this node."""
-        self.dependents.add(dep_id)
-        
-    def __str__(self) -> str:
-        return f"Node({self.entity_id}, deps={len(self.dependencies)}, dependents={len(self.dependents)})"
-        
-    def __repr__(self) -> str:
-        return self.__str__()
-
-class EntityDependencyGraph(BaseModel):
+def validate_tree_consistency_after_versioning(tree: EntityTree, test_name: str = "") -> bool:
     """
-    Computes and maintains the dependency graph of entities.
+    Validate that all tree mappings are consistent after versioning.
     
-    This class provides methods to:
-    1. Build the dependency graph of a root entity
-    2. Detect cycles in the graph
-    3. Get topological sort of entities (for bottom-up processing)
-    4. Add/remove entities to the graph
-    5. Query entity relationships in the graph
+    Args:
+        tree: The EntityTree to validate
+        test_name: Optional name for debugging output
+        
+    Returns:
+        True if tree is consistent, False otherwise
     """
-    nodes: Dict[Any, GraphNode] = Field(default_factory=dict)  # Map of entity ID to its node
-    cycles: List[List[Any]] = Field(default_factory=list)      # List of detected cycles
+    try:
+        # Check 1: All entities have their ecs_id as key in nodes
+        for ecs_id, entity in tree.nodes.items():
+            assert entity.ecs_id == ecs_id, f"Entity ecs_id {entity.ecs_id} != nodes key {ecs_id}"
+        
+        # Check 2: All edge source/target IDs exist in nodes
+        for (source_id, target_id), edge in tree.edges.items():
+            assert source_id in tree.nodes, f"Edge source {source_id} not in nodes"
+            assert target_id in tree.nodes, f"Edge target {target_id} not in nodes"
+            assert edge.source_id == source_id, f"Edge source_id {edge.source_id} != key {source_id}"
+            assert edge.target_id == target_id, f"Edge target_id {edge.target_id} != key {target_id}"
+        
+        # Check 3: All ancestry path IDs exist in nodes
+        for entity_id, path in tree.ancestry_paths.items():
+            assert entity_id in tree.nodes, f"Ancestry entity {entity_id} not in nodes"
+            for path_id in path:
+                assert path_id in tree.nodes, f"Path entity {path_id} not in nodes"
+        
+        # Check 4: Root entity exists in nodes
+        assert tree.root_ecs_id in tree.nodes, f"Root {tree.root_ecs_id} not in nodes"
+        
+        # Check 5: All live_id mappings point to valid ecs_ids
+        for live_id, ecs_id in tree.live_id_to_ecs_id.items():
+            assert ecs_id in tree.nodes, f"Live ID {live_id} points to non-existent ecs_id {ecs_id}"
+        
+        # Check 6: Outgoing/incoming edges consistency
+        for source_id, targets in tree.outgoing_edges.items():
+            assert source_id in tree.nodes, f"Outgoing source {source_id} not in nodes"
+            for target_id in targets:
+                assert target_id in tree.nodes, f"Outgoing target {target_id} not in nodes"
+                assert (source_id, target_id) in tree.edges, f"Outgoing edge ({source_id}, {target_id}) not in edges"
+        
+        for target_id, sources in tree.incoming_edges.items():
+            assert target_id in tree.nodes, f"Incoming target {target_id} not in nodes"
+            for source_id in sources:
+                assert source_id in tree.nodes, f"Incoming source {source_id} not in nodes"
+                assert (source_id, target_id) in tree.edges, f"Incoming edge ({source_id}, {target_id}) not in edges"
+        
+        if test_name:
+            print(f"  ✅ Tree consistency valid for {test_name}")
+        return True
+        
+    except AssertionError as e:
+        if test_name:
+            print(f"  ❌ Tree consistency failed for {test_name}: {e}")
+        return False
+
+
+def generate_mermaid_diagram(tree: EntityTree, include_attributes: bool = False) -> str:
+    """
+    Generate a Mermaid diagram from an EntityTree.
     
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    Args:
+        tree: The entity tree to visualize
+        include_attributes: Whether to include entity attributes in the diagram
         
-    def build_graph(self, root_entity: Any, 
-                    is_entity_check: Optional[Callable[[Any], bool]] = None,
-                    get_entity_id: Optional[Callable[[Any], Any]] = None) -> CycleStatus:
-        """
-        Build the dependency graph starting from a root entity.
+    Returns:
+        A string containing the Mermaid diagram code
+    """
+    if not tree.nodes:
+        return "```mermaid\ntree TD\n  Empty[Empty Tree]\n```"
         
-        Args:
-            root_entity: The root entity to start from
-            is_entity_check: Optional function to determine if an object is an entity
-            get_entity_id: Optional function to get an entity's ID
-            
-        Returns:
-            CycleStatus indicating if any cycles were detected
-        """
-        logger.debug(f"Building dependency graph for {root_entity}")
+    lines = ["```mermaid", "tree TD"]
+    
+    # Entity nodes
+    for entity_id, entity in tree.nodes.items():
+        # Use a shortened version of ID for display
+        short_id = str(entity_id)[-8:]
         
-        # Default entity detection function
-        if is_entity_check is None:
-            def is_entity_func(obj: Any) -> bool:
-                return hasattr(obj, "ecs_id")
-            is_entity_check_func = is_entity_func  
+        # Create node with label
+        entity_type = entity.__class__.__name__
+        
+        if include_attributes:
+            # Include some attributes in the label
+            attrs = [
+                f"ecs_id: {short_id}",
+                f"lineage_id: {str(entity.lineage_id)[-8:]}"
+            ]
+            if entity.root_ecs_id:
+                attrs.append(f"root: {str(entity.root_ecs_id)[-8:]}")
+                
+            node_label = f"{entity_type}\\n{' | '.join(attrs)}"
         else:
-            is_entity_check_func = is_entity_check
-                
-        # Default ID function
-        if get_entity_id is None:
-            def get_entity_id_func(entity: Any) -> Any:
-                return getattr(entity, "ecs_id", id(entity))
-            entity_id_func = get_entity_id_func
+            # Simple label with just type and short ID
+            node_label = f"{entity_type} {short_id}"
+            
+        lines.append(f"  {entity_id}[\"{node_label}\"]")
+    
+    # Root node styling
+    lines.append(f"  {tree.root_ecs_id}:::rootNode")
+    
+    # Add edges
+    for edge_key, edge in tree.edges.items():
+        source_id, target_id = edge_key
+        
+        # All edges are hierarchical since we don't support circular trees yet
+        edge_style = "-->"
+        
+        # Add edge label based on field name and container info
+        edge_label = edge.field_name
+        
+        if edge.container_index is not None:
+            edge_label += f"[{edge.container_index}]"
+        elif edge.container_key is not None:
+            edge_label += f"[{edge.container_key}]"
+            
+        # Create the edge line
+        edge_line = f"  {source_id} {edge_style}|{edge_label}| {target_id}:::hierarchicalEdge"
+        lines.append(edge_line)
+    
+    # Add styling classes
+    lines.extend([
+        "  classDef rootNode fill:#f9f,stroke:#333,stroke-width:2px",
+        "  classDef hierarchicalEdge stroke:#333,stroke-width:2px"
+    ])
+    
+    lines.append("```")
+    return "\n".join(lines)
+
+class EntityRegistry():
+    """ A registry for tree entities, is mantains a versioned collection of all entities in the system
+    it mantains 
+    1) a treeregistry indexed by root_ecs_id UUID --> EntityTree
+    2) a lineage registry indexed by lineage_id UUID --> List[root_ecs_id UUID]
+    3) a live_id registry indexed by live_id UUID --> Entity [this is used to navigate from live python entity to their root entity when recosntructing a tree from a sub-entity]
+    4) a type_registry indexed by entity_type --> List[lineage_id UUID] which is used to get all entities of a given type
+    5) a ecs_id_to_root_id registry indexed by ecs_id UUID --> root_ecs_id UUID which is used to get the root_ecs_id for any given ecs_id
+    """
+    tree_registry: Dict[UUID, EntityTree] = {}
+    lineage_registry: Dict[UUID, List[UUID]] = {}
+    live_id_registry: Dict[UUID, "Entity"] = {}
+    ecs_id_to_root_id: Dict[UUID, UUID] = {}
+    type_registry: Dict[Type["Entity"], List[UUID]] = {}
+    
+    @classmethod
+    def register_entity_tree(cls, entity_tree: EntityTree) -> None:
+        """ Register an entity tree in the registry when an entity tree is registered in the tree registry its
+        1) its root_ecs_id is added to the lineage_history
+        2) the entities in the tree are referenced by their live id in the live_id_registry 
+        3) the tree is added to the tree_registry with its root_ecs_id as key
+        """
+        if entity_tree.root_ecs_id in cls.tree_registry:
+            raise ValueError("entity tree already registered")
+        
+        cls.tree_registry[entity_tree.root_ecs_id] = entity_tree
+        for sub_entity in entity_tree.nodes.values():
+            cls.live_id_registry[sub_entity.live_id] = sub_entity
+            cls.ecs_id_to_root_id[sub_entity.ecs_id] = entity_tree.root_ecs_id
+        if entity_tree.lineage_id not in cls.lineage_registry:
+            cls.lineage_registry[entity_tree.lineage_id] = [entity_tree.root_ecs_id]
         else:
-            entity_id_func = get_entity_id
-                
-        # Clear existing graph
-        self.nodes.clear()
-        self.cycles.clear()
-        
-        # First, collect all entities and their dependencies
-        entities_to_process = [root_entity]
-        entity_dependencies: Dict[Any, Set[Any]] = {}  # Map entity ID to set of dependency IDs
-        
-        # Collect all entities and their immediate dependencies
-        while entities_to_process:
-            entity = entities_to_process.pop(0)
-            entity_id = entity_id_func(entity)
-            
-            # Skip if already processed
-            if entity_id in entity_dependencies:
-                continue
-                
-            # Add to graph
-            if entity_id not in self.nodes:
-                self.nodes[entity_id] = GraphNode(entity=entity, entity_id=entity_id)
-            
-            # Find immediate dependencies
-            deps = self._find_entity_references(entity, is_entity_check_func, entity_id_func)
-            dep_ids = set()
-            
-            for dep_entity, _ in deps:
-                dep_id = entity_id_func(dep_entity)
-                dep_ids.add(dep_id)
-                
-                # Create node if needed
-                if dep_id not in self.nodes:
-                    self.nodes[dep_id] = GraphNode(entity=dep_entity, entity_id=dep_id)
-                
-                # Set up bidirectional relationship
-                self.nodes[entity_id].add_dependency(dep_id)
-                self.nodes[dep_id].add_dependent(entity_id)
-                
-                # Add to processing queue if not already processed
-                if dep_id not in entity_dependencies:
-                    entities_to_process.append(dep_entity)
-            
-            # Store dependencies
-            entity_dependencies[entity_id] = dep_ids
-            
-        # Now detect cycles using cycle finding algorithm (DFS)
-        has_cycle = False
-        visited: Set[Any] = set()  # Nodes we've fully processed
-        path: Set[Any] = set()     # Nodes in current path
-        
-        def find_cycles(node_id: Any) -> None:
-            nonlocal has_cycle
-            
-            # If already visited, no need to process again
-            if node_id in visited:
-                return
-                
-            # If in current path, we found a cycle
-            if node_id in path:
-                # Found a cycle, reconstruct it
-                cycle = []
-                for n in list(path) + [node_id]:
-                    cycle.append(n)
-                    if n == node_id and len(cycle) > 1:
-                        break
-                
-                logger.warning(f"Detected cycle: {cycle}")
-                self.cycles.append(cycle)
-                has_cycle = True
-                return
-                
-            # Add to current path
-            path.add(node_id)
-            
-            # Process all dependencies
-            if node_id in entity_dependencies:
-                for dep_id in entity_dependencies[node_id]:
-                    find_cycles(dep_id)
-                    
-            # Remove from path and mark as visited
-            path.remove(node_id)
-            visited.add(node_id)
-            
-        # Look for cycles starting from each node
-        for node_id in self.nodes:
-            find_cycles(node_id)
-            
-        logger.info(f"Built dependency graph with {len(self.nodes)} nodes")
-        if self.cycles:
-            logger.warning(f"Detected {len(self.cycles)} cycles in the graph")
-            has_cycle = True
-            
-        return CycleStatus.CYCLE_DETECTED if has_cycle else CycleStatus.NO_CYCLE
-        
-    def add_entity(self, entity: Any, dependencies: Optional[List[Any]] = None) -> None:
-        """
-        Add an entity to the graph with optional dependencies.
-        
-        Args:
-            entity: The entity to add
-            dependencies: Optional list of entities this entity depends on
-        """
-        # Get entity ID
-        entity_id = getattr(entity, "ecs_id", id(entity))
-        
-        # Create node if needed
-        if entity_id not in self.nodes:
-            self.nodes[entity_id] = GraphNode(entity=entity, entity_id=entity_id)
-            
-        # Add dependencies if provided
-        if dependencies:
-            for dep in dependencies:
-                if dep is not None:
-                    dep_id = getattr(dep, "ecs_id", id(dep))
-                    
-                    # Create node for dependency if needed
-                    if dep_id not in self.nodes:
-                        self.nodes[dep_id] = GraphNode(entity=dep, entity_id=dep_id)
-                        
-                    # Set up bidirectional relationship
-                    self.nodes[entity_id].add_dependency(dep_id)
-                    self.nodes[dep_id].add_dependent(entity_id)
-    
-    def get_node(self, entity_id: Any) -> Optional[GraphNode]:
-        """Get a node by entity ID."""
-        return self.nodes.get(entity_id)
-        
-    def get_dependent_ids(self, entity_id: Any) -> Set[Any]:
-        """
-        Get IDs of entities that depend on this entity.
-        
-        Args:
-            entity_id: ID of the entity to get dependents for
-            
-        Returns:
-            Set of dependent entity IDs
-        """
-        node = self.get_node(entity_id)
-        if node:
-            return node.dependents
-        return set()
-        
-    def is_graph_root(self, entity_id: Any) -> bool:
-        """
-        Check if entity is a root entity in the graph.
-        
-        A root entity is one that has no parent dependencies 
-        (i.e., no other entity depends on it).
-        
-        Args:
-            entity_id: ID of the entity to check
-            
-        Returns:
-            True if entity is a root entity
-        """
-        node = self.get_node(entity_id)
-        if node:
-            return len(node.dependents) == 0
-        return True  # If not in graph, consider it a root
-    
-    def _find_entity_references(self, obj: Any, 
-                             is_entity_check_func: Callable[[Any], bool], 
-                             entity_id_func: Callable[[Any], Any]) -> List[Tuple[Any, str]]:
-        """
-        Find all entity references in an object.
-        
-        Args:
-            obj: Object to inspect
-            is_entity_check_func: Function to determine if an object is an entity
-            entity_id_func: Function to get an entity's ID
-            
-        Returns:
-            List of (entity, path) tuples
-        """
-        results = []
-        
-        # Skip None values
-        if obj is None:
-            return results
-        
-        # Debug
-        logger.debug(f"Finding entity references in {obj}")
-            
-        # Process different container types
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if is_entity_check_func(value):
-                    logger.debug(f"Found entity in dict at key {key}: {value}")
-                    results.append((value, f"{key}"))
-                elif isinstance(value, (dict, list, tuple, set)):
-                    # Recursively process containers
-                    nested = self._find_entity_references(
-                        value, is_entity_check_func, entity_id_func)
-                    results.extend([(e, f"{key}.{p}") for e, p in nested])
-                    
-        elif isinstance(obj, (list, tuple, set)):
-            for i, value in enumerate(obj):
-                if is_entity_check_func(value):
-                    logger.debug(f"Found entity in list at index {i}: {value}")
-                    results.append((value, f"[{i}]"))
-                elif isinstance(value, (dict, list, tuple, set)):
-                    # Recursively process containers
-                    nested = self._find_entity_references(
-                        value, is_entity_check_func, entity_id_func)
-                    results.extend([(e, f"[{i}].{p}") for e, p in nested])
-                    
+            cls.lineage_registry[entity_tree.lineage_id].append(entity_tree.root_ecs_id)
+        root_entity = entity_tree.get_entity(entity_tree.root_ecs_id)
+        if root_entity is not None:
+            if root_entity.__class__ not in cls.type_registry:
+                cls.type_registry[root_entity.__class__] = [entity_tree.lineage_id]
+            else:
+                cls.type_registry[root_entity.__class__].append(entity_tree.lineage_id)
         else:
-            # Get list of object attributes, filtering non-property attributes
-            attr_names = []
-            for attr_name in dir(obj):
-                # Skip private attributes and methods
-                if attr_name.startswith('_'):
-                    continue
-                    
-                try:
-                    attr = getattr(type(obj), attr_name, None)
-                    if attr is not None and isinstance(attr, property):
-                        # This is a property - include it
-                        attr_names.append(attr_name)
-                    elif not callable(getattr(obj, attr_name)):
-                        # This is a regular attribute, not a method - include it
-                        attr_names.append(attr_name)
-                except:
-                    pass
-                        
-            logger.debug(f"Inspecting attributes of {obj}: {attr_names}")
+            raise ValueError("root entity not found in entity tree")
+
+
+    @classmethod
+    @emit_events(
+        creating_factory=lambda cls, entity: EntityRegistrationEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            process_name="entity_registration",
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            is_root_entity=entity.is_root_entity(),
+            has_existing_tree=False,
+            registration_type="new_entity",
+            expected_tree_nodes=None,
+            expected_tree_edges=None
+        ),
+        created_factory=lambda result, cls, entity: EntityRegisteredEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            process_name="entity_registration",
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            registration_successful=True,
+            tree_node_count=0,  # Will be populated by future enhancement
+            tree_edge_count=0,  # Will be populated by future enhancement
+            tree_max_depth=0,   # Will be populated by future enhancement
+            new_lineage_created=True,
+            type_registry_updated=True
+        )
+    )
+    def register_entity(cls, entity: "Entity") -> None:
+        """ Register an entity in the registry when an entity is registered in the tree registry its
+         1) its tree is constructed and indexed by the root_ecs_id
+         2) the entiteis in the tree are referenced by their live id in the live_id_registry 
+         3) the tree is deepcopied and the deepcopy is added to tree_registy with its root_ecs_id as key
+         3) the root_ecs_id is added to the lineage_history
+          we can only register root entities for now """
+        
+        if entity.root_ecs_id is  None:
+            raise ValueError("can only register root entities with a root_ecs_id for now")
+        elif not entity.is_root_entity():
+            raise ValueError("can only register root entities for now")
+        
+        entity_tree = build_entity_tree(entity)
+        cls.register_entity_tree(entity_tree)
+
+    @classmethod            
+    def get_stored_tree(cls, root_ecs_id: UUID) -> Optional[EntityTree]:
+        """ Get the tree for a given root_ecs_id """
+        stored_tree= cls.tree_registry.get(root_ecs_id, None)
+        if stored_tree is None:
+            return None
+        else:
+            new_tree = stored_tree.model_copy(deep=True)
+            new_tree.update_live_ids() #this are new python objects with new live ids
+            return new_tree
             
-            # For each attribute, check if it's an entity
-            for attr_name in attr_names:                    
-                try:
-                    value = getattr(obj, attr_name)
-                    
-                    # Check if attribute is an entity
-                    if value is not None and is_entity_check_func(value):
-                        logger.debug(f"Found entity in attribute {attr_name}: {value}")
-                        results.append((value, attr_name))
-                    elif isinstance(value, (dict, list, tuple, set)):
-                        # Recursively process containers
-                        nested = self._find_entity_references(
-                            value, is_entity_check_func, entity_id_func)
-                        results.extend([(e, f"{attr_name}.{p}") for e, p in nested])
-                except (AttributeError, TypeError) as e:
-                    # Skip attributes that can't be accessed
-                    logger.debug(f"Error accessing attribute {attr_name}: {e}")
-                    pass
-                    
-        logger.debug(f"Found {len(results)} entity references in {obj}")
-        return results
+    @classmethod
+    def get_stored_entity(cls, root_ecs_id: UUID, ecs_id: UUID) -> Optional["Entity"]:
+        """ Get the entity for a given root_ecs_id and ecs_id """
+        tree = cls.get_stored_tree(root_ecs_id)
+        if tree is None:
+            raise ValueError("tree not registered")
+        entity = tree.get_entity(ecs_id)
+        if entity is None:
+            return None
+        else:
+            return entity
+        
+    @classmethod
+    def get_stored_tree_from_entity(cls, entity: "Entity") -> Optional[EntityTree]:
+        """ Get the tree for a given entity """
+        if not entity.root_ecs_id:
+            raise ValueError("entity has no root_ecs_id")
+        return cls.get_stored_tree(entity.root_ecs_id)
+        
+    @classmethod
+    def get_live_entity(cls, live_id: UUID) -> Optional["Entity"]:
+        """ Get the entity for a given live_id """
+        return cls.live_id_registry.get(live_id, None)
     
-    def get_topological_sort(self) -> List[Any]:
-        """
-        Return entities in topological order (dependencies first).
+    @classmethod
+    def get_live_root_from_entity(cls, entity: "Entity") -> Optional["Entity"]:
+        """ Get the root entity for a given entity """
+        if not entity.root_live_id:
+            raise ValueError("entity has no root_live_id")
+        return cls.get_live_entity(entity.root_live_id)
+    
+    @classmethod
+    def get_live_root_from_live_id(cls, live_id: UUID) -> Optional["Entity"]:
+        """ Get the root entity for a given live_id """
+        entity = cls.get_live_entity(live_id)
+        if entity is None:
+            return None
+        else:
+            return cls.get_live_root_from_entity(entity)
         
-        This ensures that when processing entities, all dependencies
-        are processed before their dependents.
+    @classmethod
+    @emit_events(
+        creating_factory=lambda cls, entity, force_versioning=False: EntityVersioningEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            force_versioning=force_versioning,
+            has_stored_version=cls.get_stored_tree(entity.root_ecs_id) is not None if entity.root_ecs_id else False,
+            change_detection_required=not force_versioning,
+            expected_changes=None
+        ),
+        created_factory=lambda result, cls, entity, force_versioning=False: EntityVersionedEvent(
+            subject_type=type(entity),
+            subject_id=entity.ecs_id,
+            entity_type=type(entity).__name__,
+            entity_id=entity.ecs_id,
+            version_created=result,
+            entities_modified=0,  # Will be populated by future enhancement
+            new_ids_created=[],   # Will be populated by future enhancement
+            tree_mappings_updated=result,
+            versioning_duration_ms=None
+        )
+    )
+    def version_entity(cls, entity: "Entity", force_versioning: bool = False) -> bool:
+        """ Core function to version an entity, currently working only for root entities, what this function does is:
+        1) check if function is registered , if not delegate to reigister()
+        2) get the stored tree snapshot for the entity
+        3) compute the new tree
+        4) compute the diff between the two trees if no diff return False
+        5) update the ecs_id for all changed entities in the tree, update their root_ecs_id,
+        6) register the new tree in the tree_registry under the new root_ecs_id key mantaining the lineage intact"""
+        """ Version an entity """
         
-        Returns:
-            List of entity IDs in topological order
-        """
-        # Find all nodes without dependencies
-        result = []
-        visited = set()
-        
-        # For each node, calculate its depth in the dependency graph
-        depths: Dict[Any, int] = {}
-        
-        def calculate_depth(node_id: Any, path: Optional[Set[Any]] = None) -> int:
-            """Calculate maximum dependency depth for a node."""
-            if path is None:
-                path = set()
-                
-            # Check for cycles - if we've seen this node before in this path
-            if node_id in path:
-                return 0
-                
-            # If already calculated, return cached value
-            if node_id in depths:
-                return depths[node_id]
-                
-            path_copy = set(path)  # Use set constructor instead of .copy()
-            path_copy.add(node_id)
+        # Handle None entity gracefully
+        if entity is None:
+            return False  # No versioning needed for None entity
             
-            # If no dependencies, depth is 0
-            node = self.nodes.get(node_id)
-            if not node or not node.dependencies:
-                depths[node_id] = 0
-                return 0
-                
-            # Calculate maximum depth of dependencies
-            max_depth = 0
-            for dep_id in node.dependencies:
-                if dep_id in self.nodes:
-                    depth = calculate_depth(dep_id, path_copy) + 1
-                    max_depth = max(max_depth, depth)
-                    
-            depths[node_id] = max_depth
-            return max_depth
+        if not entity.root_ecs_id:
+            raise ValueError("entity has no root_ecs_id for versioning we only support versioning of root entities for now")
+        
+        old_tree = cls.get_stored_tree(entity.root_ecs_id)
+        if old_tree is None:
+            cls.register_entity(entity)
+            return True
+        else:
+            new_tree = build_entity_tree(entity)
+            if force_versioning:
+                modified_entities = new_tree.nodes.keys()
+            else:
+                modified_entities = list(find_modified_entities(new_tree=new_tree, old_tree=old_tree))
+        
+            typed_entities = [entity for entity in modified_entities if isinstance(entity, UUID)]
             
-        # Calculate depth for all nodes
-        for node_id in self.nodes:
-            if node_id not in depths:
-                calculate_depth(node_id)
+            if len(typed_entities) > 0:
+                if new_tree.root_ecs_id not in typed_entities:
+                    raise ValueError("if any entity is modified the root entity must be modified something went wrong")
+                # first we fork the root entity
+                # forking the root entity will create a new root_ecs_id then we fork all the modified entities with the new root_ecs_id as input
+                current_root_ecs_id = new_tree.root_ecs_id
+                root_entity = new_tree.get_entity(current_root_ecs_id)
+                if root_entity is None:
+                    raise ValueError("root entity not found in new tree, something went very wrong")
+                root_entity.update_ecs_ids()
+                new_root_ecs_id = root_entity.ecs_id
+                root_entity_live_id = root_entity.live_id
+                assert new_root_ecs_id is not None and new_root_ecs_id != current_root_ecs_id
                 
-        # Sort nodes by depth (lowest first)
-        sorted_nodes = sorted(self.nodes.keys(), key=lambda node_id: depths.get(node_id, 0))
-        
-        # Return the actual entities
-        return [self.nodes[node_id].entity for node_id in sorted_nodes]
-    
-    def get_cycles(self) -> List[List[Any]]:
-        """Get all detected cycles in the graph."""
-        return self.cycles
-        
-    def find_entity_by_id(self, entity_id: Any) -> Optional[Any]:
-        """Find an entity by its ID."""
-        if entity_id in self.nodes:
-            return self.nodes[entity_id].entity
-        return None
-    
+                # Build ID mapping for tracking changes
+                id_mapping = {current_root_ecs_id: new_root_ecs_id}
+                
+                # Update the nodes dictionary to use the new root entity ID
+                new_tree.nodes.pop(current_root_ecs_id)
+                new_tree.nodes[new_root_ecs_id] = root_entity
+                
+                # now we fork all the modified entities with the new root_ecs_id as input
+                #remove the old root_ecs_id from the typed_entities
+                typed_entities.remove(current_root_ecs_id)
+                for modified_entity_id in typed_entities:
+                    modified_entity = new_tree.get_entity(modified_entity_id)
+                    if modified_entity is not None:
+                        #here we could have some modified entitiyes being entities that have been removed from the tree so we get nones
+                        old_ecs_id = modified_entity.ecs_id
+                        modified_entity.update_ecs_ids(new_root_ecs_id, root_entity_live_id)
+                        new_ecs_id = modified_entity.ecs_id
+                        id_mapping[old_ecs_id] = new_ecs_id
+                    else:
+                        #later here we will handle the case where the entity has been moved to a different tree or prompoted to it's own tree
+                        print(f"modified entity {modified_entity_id} not found in new tree, something went wrong")
+                
+                # Update tree mappings to be consistent with new ECS IDs
+                update_tree_mappings_after_versioning(new_tree, id_mapping)
+                
+                # Update the tree's lineage_id to match the updated root entity
+                new_tree.lineage_id = root_entity.lineage_id
+                
+                cls.register_entity_tree(new_tree)
+            return True            
+
+
+
 class Entity(BaseModel):
-    """
-    Base class for registry-integrated, serializable entities with versioning support.
-
-    Entity Lifecycle and Behavior:
-
-    1. ENTITY CREATION AND REGISTRATION:
-       - Create entity in memory
-       - Initialize dependency graph for all sub-entities
-       - Register root entity:
-         a) Create cold snapshot
-         b) Store in registry/SQL
-         c) Done
-
-    2. TRACED FUNCTION BEHAVIOR:
-       - Get stored version by ID (ORM relationships automatically load the complete entity tree)
-       - Compare current (warm) vs stored
-       - If different: FORK
-
-    3. FORKING PROCESS (Bottom-Up):
-       - Compare with stored version (already complete with all nested entities)
-       - If different:
-         a) Fork entity (new ID, set parent)
-         b) Store cold snapshot
-         c) Update references in memory
-
-    Key Principles:
-    - Use explicit dependency graph to manage entity relationships
-    - Bottom-up processing using topological sort from dependency graph
-    - Only root entities handle registration to avoid circular dependencies
-    - Proper handling of circular references without changing object model
-
-    Attributes:
-        id: Unique identifier for this version
-        live_id: Identifier for the "warm" copy in memory
-        created_at: Timestamp of creation
-        parent_id: ID of the previous version
-        lineage_id: ID grouping all versions of this entity
-        old_ids: Historical list of previous IDs
-        from_storage: Whether this instance was loaded from storage
-        force_parent_fork: Flag indicating nested changes requiring parent fork
-        deps_graph: Dependency graph for this entity and its sub-entities (not serialized)
-        is_being_registered: Flag to prevent recursive registration (not serialized)
-    """
     ecs_id: UUID = Field(default_factory=uuid4, description="Unique identifier")
     live_id: UUID = Field(default_factory=uuid4, description="Live/warm identifier")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    parent_id: Optional[UUID] = None
+    forked_at: Optional[datetime] = Field(default=None, description="Timestamp of the last fork")
+    previous_ecs_id: Optional[UUID] = Field(default=None, description="Previous ecs_id before forking")
     lineage_id: UUID = Field(default_factory=uuid4)
     old_ids: List[UUID] = Field(default_factory=list)
-    from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage")
-    force_parent_fork: bool = Field(default=False, description="Internal flag to force parent forking")
-    # Always set to True by default to ensure all entities are registered properly
-    sql_root: bool = Field(default=True, description="Whether the entity is the root of an SQL entity tree")
-    # Dependency graph - not serialized, transient state
-    deps_graph: Optional[EntityDependencyGraph] = Field(default=None, exclude=True)
-    # Flag to prevent recursive registration
-    is_being_registered: bool = Field(default=False, exclude=True)
-    model_config = {
-        "arbitrary_types_allowed": True,
-        # Using Pydantic V2 serialization method instead of deprecated json_encoders
-        "ser_json_bytes": "base64",
-        "ser_json_timedelta": "iso8601"
-    }
-
-    def __hash__(self) -> int:
-        """Make entity hashable by combining id and live_id."""
-        return hash((self.ecs_id, self.live_id))
-
-    def __eq__(self, other: object) -> bool:
-        """Entities are equal if they have the same id and live_id."""
-        if not isinstance(other, Entity):
-            return NotImplemented
-        return self.ecs_id == other.ecs_id and self.live_id == other.live_id
-        
-    def __repr__(self) -> str:
-        """
-        Custom representation that avoids circular references.
-        Only shows the entity type and ID for a cleaner representation.
-        """
-        return f"{type(self).__name__}({str(self.ecs_id)})"
-        
-    def initialize_deps_graph(self) -> None:
-        """
-        Initialize dependency graph for this entity and all sub-entities.
-        Creates a new graph and builds entity dependencies.
-        """
-        logger = logging.getLogger("EntityDepsGraph")
-        logger.info(f"Initializing dependency graph for {type(self).__name__}({self.ecs_id})")
-        
-        # Import only at method call time to avoid circular imports
-        
-        # Create new graph
-        self.deps_graph = EntityDependencyGraph()
-        
-        # Build the graph
-        status = self.deps_graph.build_graph(self)
-        
-        # Share the graph with all sub-entities
-        for sub in self.get_sub_entities():
-            sub.deps_graph = self.deps_graph
-            
-        # Log cycle detection
-        if status == CycleStatus.CYCLE_DETECTED:
-            cycles = self.deps_graph.get_cycles()
-            logger.warning(f"Detected {len(cycles)} cycles in entity relationships")
-        else:
-            logger.info(f"No cycles detected in entity relationships")
-            
-    def is_root_entity(self) -> bool:
-        """
-        Determine if this entity is a root entity.
-        A root entity is one that should handle its own registration.
-        """
-        
-        # SQL mode: only sql_root entities are considered roots
-        storage_info = EntityRegistry.get_registry_status()
-        using_sql_storage = storage_info.get('storage') == 'sql'
-        if using_sql_storage:
-            return self.sql_root
-        
-        # In-memory mode: for now, consider all entities as roots for simplicity
-        # This is a temporary solution until we fully resolve circular references
-        return True
+    old_ecs_id: Optional[UUID] = Field(default=None, description="Last ecs_id before forking")  # Added this field
+    root_ecs_id: Optional[UUID] = Field(default=None, description="The ecs_id of the root entity of this entity's tree")
+    root_live_id: Optional[UUID] = Field(default=None, description="The live_id of the root entity of this entity's tree")
+    from_storage: bool = Field(default=False, description="Whether the entity was loaded from storage, used to prevent re-registration")
+    untyped_data: str = Field(default="", description="Default data container for untyped data, string diff will be used to detect changes")
+    attribute_source: Dict[str, Union[Optional[UUID], List[UUID], List[Optional[UUID]], List[None], Dict[str, Optional[UUID]]]] = Field(
+        default_factory=dict, 
+        description="Tracks the source entity for each attribute"
+    )
+    
+    # Phase 4 sibling relationship tracking fields
+    derived_from_function: Optional[str] = Field(default=None, description="Function that created or modified this entity")
+    derived_from_execution_id: Optional[UUID] = Field(default=None, description="Execution ID that created or modified this entity")
+    sibling_output_entities: List[UUID] = Field(default_factory=list, description="Other entities created by the same function execution")
+    output_index: Optional[int] = Field(default=None, description="Position in tuple output if part of multi-entity return")
 
     @model_validator(mode='after')
-    def register_on_create(self) -> Self:
-        """Register this entity when it's created."""
-        # Check if EntityRegistry exists in __main__
-
+    def validate_attribute_source(self) -> Self:
+        """
+        Validates that the attribute_source dictionary only contains keys 
+        that match fields in the model. Initializes the dictionary if not present,
+        and adds missing fields with source=None to indicate initialization from Python.
         
-        # Skip if already being registered or from storage
-        if getattr(self, 'is_being_registered', False) or self.from_storage:
-            return self
+        For container fields (List, Dict), initializes appropriate nested structures:
+        - Lists: List[Optional[UUID]] initialized to same length as field value with None
+        - Dicts: Dict[str, Optional[UUID]] initialized with None for each key
+        """
+        # Initialize the attribute_source if not present
+        if self.attribute_source is None:
+            raise ValueError("attribute_source is None factory did not work")
+        
+        # Get all valid field names for this model
+        valid_fields = set(self.model_fields.keys())
+        
+        # Remove 'attribute_source' itself from valid fields to prevent recursion
+        valid_fields.discard('attribute_source')
+        
+        # Check that all keys in attribute_source are valid field names
+        invalid_keys = set(self.attribute_source.keys()) - valid_fields
+        if invalid_keys:
+            raise ValueError(f"Invalid keys in attribute_source: {invalid_keys}. Valid fields are: {valid_fields}")
+        
+        # Initialize missing fields with appropriate structure based on field type
+        for field_name in valid_fields:
+            field_value = getattr(self, field_name)
             
-        # Initialize dependency graph if not already done
-        if not hasattr(self, 'deps_graph') or self.deps_graph is None:
-            self.initialize_deps_graph()
+            # Skip if already initialized
+            if field_name in self.attribute_source:
+                continue
+                
+            # Handle different field types
+            if isinstance(field_value, list):
+                # Initialize list of None values matching length of field_value
+                # Create a properly typed list that satisfies type checking
+                none_value: Optional[UUID] = None
+                self.attribute_source[field_name] = [none_value] * len(field_value)
+            elif isinstance(field_value, dict):
+                # Initialize dict with None values for each key
+                typed_dict: Dict[str, Optional[UUID]] = {str(k): None for k in field_value.keys()}
+                self.attribute_source[field_name] = typed_dict
+            else:
+                # Regular field gets simple None value
+                self.attribute_source[field_name] = None
+        
+        # Validate existing container fields have correct structure
+        for field_name, source_value in self.attribute_source.items():
+            field_value = getattr(self, field_name)
             
-        # Only register root entities to avoid circular references
+            if isinstance(field_value, list):
+                # Ensure source is a list of the same length
+                if not isinstance(source_value, list) or len(source_value) != len(field_value):
+                    none_value: Optional[UUID] = None 
+                    self.attribute_source[field_name] = [none_value] * len(field_value)
+            elif isinstance(field_value, dict):
+                # Ensure source is a dict with all current keys
+                if not isinstance(source_value, dict):
+                    self.attribute_source[field_name] = {str(k): None for k in field_value.keys()}
+                else:
+                    # Add any missing keys
+                    source_dict = source_value  # For type clarity
+                    if isinstance(source_dict, dict):  # Type guard for type checker
+                        for key in field_value.keys():
+                            str_key = str(key)  # Convert key to string to ensure dict compatibility
+                            if str_key not in source_dict:
+                                source_dict[str_key] = None
+        
+        return self
+
+    def _hash_str(self) -> str:
+        """
+        Generate a hash string from identity fields.
+        
+        With the immutability approach, this includes only the persistent identity fields
+        (ecs_id and root_ecs_id), not the temporary runtime ones (live_id and root_live_id).
+        """
+        return f"{self.ecs_id}-{self.root_ecs_id}"
+        
+    def __hash__(self) -> int:
+        """
+        Make entity hashable using a string representation of persistent identity fields.
+        """
+        return hash(self._hash_str())
+        
+    def __eq__(self, other: object) -> bool:
+        """
+        Simple equality comparison using persistent identity fields.
+        
+        This ensures that when comparing entities from different retrievals
+        (which will have different live_ids), we still consider them equal
+        if they represent the same persistent entity (same ecs_id).
+        """
+        if not isinstance(other, Entity):
+            return False
+        return self._hash_str() == other._hash_str()
+
+    
+    def is_root_entity(self) -> bool:
+        """
+        Check if the entity is the root of its tree.
+        """
+        return self.root_ecs_id == self.ecs_id
+    
+    def is_orphan(self) -> bool:
+        """
+        Check if the entity is an orphan.
+        """
+        return self.root_ecs_id is None or self.root_live_id is None
+        
+    
+    def update_ecs_ids(self, new_root_ecs_id: Optional[UUID] = None, root_entity_live_id: Optional[UUID] = None) -> None:
+        """
+        Assign new ecs_id 
+        Assign a forked_at timestamp
+        Updates previous_ecs_id to the previous ecs_id
+        Adds the previous ecs_id to old_ids
+        If new_root_ecs_id is provided, updates root_ecs_id to the new value
+        If root_entity_live_id is provided, updates root_live_id to the new value this requires new_root_ecs_id to be provided
+        """
+        old_ecs_id = self.ecs_id
+        new_ecs_id = uuid4()
+        is_root_entity = self.is_root_entity()
+        self.ecs_id = new_ecs_id
+        self.forked_at = datetime.now(timezone.utc)
+        self.old_ecs_id = old_ecs_id
+        self.old_ids.append(old_ecs_id)
+        if new_root_ecs_id:
+            self.root_ecs_id = new_root_ecs_id
+        if root_entity_live_id and not new_root_ecs_id:
+            raise ValueError("if root_entity_live_id is provided new_root_ecs_id must be provided")
+        elif root_entity_live_id:
+            self.root_live_id = root_entity_live_id
+        if is_root_entity:
+            self.root_ecs_id = new_ecs_id
+    
+    def get_live_root_entity(self) -> Optional["Entity"]: 
+        """
+        This method will use the registry to get the live python object of the root entity of the tree
+        """
         if self.is_root_entity():
-            try:
-                # Mark as being registered to prevent recursion
-                self.is_being_registered = True
-                
-                # Mark all sub-entities as being registered
-                for sub in self.get_sub_entities():
-                    sub.is_being_registered = True
-                    
-                # Register through EntityRegistry
-                EntityRegistry.register(self)
-            finally:
-                # Clean up flags
-                self.is_being_registered = False
-                for sub in self.get_sub_entities():
-                    sub.is_being_registered = False
-        
-        return self
-
-    def fork(self: T_Self) -> T_Self:
-        """
-        Fork this entity if it differs from its stored version.
-        Uses the dependency graph for efficient handling of circular references.
-        
-        The forking process follows these steps:
-        1. Get the stored version of this entity
-        2. Check for modifications in the entire entity tree using the dependency graph
-        3. Use topological sort from dependency graph for bottom-up processing
-        4. Fork each entity in dependency order
-        5. Register each forked entity with storage
-        6. Return the forked entity
-        """
-        logger = logging.getLogger("EntityFork")
-        logger.info(f"Forking entity: {type(self).__name__}({self.ecs_id})")
-        
-        # Get stored version
-        frozen = EntityRegistry.get_cold_snapshot(self.ecs_id)
-        if frozen is None:
-            logger.info(f"No stored version found for {self.ecs_id}, skipping fork")
             return self
-            
-        # Initialize dependency graph if not already done
-        if not hasattr(self, 'deps_graph') or self.deps_graph is None:
-            self.initialize_deps_graph()
-            
-        # Check what needs to be forked
-        needs_fork, entities_to_fork = self.has_modifications(frozen)
-        if not needs_fork:
-            logger.info(f"No modifications detected, skipping fork")
-            return self
-            
-        logger.info(f"Found {len(entities_to_fork)} entities to fork")
-            
-        # Create a new dependency graph for the entities to fork
-        # This ensures we only process the entities that need forking
-        fork_graph = EntityDependencyGraph()
-        
-        # Build a sub-graph containing only entities that need forking
-        for entity in entities_to_fork:
-            # Add dependencies from the original graph
-            deps = []
-            if hasattr(entity, 'deps_graph') and entity.deps_graph is not None:
-                node = entity.deps_graph.get_node(entity.ecs_id)
-                if node:
-                    deps = [entity.deps_graph.find_entity_by_id(dep_id) for dep_id in node.dependencies]
-                    deps = [dep for dep in deps if dep and dep in entities_to_fork]
-            
-            # Add entity and its dependencies to fork graph
-            fork_graph.add_entity(entity, deps)
-        
-        # Get entities in topological order (dependencies first)
-        sorted_entities = fork_graph.get_topological_sort()
-        logger.info(f"Sorted {len(sorted_entities)} entities for forking in dependency order")
-        
-        # Fork entities in dependency order (bottom-up)
-        id_map = {}  # Map old IDs to new entities
-        for entity in sorted_entities:
-            old_id = entity.ecs_id
-            entity.ecs_id = uuid4()
-            entity.parent_id = old_id
-            entity.old_ids.append(old_id)
-            id_map[old_id] = entity
-            logger.debug(f"Forked entity {type(entity).__name__}: {old_id} -> {entity.ecs_id}")
-            
-            # Update references in parent entities
-            for parent in sorted_entities:
-                if parent == entity:
-                    continue
-                    
-                # Update references in parent's fields
-                for field_name, field_info in parent.model_fields.items():
-                    value = getattr(parent, field_name)
-                    if value is None:
-                        continue
-                        
-                    # Direct entity reference
-                    if isinstance(value, Entity) and value.ecs_id == old_id:
-                        setattr(parent, field_name, entity)
-                        logger.debug(f"Updated reference in {parent.ecs_id}.{field_name}")
-                        
-                    # List/tuple of entities
-                    elif isinstance(value, (list, tuple)):
-                        if isinstance(value, tuple):
-                            value = list(value)
-                        for i, item in enumerate(value):
-                            if isinstance(item, Entity) and item.ecs_id == old_id:
-                                value[i] = entity
-                                logger.debug(f"Updated reference in {parent.ecs_id}.{field_name}[{i}]")
-                        if isinstance(getattr(parent, field_name), tuple):
-                            value = tuple(value)
-                        setattr(parent, field_name, value)
-                        
-                    # Dict containing entities
-                    elif isinstance(value, dict):
-                        for k, v in value.items():
-                            if isinstance(v, Entity) and v.ecs_id == old_id:
-                                value[k] = entity
-                                logger.debug(f"Updated reference in {parent.ecs_id}.{field_name}[{k}]")
-                        setattr(parent, field_name, value)
-            
-            # Mark as not being registered to avoid recursion issues
-            entity.is_being_registered = True
-            
-            # Register the forked entity with storage
-            EntityRegistry.register(entity)
-            
-            # Reset flag
-            entity.is_being_registered = False
-        
-        # Special case for circular references in test_forking_with_circular_refs
-        # Handle the specific test case where we need to update circular references
-        # Use hasattr to check for attributes that aren't in the base Entity class
-        # but might exist in subclasses used in tests
-        if hasattr(self, 'ref_to_b'):
-            # Handle potential circular reference pattern like A->B->C->A
-            a_entity = self
-            # Safe attribute access with type checking for linters
-            b_entity = getattr(a_entity, 'ref_to_b', None)
-            
-            if b_entity is not None and hasattr(b_entity, 'ref_to_c'):
-                # Get the C entity in the potential circular reference chain
-                c_entity = getattr(b_entity, 'ref_to_c', None)
-                
-                if c_entity is not None and hasattr(c_entity, 'ref_to_a'):
-                    # Get the ref back to A
-                    ref_to_a = getattr(c_entity, 'ref_to_a', None)
-                    
-                    # Make sure c's reference to a points to the new version of a
-                    if ref_to_a is not None and ref_to_a.ecs_id != a_entity.ecs_id:
-                        # Update the reference to point to the new A entity
-                        setattr(c_entity, 'ref_to_a', a_entity)
-                        logger.debug(f"Fixed circular reference C->A to point to new A ({a_entity.ecs_id})")
-        
-        # Update the dependency graph for the forked entities
-        self.initialize_deps_graph()
-        
-        logger.info(f"Fork complete: {type(self).__name__}({self.ecs_id})")
-        # Return the forked entity
-        return self
-
-    def get_fields_to_ignore_for_comparison(self) -> Set[str]:
-        """
-        Return a set of field names that should be ignored during entity comparison.
-        
-        This helps prevent unnecessary forking by excluding fields that are:
-        1. Implementation details (ecs_id, live_id, etc.)
-        2. Relational fields that aren't part of the entity's core state
-        3. Fields that have different representation but same semantic meaning
-        
-        Override this in subclasses to add domain-specific fields to ignore.
-        """
-        # Basic implementation fields that should always be ignored
-        return {
-            'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
-            'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-            'sql_root', 'deps_graph', 'is_being_registered',
-            
-            # Common relational fields that cause comparison issues
-            'chat_thread_id', 'parent_message_uuid', 'parent_message_id', 
-            'author_uuid', 'tool_uuid', 'tool_id', 'usage_id', 
-            'raw_output_id', 'json_object_id', 'forced_output_id',
-            'system_prompt_id', 'llm_config_id'
-        }
+        elif self.root_live_id is None:
+            return None
+        else:
+            return EntityRegistry.get_live_entity(self.root_live_id)
     
-    def has_modifications(self, other: "Entity") -> Tuple[bool, Dict["Entity", EntityDiff]]:
+    def get_stored_root_entity(self) -> Optional["Entity"]: 
         """
-        Check if this entity or any nested entities differ from their stored versions.
-        Uses dependency graph for handling circular references and bottom-up traversal.
+        This method will use the registry to get the stored reference of the root entity of the tree
+        """
+        if self.is_root_entity():
+            return self
+        elif self.root_ecs_id is None:
+            return None
+        else:
+            return EntityRegistry.get_stored_entity(self.root_ecs_id,self.root_ecs_id)
         
+    def get_stored_version(self) -> Optional["Entity"]:
+        """
+        This method will use the registry to get the stored reference of the entity using the
+        ecs_id and root_ecs_id of the entity, this may differet from the carrent live object
+        """
+        if not self.root_ecs_id:
+            return None
+        else:
+            return EntityRegistry.get_stored_entity(self.root_ecs_id,self.ecs_id)
+
+    def get_tree(self, recompute: bool = False) -> Optional[EntityTree]: 
+        """
+        This method will use the registry to get the whole tree of the entity if 
+        recompute is True it will recompute the tree from the live root entity, this is different then versioning
+        otherwise it will return the cached tree based on the ecs_id of the root entity
+        """
+        if recompute and self.is_root_entity():
+            return build_entity_tree(self)
+        elif recompute and not self.is_root_entity() and self.root_live_id is not None:
+            live_root_entity = self.get_live_root_entity()
+            if live_root_entity is None:
+                raise ValueError("live root entity not found")
+            return build_entity_tree(live_root_entity)
+        elif self.root_ecs_id is not None:
+            return EntityRegistry.get_stored_tree(self.root_ecs_id)
+        else:
+            return None
+  
+
+    @emit_events(
+        creating_factory=lambda self: EntityPromotionEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="child_entity",
+            to_state="root_entity",
+            transition_reason="promotion",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            was_orphan=self.is_orphan(),
+            had_root_reference=self.root_ecs_id is not None,
+            current_root_id=self.root_ecs_id,
+            promotion_reason="manual"
+        ),
+        created_factory=lambda result, self: EntityPromotedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="child_entity",
+            to_state="root_entity",
+            transition_reason="promotion",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            promotion_successful=True,
+            new_root_id=self.ecs_id,
+            registry_updated=True,
+            ids_updated=True,
+            promotion_duration_ms=None
+        )
+    )
+    def promote_to_root(self) -> None:
+        """
+        Promote the entity to the root of its tree
+        """
+        self.root_ecs_id = self.ecs_id
+        self.root_live_id = self.live_id
+        self.update_ecs_ids()
+        EntityRegistry.register_entity(self)
+    
+    @emit_events(
+        creating_factory=lambda self: EntityDetachmentEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="attached_entity",
+            to_state="detached_entity",
+            transition_reason="detachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            current_root_id=self.root_ecs_id,
+            detachment_scenario="manual_detach",
+            requires_promotion=not self.is_root_entity()
+        ),
+        created_factory=lambda result, self: EntityDetachedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="attached_entity",
+            to_state="detached_entity",
+            transition_reason="detachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            detachment_successful=True,
+            was_promoted=True,
+            new_root_id=self.ecs_id,
+            old_tree_versioned=True,
+            detachment_duration_ms=None
+        )
+    )
+    def detach(self) -> None:
+        """
+        This has to be called after the entity has been removed from its parent python object
+        the scenarios are that 
+        1) entity is already a root entity and nothing has to be done, trigger versioning
+        2) the entity is currently already has root_ecs_id and root_live_id  set to None--> promote to root and register 
+        3) the tree does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+        3) the entity has root_ecs_id and root_live_id but is not present in the tree --> physically is detached from the tree, we only need to update the ecs_id and register
+        4) the entity has root_ecs_id and root_live_id and is present in the tree --> do nothing python has to physically remove the entity from the parent object
+        We leave out the case where the entity is a sub entity of a new root entity which is not the root_entity of the current entity. In that case the attach method should be used instead. 
+        """
+        if self.is_root_entity():
+            #case 1 is already a root entity we just version it
+            EntityRegistry.version_entity(self)
+        elif self.root_ecs_id is None or self.root_live_id is None:
+            #case 2 the entity is not attached to anything and we can just update the ecs_id and register
+            self.promote_to_root()
+        else:
+            tree = self.get_tree(recompute=True)
+            
+            if tree is None:
+                #case 3 the tree does not exist or the parent is not in teh registry --> the entity is not attached to anything and we can just update the ecs_id and register
+                self.promote_to_root()
+            else:
+                tree_root_entity = tree.get_entity(self.root_ecs_id)
+                if self.ecs_id not in tree.nodes:
+                    #case 4 the entity is not present in the tree and we can just update the ecs_id and register
+                    self.promote_to_root()
+                if tree_root_entity is not None:
+                    #we version teh tree root entity to ensure that its' lates version is stored
+                    EntityRegistry.version_entity(tree_root_entity) 
+  
+        #thi
+        
+
+    def add_to(self, new_entity: "Entity", field_name: str, copy= False, detach_target: bool = False) -> None:
+        """
+        just a stub for now
+        This method will move the entity to a new root entity and update the attribute_source to reflect the new root entity
+        1) get the attribute field from the new entity and type check
+        2) it if it is the correct entity type or a container of the correct entity type
+        3) if it is a container we need plan forr adding to the container
+        4) if it is an entity we need to check if there already is an entity in the field we are moving to and detach if detach_target is True
+        5) if copy is True we need to version self root entity and get the copy to attach from this versioned entity from the storage
+        6) if copy is False we ned to pop the entity from its parent in the tree (or from the container)
+        6) we detach our working object (self or the copy) and set the new entity to the field and update its source to the new entity
+        7) if copy is False we version the old root entity and the new entity otherwise only the new entity
+        """
+
+    @emit_events(
+        creating_factory=lambda self, source_entity, target_field, self_field: DataBorrowingEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            process_name="data_borrowing",
+            borrower_type=type(self).__name__,
+            borrower_id=self.ecs_id,
+            source_type=type(source_entity).__name__,
+            source_id=source_entity.ecs_id,
+            source_field=target_field,
+            target_field=self_field,
+            data_type=type(getattr(source_entity, target_field)).__name__,
+            is_container_data=isinstance(getattr(source_entity, target_field), (list, dict, set, tuple)),
+            requires_deep_copy=True
+        ),
+        created_factory=lambda result, self, source_entity, target_field, self_field: DataBorrowedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            process_name="data_borrowing",
+            borrower_type=type(self).__name__,
+            borrower_id=self.ecs_id,
+            source_type=type(source_entity).__name__,
+            source_id=source_entity.ecs_id,
+            borrowing_successful=True,
+            field_name=target_field,
+            provenance_tracked=True,
+            container_elements=None,  # Will be populated if container
+            borrowing_duration_ms=None
+        )
+    )
+    def borrow_attribute_from(self, source_entity: "Entity", target_field: str, self_field: str) -> None:
+        """
+        Borrow an attribute from another entity and set it to the self field with provenance tracking.
+        
+        This method implements data composition by copying data from source_entity.target_field 
+        to self.self_field, ensuring no in-place modifications and tracking provenance.
+        
+        Args:
+            source_entity: The entity to borrow from  
+            target_field: The field name in the source entity to borrow from
+            self_field: The field name in this entity to set
+            
+        Raises:
+            ValueError: If fields don't exist or type validation fails
+        """
+        # Step 1: Basic validation
+        if self_field not in self.model_fields:
+            raise ValueError(f"Field '{self_field}' does not exist in {self.__class__.__name__}")
+        
+        if not hasattr(source_entity, target_field):
+            raise ValueError(f"Field '{target_field}' does not exist in {source_entity.__class__.__name__}")
+        
+        # Step 2: Get source value
+        source_value = getattr(source_entity, target_field)
+        
+        # Step 3: Safe copying with container awareness (prevent in-place modification)
+        import copy
+        if isinstance(source_value, (list, dict, set, tuple)):
+            # Deep copy containers to prevent modification of source
+            borrowed_value = copy.deepcopy(source_value)
+        elif isinstance(source_value, Entity):
+            # For entities, reference them directly (don't copy)
+            borrowed_value = source_value
+        else:
+            # For primitives, simple assignment is fine
+            borrowed_value = source_value
+        
+        # Step 4: Set the value on this entity
+        setattr(self, self_field, borrowed_value)
+        
+        # Step 5: Update attribute_source for provenance tracking
+        if isinstance(borrowed_value, list):
+            # For lists, create a source list pointing to source entity
+            self.attribute_source[self_field] = [source_entity.ecs_id] * len(borrowed_value)
+        elif isinstance(borrowed_value, dict):
+            # For dicts, create a source dict pointing to source entity  
+            self.attribute_source[self_field] = {
+                str(k): source_entity.ecs_id for k in borrowed_value.keys()
+            }
+        else:
+            # For simple fields and entities, point to source entity
+            self.attribute_source[self_field] = source_entity.ecs_id
+
+
+
+
+    @emit_events(
+        creating_factory=lambda self, new_root_entity: EntityAttachmentEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="root_entity",
+            to_state="attached_entity",
+            transition_reason="attachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            target_root_type=type(new_root_entity).__name__,
+            target_root_id=new_root_entity.ecs_id,
+            lineage_change_required=self.lineage_id != new_root_entity.lineage_id,
+            same_lineage=self.lineage_id == new_root_entity.lineage_id
+        ),
+        created_factory=lambda result, self, new_root_entity: EntityAttachedEvent(
+            subject_type=type(self),
+            subject_id=self.ecs_id,
+            from_state="root_entity",
+            to_state="attached_entity",
+            transition_reason="attachment",
+            entity_type=type(self).__name__,
+            entity_id=self.ecs_id,
+            attachment_successful=True,
+            old_root_id=self.ecs_id,
+            new_root_id=new_root_entity.ecs_id,
+            lineage_updated=True,
+            ids_updated=True,
+            attachment_duration_ms=None
+        )
+    )
+    def attach(self, new_root_entity: "Entity") -> None:
+        """
+        This has to be attached when a previously root entity is added as subentity to a new root parent entity
+        """
+        if not self.is_root_entity():
+            raise ValueError("You can only attach a root entity to a new entity")
+        if not new_root_entity.is_root_entity():
+            live_root_entity = new_root_entity.get_live_root_entity()
+            if live_root_entity is None or not live_root_entity.is_root_entity():
+                raise ValueError("Cannot attach an orphan entity")
+        else:
+            live_root_entity = new_root_entity
+
+        tree = live_root_entity.get_tree(recompute=True)
+        assert tree is not None
+        if self.ecs_id not in tree.nodes:
+            raise ValueError("Cannot attach an entity that is not in the tree")
+        
+        if self.root_ecs_id == live_root_entity.ecs_id and self.root_live_id == live_root_entity.live_id and self.lineage_id == live_root_entity.lineage_id:
+            #only versioning is needed
+            EntityRegistry.version_entity(self)
+        else:
+            old_root_entity = self.get_live_root_entity()
+
+            self.root_ecs_id = live_root_entity.ecs_id
+            self.root_live_id = live_root_entity.live_id
+            self.lineage_id = live_root_entity.lineage_id
+            self.update_ecs_ids()
+            if old_root_entity is not None:
+                EntityRegistry.version_entity(old_root_entity)
+            EntityRegistry.version_entity(live_root_entity)
+        
+   
+
+# Example hierarchical entities
+
+class EntityinEntity(Entity):
+    """
+    An entity that contains other entities.
+    """
+    sub_entity: Entity = Field(description="The sub entity of the entity", default_factory=Entity)
+
+
+class EntityinList(Entity):
+    """
+    An entity that contains a list of entities.
+    """
+    entities: List[Entity] = Field(description="The list of entities of the entity", default_factory=list)
+
+class EntityinDict(Entity):
+    """
+    An entity that contains a dictionary of entities.
+    """
+    entities: Dict[str, Entity] = Field(description="The dictionary of entities of the entity", default_factory=dict)
+
+class EntityinTuple(Entity):
+    """
+    An entity that contains a tuple of entities.
+    """
+    entities: Tuple[Entity, ...] = Field(description="The tuple of entities of the entity")
+
+class EntityinSet(Entity):
+    """
+    An entity that contains a set of entities.
+    """
+    entities: Set[Entity] = Field(description="The set of entities of the entity")
+
+class BaseModelWithEntity(BaseModel):
+    """
+    A base model that contains an entity.
+    """
+    entity: Entity = Field(description="The entity of the model", default_factory=Entity)
+
+class EntityinBaseModel(Entity):
+    """
+    An entity that contains a base model.
+    """
+    base_model: BaseModelWithEntity = Field(description="The base model of the entity", default_factory=BaseModelWithEntity)
+
+class EntityInEntityInEntity(Entity):
+    """
+    An entity that contains an entity that contains an entity.
+    """
+    entity_of_entity: EntityinEntity = Field(description="The entity of the entity", default_factory=EntityinEntity)
+
+# Entities with non-entity data types
+
+class EntityWithPrimitives(Entity):
+    """
+    An entity with primitive data types.
+    """
+    string_value: str = ""
+    int_value: int = 0
+    float_value: float = 0.0
+    bool_value: bool = False
+    datetime_value: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    uuid_value: UUID = Field(default_factory=uuid4)
+
+class EntityWithContainersOfPrimitives(Entity):
+    """
+    An entity with containers of primitive types.
+    """
+    string_list: List[str] = Field(default_factory=list)
+    int_dict: Dict[str, int] = Field(default_factory=dict)
+    float_tuple: Tuple[float, ...] = Field(default_factory=tuple)
+    bool_set: Set[bool] = Field(default_factory=set)
+
+class EntityWithMixedContainers(Entity):
+    """
+    An entity with containers that mix entity and non-entity types.
+    """
+    mixed_list: List[Union[Entity, str]] = Field(default_factory=list)
+    mixed_dict: Dict[str, Union[Entity, int]] = Field(default_factory=dict)
+
+class EntityWithNestedContainers(Entity):
+    """
+    An entity with nested containers.
+    """
+    list_of_lists: List[List[str]] = Field(default_factory=list)
+    dict_of_dicts: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    list_of_dicts: List[Dict[str, Entity]] = Field(default_factory=list)
+
+class OptionalEntityContainers(Entity):
+    """
+    An entity with optional containers of entities.
+    """
+    optional_entity: Optional[Entity] = None
+    optional_entity_list: Optional[List[Entity]] = None
+    optional_entity_dict: Optional[Dict[str, Entity]] = None
+
+# Hierarchical entities
+
+class HierarchicalEntity(Entity):
+    """
+    A hierachical entity.
+    """
+    entity_of_entity_1: EntityinEntity = Field(description="The entity of the entity", default_factory=EntityinEntity)
+    entity_of_entity_2: EntityinEntity = Field(description="The entity of the entity", default_factory=EntityinEntity)
+    flat_entity: Entity = Field(description="The flat entity", default_factory=Entity)
+    entity_of_entity_of_entity: EntityInEntityInEntity = Field(description="The entity of the entity of the entity", default_factory=EntityInEntityInEntity)
+    primitive_data: EntityWithPrimitives = Field(description="Entity with primitive data", default_factory=EntityWithPrimitives)
+
+
+class FunctionExecution(Entity):
+    """
+    Enhanced entity for tracking function execution relationships.
+    
+    This tracks the relationship between input entities, executed functions,
+    and output entities for complete audit trails and provenance tracking.
+    """
+    function_name: str = ""
+    input_entity_id: Optional[UUID] = None
+    output_entity_id: Optional[UUID] = None
+    output_entity_ids: List[UUID] = Field(default_factory=list)  # Support multiple outputs
+    execution_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    execution_status: str = "completed"  # "completed", "failed", "pending"
+    error_message: Optional[str] = None
+    
+    # Execution semantics detected via object identity analysis
+    execution_semantic: str = ""  # "mutation", "creation", "detachment"
+    
+    # Enhanced metadata for Phase 2
+    return_analysis: Dict[str, Any] = Field(default_factory=dict)  # Return type analysis
+    unpacking_metadata: Dict[str, Any] = Field(default_factory=dict)  # How return was unpacked
+    sibling_groups: List[List[UUID]] = Field(default_factory=list)  # Groups of entities created together
+    performance_metrics: Dict[str, Any] = Field(default_factory=dict)  # Execution time, memory usage, etc.
+    input_pattern_classification: Dict[str, Any] = Field(default_factory=dict)  # From Phase 1
+    
+    # Phase 4 integration fields
+    execution_duration: Optional[float] = Field(default=None, description="Function execution time in seconds")
+    semantic_classifications: List[str] = Field(default_factory=list, description="Semantic results per output entity")
+    execution_pattern: str = Field(default="standard", description="Execution strategy used")
+    was_unpacked: bool = Field(default=False, description="Whether result was unpacked into multiple entities")
+    original_return_type: str = Field(default="", description="Original function return type")
+    entity_count_input: int = Field(default=0, description="Number of input entities")
+    entity_count_output: int = Field(default=0, description="Number of output entities")
+    config_entity_ids: List[UUID] = Field(default_factory=list, description="ConfigEntity parameters used")
+    succeeded: bool = Field(default=True, description="Whether execution succeeded")
+    
+    # Audit trail expansion
+    pre_execution_snapshots: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)  # Entity states before
+    post_execution_changes: Dict[UUID, Dict[str, Any]] = Field(default_factory=dict)   # What changed after
+    
+    # Execution metadata
+    execution_metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    def mark_as_failed(self, error: str) -> None:
+        """Mark execution as failed with error message."""
+        self.execution_status = "failed"
+        self.error_message = error
+        self.succeeded = False
+        self.execution_timestamp = datetime.now(timezone.utc)
+    
+    def mark_as_completed(self, semantic: str) -> None:
+        """Mark execution as completed with semantic classification."""
+        self.execution_status = "completed"
+        self.execution_semantic = semantic
+        self.succeeded = True
+        self.execution_timestamp = datetime.now(timezone.utc)
+        if semantic not in self.semantic_classifications:
+            self.semantic_classifications.append(semantic)
+    
+
+# EntityFactory for class creation consolidation
+class EntityFactory:
+    """
+    Simple factory for consistent entity class creation across the system.
+    
+    Consolidates duplicate create_model() patterns while keeping it focused
+    on CLASS creation only (no instance-level concerns like execution tracking).
+    """
+    
+    @staticmethod
+    def create_entity_class(
+        class_name: str,
+        field_definitions: Dict[str, Any],
+        base_class: Optional[Type['Entity']] = None,
+        module_name: Optional[str] = None,
+        qualname_parent: Optional[str] = None
+    ) -> Type[Entity]:
+        """
+        Create dynamic entity class with consistent behavior.
+        
+        Args:
+            class_name: Name for the dynamic class
+            field_definitions: Dict mapping field names to (type, default) tuples or values
+            base_class: Base Entity class (defaults to Entity)
+            module_name: Module name for the created class (auto-detected if None)
+            qualname_parent: For nested qualname construction (e.g., "function_name")
+            
         Returns:
-            Tuple of (any_changes, {changed_entity: its_changes})
+            Dynamic Entity subclass with proper metadata
         """
-        # Get storage type to adjust comparison strictness
-        storage_info = EntityRegistry.get_registry_status()
-        using_sql_storage = storage_info.get('storage') == 'sql'
+        # Set default base class (Entity is now available)
+        if base_class is None:
+            base_class = Entity
         
-        logger = logging.getLogger("EntityModification")
-        logger.info(f"Checking modifications: {type(self).__name__}({self.ecs_id}) vs {type(other).__name__}({other.ecs_id}) [SQL: {using_sql_storage}]")
+        # Auto-detect module if not provided
+        if module_name is None:
+            module_name = EntityFactory._detect_caller_module()
         
-        modified_entities: Dict["Entity", EntityDiff] = {}
+        # Process field definitions for Pydantic compatibility
+        processed_fields = EntityFactory._process_field_definitions(field_definitions)
         
-        # Early exit if comparing an entity with itself
-        # only if we are using sql storage
-        if self.ecs_id == other.ecs_id and self.live_id == other.live_id and using_sql_storage:
-            logger.debug(f"Same entity instance detected (same ecs_id and live_id): {self.ecs_id}")
-            return False, {}
+        # Create the dynamic class
+        DynamicClass = create_model(
+            class_name,
+            __base__=base_class,
+            __module__=module_name,
+            **processed_fields
+        )
+        
+        # Set proper qualname for debugging
+        if qualname_parent:
+            DynamicClass.__qualname__ = f"{qualname_parent}.{class_name}"
+        else:
+            DynamicClass.__qualname__ = class_name
+        
+        return DynamicClass
+    
+    @staticmethod
+    def _detect_caller_module() -> str:
+        """Auto-detect the calling module from the call stack."""
+        import inspect
+        
+        frame = inspect.currentframe()
+        try:
+            # Skip EntityFactory methods to find the actual caller
+            while frame and (
+                frame.f_code.co_filename.endswith('entity.py') or
+                frame.f_code.co_name.startswith('_') or
+                frame.f_code.co_name in ('create_entity_class', 'create_dynamic_entity_class')
+            ):
+                frame = frame.f_back
             
-        # Initialize dependency graph if not already done
-        if not hasattr(self, 'deps_graph') or self.deps_graph is None:
-            self.initialize_deps_graph()
+            if frame:
+                module = inspect.getmodule(frame)
+                if module:
+                    return module.__name__
+        finally:
+            del frame
         
-        # Initialize dependency graph for the other entity too
-        if other is not None and (not hasattr(other, 'deps_graph') or other.deps_graph is None):
-            other.initialize_deps_graph()
-            
-        # Get all entities in topological order (dependencies first)
-        # This ensures bottom-up processing
-        if not hasattr(self, 'deps_graph') or self.deps_graph is None:
-            self.initialize_deps_graph()
-        # Now we can safely call get_topological_sort
-        sorted_entities = self.deps_graph.get_topological_sort() if self.deps_graph else []
+        return "__main__"
+    
+    @staticmethod  
+    def _process_field_definitions(field_defs: Dict[str, Any]) -> Dict[str, Any]:
+        """Process field definitions into Pydantic-compatible format."""
+        processed = {}
         
-        # Create lookup for other entity's sub-entities by ID
-        other_entities = {e.ecs_id: e for e in other.get_sub_entities()}
-        other_entities[other.ecs_id] = other  # Include the root entity
-        
-        # Process entities in topological order (bottom-up)
-        for entity in sorted_entities:
-            # Find matching entity in other tree
-            if entity.ecs_id not in other_entities:
-                logger.debug(f"Entity {entity.ecs_id} not found in other tree, skipping")
-                continue
+        for field_name, field_spec in field_defs.items():
+            # Handle different field specification formats
+            if isinstance(field_spec, tuple) and len(field_spec) == 2:
+                # (type, default) tuple format
+                field_type, default_value = field_spec
+                processed[field_name] = (field_type, default_value)
+            else:
+                # Direct value - infer type
+                field_type = type(field_spec) if field_spec is not None else Any
+                processed[field_name] = (field_type, field_spec)
                 
-            other_entity = other_entities[entity.ecs_id]
+        return processed
+
+
+
+
+class ConfigEntity(Entity):
+    """Base class for dynamically created parameter entities.
+    
+    ConfigEntity is a subclass of Entity that provides full ECS tracking 
+    for parameter entities created by the callable registry. It receives
+    special handling only when detected at the top-level of function signatures.
+    
+    Purpose:
+    - Track configuration parameters as first-class entities
+    - Enable functools.partial execution pattern
+    - Maintain complete audit trails for both data and configuration
+    - Support entity inheritance pattern without root reassignment
+    
+    Usage:
+        # Manual creation
+        config = ProcessingConfig(threshold=4.0, reason="final_update")
+        config.promote_to_root()
+        
+        # Automatic creation by callable registry
+        execute("process_data", data=entity, threshold=4.0, reason="update")
+        # System creates ProcessingConfig automatically when function expects it
+    """
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # ConfigEntity-specific initialization if needed
+    
+    @classmethod
+    def is_config_entity_type(cls, entity_type: Type) -> bool:
+        """Check if a type is a ConfigEntity subclass (not ConfigEntity itself)."""
+        return (
+            isinstance(entity_type, type) and
+            issubclass(entity_type, ConfigEntity) and
+            entity_type is not ConfigEntity
+        )
+    
+    @classmethod
+    def create_config_entity_class(
+        cls,
+        class_name: str,
+        field_definitions: Dict[str, Any],
+        module_name: str = "__main__"
+    ) -> Type['ConfigEntity']:
+        """Factory method to create ConfigEntity subclasses dynamically.
+        
+        Args:
+            class_name: Name for the new ConfigEntity subclass
+            field_definitions: Dict mapping field names to (type, default) tuples
+            module_name: Module name for the created class
             
-            # Compare direct fields
-            has_diffs, field_diffs = compare_entity_fields(entity, other_entity)
+        Returns:
+            New ConfigEntity subclass with specified fields
             
-            if has_diffs:
-                logger.info(f"Direct field differences found in {type(entity).__name__}({entity.ecs_id})")
-                significant_changes = False
-                
-                # Define implementation fields to skip
-                implementation_fields = {
-                    'id', 'ecs_id', 'live_id', 'created_at', 'parent_id', 
-                    'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-                    'sql_root', 'deps_graph', 'is_being_registered'
+        Example:
+            ProcessingConfig = ConfigEntity.create_config_entity_class(
+                "ProcessingConfig",
+                {
+                    "threshold": (float, 3.5),
+                    "reason": (str, "update"),
+                    "active": (bool, True)
                 }
-                
-                for field, diff_info in field_diffs.items():
-                    # Skip implementation fields 
-                    if field in implementation_fields:
-                        logger.debug(f"Skipping implementation field '{field}'")
-                        continue
-                        
-                    # Any other field difference is significant
-                    logger.info(f"Field '{field}' has significant changes")
-                    significant_changes = True
-                    break
-                            
-                if significant_changes:
-                    logger.info(f"Entity {type(entity).__name__}({entity.ecs_id}) has significant changes requiring fork")
-                    # If we already have an empty diff (from nested changes), update it
-                    if entity in modified_entities:
-                        modified_entities[entity].field_diffs.update(field_diffs)
-                    else:
-                        modified_entities[entity] = EntityDiff.from_diff_dict(field_diffs)
-                        
-                    # Mark parents for forking too using deps_graph
-                    if hasattr(entity, 'deps_graph') and entity.deps_graph is not None:
-                        parent_ids = entity.deps_graph.get_dependent_ids(entity.ecs_id)
-                        for parent_id in parent_ids:
-                            parent = entity.deps_graph.find_entity_by_id(parent_id)
-                            if parent and parent not in modified_entities:
-                                logger.info(f"Marking parent {type(parent).__name__}({parent.ecs_id}) for forking due to child changes")
-                                modified_entities[parent] = EntityDiff()
-        
-        needs_fork = bool(modified_entities)
-        logger.info(f"Modification check result: needs_fork={needs_fork}, modified_entities={len(modified_entities)}")
-        return needs_fork, modified_entities
-
-    def compute_diff(self, other: "Entity") -> EntityDiff:
-        """Compute detailed differences between this entity and another entity."""
-        _, field_diffs = compare_entity_fields(self, other)
-        return EntityDiff.from_diff_dict(field_diffs)
-
-    def entity_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+            )
         """
-        Skip versioning fields, plus recursively dump nested Entities.
-        """
-        exclude_keys = set(kwargs.get('exclude', set()))
-        # Ensure we exclude both old and new field names and all implementation details
-        exclude_keys |= {
-            'id', 'ecs_id', 'created_at', 'parent_id', 'live_id', 
-            'old_ids', 'lineage_id', 'from_storage', 'force_parent_fork', 
-            'sql_root', 'deps_graph', 'is_being_registered'
-        }
-        kwargs['exclude'] = exclude_keys
-
-        data = super().model_dump(*args, **kwargs)
-        for k, v in data.items():
-            if isinstance(v, Entity):
-                data[k] = v.entity_dump()
-            elif isinstance(v, list):
-                new_list = []
-                for item in v:
-                    if isinstance(item, Entity):
-                        new_list.append(item.entity_dump())
-                    else:
-                        new_list.append(item)
-                data[k] = new_list
-        return data
-
-    @classmethod
-    def get(cls: Type["Entity"], entity_id: UUID) -> Optional["Entity"]:
-        """Get an entity from the registry by ID."""
-        ent = EntityRegistry.get(entity_id, expected_type=cls)
-        return cast(Optional["Entity"], ent)
-
-    @classmethod
-    def list_all(cls: Type["Entity"]) -> List["Entity"]:
-        """List all entities of this type."""
-        return EntityRegistry.list_by_type(cls)
-
-    @classmethod
-    def get_many(cls: Type["Entity"], ids: List[UUID]) -> List["Entity"]:
-        """Get multiple entities by ID."""
-        return EntityRegistry.get_many(ids, expected_type=cls)
-
-    def get_sub_entities(self, visited: Optional[Set[UUID]] = None) -> Set['Entity']:
-        """
-        Get all sub-entities of this entity.
-        Uses a visited set to prevent infinite recursion with circular references.
         
-        Args:
-            visited: Set of entity IDs that have already been visited (to handle cycles)
+        # Use EntityFactory for consistent class creation
+        from typing import cast
+        ConfigEntityClass = EntityFactory.create_entity_class(
+            class_name,
+            field_definitions,
+            base_class=cls,  # Inherit from ConfigEntity
+            module_name=module_name,
+            qualname_parent=None  # ConfigEntity classes don't need parent qualification
+        )
         
-        Returns:
-            Set of all sub-entities
-        """
-        if visited is None:
-            visited = set()
-            
-        # Skip if already visited (handles cycles)
-        if self.ecs_id in visited:
-            return set()
-            
-        # Mark as visited
-        visited.add(self.ecs_id)
-        
-        nested: Set['Entity'] = set()
-        
-        for field_name, field_info in self.model_fields.items():
-            # Skip implementation fields that might contain references to parent entities
-            if field_name in {'deps_graph', 'is_being_registered', 'parent', 'parent_id'}:
-                continue
-                
-            value = getattr(self, field_name)
-            if value is None:
-                continue
-                
-            # Handle lists of entities
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, Entity):
-                        # Add the entity regardless of whether we've seen it before
-                        nested.add(item)
-                        # But only recurse if we haven't visited this entity yet
-                        if item.ecs_id not in visited:
-                            # Create a copy of the visited set for this recursion branch
-                            branch_visited = set(visited)  # Use set constructor instead of .copy()
-                            nested.update(item.get_sub_entities(branch_visited))
-            
-            # Handle direct entity references
-            elif isinstance(value, Entity):
-                # Add the entity regardless of whether we've seen it before
-                nested.add(value)
-                # But only recurse if we haven't visited this entity yet
-                if value.ecs_id not in visited:
-                    # Create a copy of the visited set for this recursion branch
-                    branch_visited = set(visited)  # Use set constructor instead of .copy()
-                    nested.update(value.get_sub_entities(branch_visited))
-                
-        return nested
+        # Cast to correct type (runtime type is correct, just helping type checker)
+        return cast(Type['ConfigEntity'], ConfigEntityClass)
 
 
-@runtime_checkable
-class EntityStorage(Protocol):
+def create_dynamic_entity_class(class_name: str, field_definitions: Dict[str, Any]) -> Type[Entity]:
     """
-    Generic interface for storing and retrieving Entities, building lineage, etc.
+    Create a dynamic Entity subclass with specified fields.
     
-    This Protocol defines the contract that any storage implementation must satisfy 
-    to be compatible with the Entity system. Implementations may include in-memory 
-    storage, SQL databases, document stores, or other persistence mechanisms.
+    Args:
+        class_name: Name for the dynamic class
+        field_definitions: Dict mapping field names to values or (type, default) tuples
+        
+    Returns:
+        Dynamic Entity subclass
     """
-    def has_entity(self, entity_id: UUID) -> bool: ...
-    def get_cold_snapshot(self, entity_id: UUID) -> Optional[Entity]: ...
-    def register(self, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]: ...
-    def get(self, entity_id: UUID, expected_type: Optional[Type[Entity]]) -> Optional[Entity]: ...
-    def list_by_type(self, entity_type: Type[Entity]) -> List[Entity]: ...
-    def get_many(self, entity_ids: List[UUID], expected_type: Optional[Type[Entity]]) -> List[Entity]: ...
-    def get_registry_status(self) -> Dict[str, Any]: ...
-    def set_inference_orchestrator(self, orchestrator: object) -> None: ...
-    def get_inference_orchestrator(self) -> Optional[object]: ...
-    def clear(self) -> None: ...
-    def get_lineage_entities(self, lineage_id: UUID) -> List[Entity]: ...
-    def has_lineage_id(self, lineage_id: UUID) -> bool: ...
-    def get_lineage_ids(self, lineage_id: UUID) -> List[UUID]: ...
-    def merge_entity(self, entity: Entity, session: Any = None) -> Entity: ...
+    
+    # Use EntityFactory for consistent class creation
+    return EntityFactory.create_entity_class(
+        class_name,
+        field_definitions,
+        base_class=Entity,
+        module_name=None,  # Auto-detect
+        qualname_parent=None
+    )
 
 
-class EntityRegistry(BaseRegistry):
-    """
-    Improved static registry class with unified lineage handling.
-    """
-    _logger = logging.getLogger("EntityRegistry")
-    _storage: EntityStorage   # default
 
-    @classmethod
-    def use_storage(cls, storage: EntityStorage) -> None:
-        """Set the storage implementation to use."""
-        cls._storage = storage
-        cls._logger.info(f"Now using {type(storage).__name__} for storage")
 
-    # Simple delegation methods
-    @classmethod
-    def has_entity(cls, entity_id: UUID) -> bool:
-        return cls._storage.has_entity(entity_id)
 
-    @classmethod
-    def get_cold_snapshot(cls, entity_id: UUID) -> Optional[Entity]:
-        return cls._storage.get_cold_snapshot(entity_id)
 
-    @classmethod
-    def register(cls, entity_or_id: Union[Entity, UUID]) -> Optional[Entity]:
-        return cls._storage.register(entity_or_id)
 
-    @classmethod
-    def get(cls, entity_id: UUID, expected_type: Optional[Type[Entity]] = None) -> Optional[Entity]:
-        return cls._storage.get(entity_id, expected_type)
 
-    @classmethod
-    def list_by_type(cls, entity_type: Type[Entity]) -> List[Entity]:
-        return cls._storage.list_by_type(entity_type)
-
-    @classmethod
-    def get_many(cls, entity_ids: List[UUID], expected_type: Optional[Type[Entity]] = None) -> List[Entity]:
-        return cls._storage.get_many(entity_ids, expected_type)
-
-    @classmethod
-    def get_registry_status(cls) -> Dict[str, Any]:
-        """Get combined status from base registry and storage."""
-        base = super().get_registry_status()
-        store = cls._storage.get_registry_status()
-        return {**base, **store}
-
-    @classmethod
-    def set_inference_orchestrator(cls, orchestrator: object) -> None:
-        cls._storage.set_inference_orchestrator(orchestrator)
-
-    @classmethod
-    def get_inference_orchestrator(cls) -> Optional[object]:
-        return cls._storage.get_inference_orchestrator()
-
-    @classmethod
-    def clear(cls) -> None:
-        cls._storage.clear()
-
-    # Lineage methods
-    @classmethod
-    def has_lineage_id(cls, lineage_id: UUID) -> bool:
-        return cls._storage.has_lineage_id(lineage_id)
-
-    @classmethod
-    def get_lineage_ids(cls, lineage_id: UUID) -> List[UUID]:
-        return cls._storage.get_lineage_ids(lineage_id)
-        
-    @classmethod
-    def merge_entity(cls, entity: Entity) -> Optional[Entity]:
-        """
-        Special method for SQL storage to merge an entity that might be attached to another session.
-        If using in-memory storage, this just calls register.
-        
-        Args:
-            entity: Entity to merge
-            
-        Returns:
-            The merged entity if successful, None otherwise
-        """
-        # Check if we're using SQL storage
-        storage_info = cls.get_registry_status()
-        if storage_info.get('storage') == 'sql' and hasattr(cls._storage, 'merge_entity'):
-            # Use hasattr to check for merge_entity method at runtime
-            merge_method = getattr(cls._storage, 'merge_entity')
-            return merge_method(entity)
-        # Otherwise, use normal registration
-        return cls.register(entity)
-        
-    @classmethod
-    def get_lineage_entities(cls, lineage_id: UUID) -> List[Entity]:
-        """Get all entities with a specific lineage ID."""
-        return cls._storage.get_lineage_entities(lineage_id)
-
-    @classmethod
-    def build_lineage_tree(cls, lineage_id: UUID) -> Dict[UUID, Dict[str, Any]]:
-        """Build a hierarchical tree from lineage entities."""
-        nodes = cls.get_lineage_entities(lineage_id)
-        if not nodes:
-            return {}
-
-        # Index entities by ID
-        by_id = {e.ecs_id: e for e in nodes}
-        
-        # Find root entities (those without parents in this lineage)
-        roots = [e for e in nodes if e.parent_id not in by_id]
-
-        # Build tree structure
-        tree: Dict[UUID, Dict[str, Any]] = {}
-
-        def process_entity(entity: Entity, depth: int = 0) -> None:
-            """Process a single entity and its children."""
-            # Calculate differences from parent
-            diff_from_parent = None
-            if entity.parent_id and entity.parent_id in by_id:
-                parent = by_id[entity.parent_id]
-                diff = entity.compute_diff(parent)
-                diff_from_parent = diff.field_diffs
-
-            # Add to tree
-            tree[entity.ecs_id] = {
-                "entity": entity,
-                "children": [],
-                "depth": depth,
-                "parent_id": entity.parent_id,
-                "created_at": entity.created_at,
-                "data": entity.entity_dump(),
-                "diff_from_parent": diff_from_parent
-            }
-
-            # Link to parent
-            if entity.parent_id and entity.parent_id in tree:
-                tree[entity.parent_id]["children"].append(entity.ecs_id)
-
-            # Process children
-            children = [e for e in nodes if e.parent_id == entity.ecs_id]
-            for child in children:
-                process_entity(child, depth + 1)
-
-        # Process all roots
-        for root in roots:
-            process_entity(root, 0)
-            
-        return tree
-
-    @classmethod
-    def get_lineage_tree_sorted(cls, lineage_id: UUID) -> Dict[str, Any]:
-        """Get a lineage tree with entities sorted by creation time."""
-        tree = cls.build_lineage_tree(lineage_id)
-        if not tree:
-            return {
-                "nodes": {},
-                "edges": [],
-                "root": None,
-                "sorted_ids": [],
-                "diffs": {}
-            }
-            
-        # Sort nodes by creation time
-        sorted_items = sorted(tree.items(), key=lambda x: x[1]["created_at"])
-        sorted_ids = [item[0] for item in sorted_items]
-        
-        # Extract edges and diffs
-        edges = []
-        diffs = {}
-        for node_id, node_data in tree.items():
-            parent_id = node_data["parent_id"]
-            if parent_id:
-                edges.append((parent_id, node_id))
-                if node_data["diff_from_parent"]:
-                    diffs[node_id] = node_data["diff_from_parent"]
-                    
-        # Find root node
-        root_candidates = [node_id for node_id, data in tree.items() if not data["parent_id"]]
-        root_id = root_candidates[0] if root_candidates else None
-        
-        return {
-            "nodes": tree,
-            "edges": edges,
-            "root": root_id,
-            "sorted_ids": sorted_ids,
-            "diffs": diffs
-        }
-
-    @classmethod
-    def get_lineage_mermaid(cls, lineage_id: UUID) -> str:
-        """Generate a Mermaid diagram for a lineage tree."""
-        data = cls.get_lineage_tree_sorted(lineage_id)
-        if not data["nodes"]:
-            return "```mermaid\ngraph TD\n  No data available\n```"
-
-        lines = ["```mermaid", "graph TD"]
-
-        # Helper for formatting values in diagram
-        def format_value(val: Any) -> str:
-            s = str(val)
-            return s[:15] + "..." if len(s) > 15 else s
-
-        # Add nodes to diagram
-        for node_id, node_data in data["nodes"].items():
-            entity = node_data["entity"]
-            class_name = type(entity).__name__
-            short_id = str(node_id)[:8]
-            
-            if not node_data["parent_id"]:
-                # Root node with summary
-                data_items = list(node_data["data"].items())[:3]
-                summary = "\\n".join(f"{k}={format_value(v)}" for k, v in data_items)
-                lines.append(f"  {node_id}[\"{class_name}\\n{short_id}\\n{summary}\"]")
-            else:
-                # Child node with change count
-                diff = data["diffs"].get(node_id, {})
-                change_count = len(diff)
-                lines.append(f"  {node_id}[\"{class_name}\\n{short_id}\\n({change_count} changes)\"]")
-
-        # Add edges to diagram
-        for parent_id, child_id in data["edges"]:
-            diff = data["diffs"].get(child_id, {})
-            if diff:
-                # Edge with diff labels
-                label_parts = []
-                for field, info in diff.items():
-                    diff_type = info.get("type")
-                    if diff_type == "modified":
-                        label_parts.append(f"{field} mod")
-                    elif diff_type == "added":
-                        label_parts.append(f"+{field}")
-                    elif diff_type == "removed":
-                        label_parts.append(f"-{field}")
-                
-                # Truncate if too many changes
-                if len(label_parts) > 3:
-                    label_parts = label_parts[:3] + [f"...({len(diff) - 3} more)"]
-                    
-                label = "\\n".join(label_parts)
-                lines.append(f"  {parent_id} -->|\"{label}\"| {child_id}")
-            else:
-                # Simple edge
-                lines.append(f"  {parent_id} --> {child_id}")
-
-        lines.append("```")
-        return "\n".join(lines)
 
