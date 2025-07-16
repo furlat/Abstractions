@@ -5,7 +5,7 @@ A distributed, data-centric system that brings functional programming principles
 ## Setup
 
 ```bash
-git clone -b maybe_cursed_who_knows https://github.com/furlat/Abstractions.git
+git clone https://github.com/furlat/Abstractions.git
 cd Abstractions
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
