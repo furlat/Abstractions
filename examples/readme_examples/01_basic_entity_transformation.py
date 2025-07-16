@@ -1,16 +1,22 @@
 """
 Example 1: Basic Entity Transformation
 
-This example demonstrates the minimal pattern from the README:
-- Define data as entities
-- Register pure functions that transform entities
-- Execute functional transformations
-- Automatic versioning, lineage tracking, and provenance
+This example demonstrates core entity operations from the README:
+- Define data as entities (Section 1: lines 19-60)
+- Entity-native computation model (Section 2: lines 78-96)
+- Functional transformation registry (Section 3: lines 104-119)
+- Automatic provenance and lineage tracking (Section 5: lines 157-177)
+
+All code blocks from these README sections are implemented exactly as documented.
 """
 
 from typing import Union, List, Tuple
 from abstractions.ecs.entity import Entity
 from abstractions.ecs.callable_registry import CallableRegistry
+
+# =============================================================================
+# Section 1: First Steps (README lines 19-60)
+# =============================================================================
 
 # 1. Define your data as entities - the native unit of computation
 class Student(Entity):
@@ -22,6 +28,46 @@ class Student(Entity):
 def update_gpa(student: Student, new_gpa: float) -> Student:
     student.gpa = new_gpa
     return student
+
+# =============================================================================
+# Section 2: Entity-native Computation Model (README lines 78-96)
+# =============================================================================
+
+@CallableRegistry.register("apply_bonus")
+def apply_bonus(student: Student, bonus: float) -> Student:
+    student.gpa = min(4.0, student.gpa + bonus)
+    return student
+
+# =============================================================================
+# Section 3: Functional Transformation Registry (README lines 104-119)
+# =============================================================================
+
+class DeanListResult(Entity):
+    student_id: str = ""
+    qualified: bool = False
+    margin: float = 0.0
+
+# Functions declare their data dependencies via type hints
+@CallableRegistry.register("calculate_dean_list")
+def calculate_dean_list(student: Student, threshold: float = 3.7) -> DeanListResult:
+    return DeanListResult(
+        student_id=student.ecs_id,
+        qualified=student.gpa >= threshold,
+        margin=student.gpa - threshold
+    )
+
+# =============================================================================
+# Section 5: Automatic Provenance and Lineage (README lines 157-177)
+# =============================================================================
+
+# Create a complex transformation pipeline
+@CallableRegistry.register("normalize_grades")
+def normalize_grades(cohort: List[Student]) -> List[Student]:
+    avg_gpa = sum(s.gpa for s in cohort) / len(cohort)
+    return [
+        Student(name=s.name, gpa=s.gpa / avg_gpa * 3.0)
+        for s in cohort
+    ]
 
 def run_tests() -> Tuple[int, int, List[str], List[str]]:
     """Run tests and validate README claims."""

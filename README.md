@@ -183,12 +183,26 @@ This provenance tracking supports **data lineage queries**, **reproducible compu
 The framework emits events when entities change or functions execute. These events contain only UUID references and basic metadata - they don't duplicate your data. You can use them to observe what's happening in your system:
 
 ```python
-from abstractions.events.events import get_event_bus, on
+from abstractions.events.events import Event, CreatedEvent, on, emit
 
-# Observe function executions
-@on(lambda event: event.type == "function_executed")
-async def log_function_calls(event):
-    print(f"Function {event.function_name} completed")
+# Define custom event types
+class StudentCreatedEvent(CreatedEvent[Student]):
+    type: str = "student.created"
+
+# Event handlers using the correct patterns
+@on(StudentCreatedEvent)
+async def log_student_creation(event: StudentCreatedEvent):
+    print(f"Student created: {event.subject_id}")
+
+# Pattern-based event handler
+@on(pattern="student.*")
+def handle_all_student_events(event: Event):
+    print(f"Student event: {event.type}")
+
+# Predicate-based event handler
+@on(predicate=lambda e: hasattr(e, 'subject_id') and e.subject_id is not None)
+async def track_all_entities(event: Event):
+    print(f"Entity event: {event.type} for {event.subject_id}")
 
 # The events contain references, not data
 # This lets you track what's happening without affecting performance
@@ -201,13 +215,28 @@ Events work well for debugging, monitoring, and building reactive systems. They'
 The framework natively handles functions that produce multiple entities, automatically managing their relationships and distribution:
 
 ```python
+from typing import Tuple
+from pydantic import Field
+
+class Assessment(Entity):
+    student_id: str = Field(default="")
+    performance_level: str = Field(default="")
+    gpa_score: float = Field(default=0.0)
+
+class Recommendation(Entity):
+    student_id: str = Field(default="")
+    action: str = Field(default="")
+    reasoning: str = Field(default="")
+
 @CallableRegistry.register("analyze_performance")
 def analyze_performance(student: Student) -> Tuple[Assessment, Recommendation]:
     assessment = Assessment(
-        student_id=student.ecs_id,
-        performance_level="high" if student.gpa > 3.5 else "standard"
+        student_id=str(student.ecs_id),
+        performance_level="high" if student.gpa > 3.5 else "standard",
+        gpa_score=student.gpa
     )
     recommendation = Recommendation(
+        student_id=str(student.ecs_id),
         action="advanced_placement" if student.gpa > 3.5 else "standard_track",
         reasoning=f"Based on GPA of {student.gpa}"
     )
@@ -259,26 +288,39 @@ Each pattern maintains the same guarantees of immutability, versioning, and prov
 The framework's immutable entity model and automatic versioning enable safe concurrent and async execution without locks or synchronization. Multiple functions can process the same entities simultaneously without interference:
 
 ```python
+class AnalysisResult(Entity):
+    student_id: str = ""
+    avg: float = 0.0
+    analysis_type: str = ""
+
 # Register both sync and async functions
 @CallableRegistry.register("analyze_grades")
 def analyze_grades(student: Student, grades: List[float]) -> AnalysisResult:
     """Synchronous grade analysis"""
-    return AnalysisResult(avg=sum(grades)/len(grades))
+    return AnalysisResult(
+        student_id=str(student.ecs_id),
+        avg=sum(grades)/len(grades),
+        analysis_type="sync"
+    )
 
 @CallableRegistry.register("analyze_grades_async")
 async def analyze_grades_async(student: Student, grades: List[float]) -> AnalysisResult:
     """Async grade analysis with external API calls"""
     await asyncio.sleep(0.1)  # Simulate API call
-    return AnalysisResult(avg=sum(grades)/len(grades))
+    return AnalysisResult(
+        student_id=str(student.ecs_id),
+        avg=sum(grades)/len(grades),
+        analysis_type="async"
+    )
 
 # Execute concurrently without interference
 batch_results = await asyncio.gather(
     CallableRegistry.aexecute("analyze_grades",
-        student=f"@{student_id}",
+        student=f"@{student.ecs_id}",
         grades=[3.8, 3.9, 3.7]
     ),
     CallableRegistry.aexecute("analyze_grades_async", 
-        student=f"@{student_id}",  # Same student, no problem!
+        student=f"@{student.ecs_id}",  # Same student, no problem!
         grades=[3.8, 3.9, 3.7, 4.0]
     )
 )
@@ -297,28 +339,51 @@ This concurrency model scales naturally to distributed systems where different n
 You can combine async execution with event handlers to create cascading computations that work across distributed systems. Here's a simple example that processes student data in multiple steps:
 
 ```python
+from abstractions.events.events import Event, CreatedEvent, on, emit
+
+class ProcessedStudent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    student_id: UUID
+    processed_gpa: float = 0.0
+    processing_notes: str = ""
+    status: str = "processed"
+
+class StudentProcessedEvent(CreatedEvent[ProcessedStudent]):
+    type: str = "student.processed"
+
+# Global collections for event-driven batching
+processed_students: List[UUID] = []
+
 # Step 1: Process individual students
-@CallableRegistry.register("process_student")
 async def process_student(student: Student) -> ProcessedStudent:
     # Some processing work
-    return ProcessedStudent(
-        student_id=student.ecs_id,
-        processed_gpa=student.gpa * 1.1,  # Example processing
+    processed = ProcessedStudent(
+        student_id=student.id,
+        processed_gpa=student.gpa * 1.1,  # 10% boost
+        processing_notes=f"Processed {student.name} with GPA boost",
         status="processed"
     )
-
-# Step 2: When students are processed, collect them for batch analysis
-processed_students = []
-
-@on(lambda event: event.type == "created" and event.subject_type == ProcessedStudent)
-async def collect_processed_student(event):
-    processed_students.append(event.subject_id)
     
-    # When we have enough students, trigger batch analysis
-    if len(processed_students) >= 10:
-        batch = processed_students[:10]
-        processed_students.clear()
-        await CallableRegistry.aexecute("analyze_batch", student_ids=batch)
+    # Emit event to trigger cascade
+    await emit(StudentProcessedEvent(
+        subject_type=ProcessedStudent,
+        subject_id=processed.id,
+        created_id=processed.id
+    ))
+    
+    return processed
+
+# Step 2: Event handler that automatically collects processed students
+@on(StudentProcessedEvent)
+async def collect_processed_students(event: StudentProcessedEvent):
+    if event.subject_id is not None:
+        processed_students.append(event.subject_id)
+        
+        # When we have enough students, trigger batch analysis
+        if len(processed_students) >= 3:
+            batch = processed_students[:3]
+            processed_students.clear()
+            await trigger_batch_analysis(batch)
 
 # Step 3: Analyze batches and create reports
 @CallableRegistry.register("analyze_batch")

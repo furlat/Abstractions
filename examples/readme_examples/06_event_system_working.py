@@ -75,22 +75,24 @@ async def log_student_creation(event: StudentCreatedEvent):
 @on(StudentProcessedEvent)
 async def collect_processed_students(event: StudentProcessedEvent):
     """Collect processed students for batching."""
-    processed_students.append(event.subject_id)
-    log_entry = f"Student processed: {event.subject_id} (total: {len(processed_students)})"
-    event_log.append(log_entry)
-    print(f"📊 {log_entry}")
-    
-    # Trigger batch processing when we have enough students
-    if len(processed_students) >= 3:
-        await trigger_batch_processing()
+    if event.subject_id is not None:
+        processed_students.append(event.subject_id)
+        log_entry = f"Student processed: {event.subject_id} (total: {len(processed_students)})"
+        event_log.append(log_entry)
+        print(f"📊 {log_entry}")
+        
+        # Trigger batch processing when we have enough students
+        if len(processed_students) >= 3:
+            await trigger_batch_processing()
 
 @on(BatchCompletedEvent)
 async def handle_batch_completion(event: BatchCompletedEvent):
     """Handle completed batches."""
-    completed_batches.append(event.subject_id)
-    log_entry = f"Batch completed: {event.subject_id} (total batches: {len(completed_batches)})"
-    event_log.append(log_entry)
-    print(f"🎉 {log_entry}")
+    if event.subject_id is not None:
+        completed_batches.append(event.subject_id)
+        log_entry = f"Batch completed: {event.subject_id} (total batches: {len(completed_batches)})"
+        event_log.append(log_entry)
+        print(f"🎉 {log_entry}")
 
 # Pattern-based event handler
 @on(pattern="student.*")
@@ -313,7 +315,7 @@ async def run_validation_tests():
     async def test_predicate_filtering():
         predicate_events = []
         
-        @on(predicate=lambda e: hasattr(e, 'metadata') and e.metadata.get('important'))
+        @on(predicate=lambda e: hasattr(e, 'metadata') and bool(e.metadata.get('important')))
         def capture_important_event(event: Event):
             predicate_events.append(event)
         

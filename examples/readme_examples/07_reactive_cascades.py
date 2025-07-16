@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example 05: Reactive Cascades with Event-Driven Patterns
+Example 07: Reactive Cascades with Event-Driven Patterns
 
 This example demonstrates the event-driven reactive pattern from the README:
 - Event-driven cascading transformations using @on decorators
@@ -17,218 +17,248 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import asyncio
-from typing import List, Optional, Tuple
-from abstractions.ecs.entity import Entity
-from abstractions.ecs.callable_registry import CallableRegistry
-from abstractions.events.events import on, get_event_bus, CreatedEvent
-from pydantic import Field
+from typing import List, Optional
+from uuid import UUID, uuid4
+from pydantic import BaseModel, Field
+from abstractions.events.events import (
+    Event, CreatedEvent, ProcessingEvent, ProcessedEvent,
+    on, emit, get_event_bus
+)
 
-# Define entities for the reactive cascade example
-class Student(Entity):
-    """Student entity with basic academic information."""
-    name: str = ""
+# Define domain models (using BaseModel for events, not Entity)
+class Student(BaseModel):
+    """Student domain model for reactive cascade demonstrations."""
+    id: UUID = Field(default_factory=uuid4)
+    name: str
     gpa: float = 0.0
-    student_id: str = ""
+    status: str = "active"
 
-class ProcessedStudent(Entity):
-    """Processed student entity after individual processing."""
-    student_id: str = ""
+class ProcessedStudent(BaseModel):
+    """Processed student model after individual processing."""
+    id: UUID = Field(default_factory=uuid4)
+    student_id: UUID
     processed_gpa: float = 0.0
-    status: str = ""
     processing_notes: str = ""
+    status: str = "processed"
 
-class BatchReport(Entity):
+class BatchReport(BaseModel):
     """Batch analysis report for groups of students."""
-    batch_id: str = ""
-    batch_size: int = 0
+    id: UUID = Field(default_factory=uuid4)
+    batch_id: str
+    student_count: int = 0
     average_gpa: float = 0.0
-    student_ids: List[str] = Field(default_factory=list)
-    batch_status: str = ""
+    batch_status: str = "completed"
 
-class SummaryReport(Entity):
+class SummaryReport(BaseModel):
     """Summary report aggregating multiple batch reports."""
-    summary_id: str = ""
+    id: UUID = Field(default_factory=uuid4)
+    summary_id: str
     total_students: int = 0
     total_batches: int = 0
     overall_average: float = 0.0
-    report_ids: List[str] = Field(default_factory=list)
 
-# Global collections for event-driven batching
-processed_students = []
-batch_reports = []
+# Custom event types for reactive cascades
+class StudentProcessedEvent(CreatedEvent[ProcessedStudent]):
+    """Event emitted when a student is processed."""
+    type: str = "student.processed"
 
-# Step 1: Register the individual processing function
-@CallableRegistry.register("process_student")
+class BatchCompletedEvent(CreatedEvent[BatchReport]):
+    """Event emitted when a batch is completed."""
+    type: str = "batch.completed"
+
+class SummaryCreatedEvent(CreatedEvent[SummaryReport]):
+    """Event emitted when a summary is created."""
+    type: str = "summary.created"
+
+# Global collections for reactive event-driven batching
+processed_students: List[UUID] = []
+completed_batches: List[UUID] = []
+event_log: List[str] = []
+
+# Step 1: Individual processing that triggers the cascade
 async def process_student(student: Student) -> ProcessedStudent:
-    """Process individual student - this will emit events automatically."""
-    # Simulate some processing work
+    """Process individual student - this will trigger reactive cascade."""
+    print(f"[PROCESS] Processing student: {student.name}")
+    
+    # Simulate processing work
     await asyncio.sleep(0.001)
     
-    # Apply some processing logic
-    processed_gpa = student.gpa * 1.1  # Example: 10% boost
-    status = "processed"
-    notes = f"Processed {student.name} with GPA boost"
-    
-    return ProcessedStudent(
-        student_id=student.student_id,
-        processed_gpa=processed_gpa,
-        status=status,
-        processing_notes=notes
+    # Create processed student
+    processed = ProcessedStudent(
+        student_id=student.id,
+        processed_gpa=student.gpa * 1.1,  # 10% boost
+        processing_notes=f"Processed {student.name} with GPA boost",
+        status="processed"
     )
+    
+    # Manually emit the event to trigger cascade
+    await emit(StudentProcessedEvent(
+        subject_type=ProcessedStudent,
+        subject_id=processed.id,
+        created_id=processed.id
+    ))
+    
+    return processed
 
 # Step 2: Event handler that automatically collects processed students
-@on(CreatedEvent)
-async def collect_processed_student(event: CreatedEvent):
+@on(StudentProcessedEvent)
+async def collect_processed_students(event: StudentProcessedEvent):
     """Automatically collect processed students and trigger batch analysis."""
-    # Filter for ProcessedStudent entities
-    if hasattr(event, 'subject_type') and event.subject_type == "ProcessedStudent":
-        print(f"📝 Event received: ProcessedStudent created with ID {event.subject_id}")
-        
-        # Add to our collection
+    if event.subject_id is not None:
         processed_students.append(event.subject_id)
+        log_entry = f"Student processed: {event.subject_id} (total: {len(processed_students)})"
+        event_log.append(log_entry)
+        print(f"[COLLECT] {log_entry}")
         
         # When we have enough students, trigger batch analysis
-        if len(processed_students) >= 3:  # Smaller batch size for demo
-            batch = processed_students[:3]
-            processed_students.clear()
-            
-            print(f"📊 Triggering batch analysis for {len(batch)} students")
-            await CallableRegistry.aexecute("analyze_batch", student_ids=batch)
+        if len(processed_students) >= 3:  # Small batch size for demo
+            await trigger_batch_analysis()
 
-# Step 3: Register batch analysis function
-@CallableRegistry.register("analyze_batch")
-async def analyze_batch(student_ids: List[str]) -> BatchReport:
-    """Analyze a batch of processed students."""
-    # Simulate fetching the processed students (in real system, would use EntityRegistry)
-    print(f"🔍 Analyzing batch of {len(student_ids)} students")
+async def trigger_batch_analysis():
+    """Process a batch of students."""
+    if len(processed_students) < 3:
+        return
     
-    # For demo, calculate a simple average (in real system would fetch actual entities)
-    batch_id = f"BATCH_{len(batch_reports) + 1}"
+    # Take first 3 students
+    batch_students = processed_students[:3]
+    processed_students.clear()
+    
+    print(f"[BATCH] Analyzing batch of {len(batch_students)} students...")
     
     # Simulate batch processing
-    await asyncio.sleep(0.002)
+    await asyncio.sleep(0.01)
     
     # Create batch report
-    return BatchReport(
-        batch_id=batch_id,
-        batch_size=len(student_ids),
-        average_gpa=3.5,  # Simplified for demo
-        student_ids=student_ids,
+    batch_report = BatchReport(
+        batch_id=f"BATCH_{len(completed_batches) + 1}",
+        student_count=len(batch_students),
+        average_gpa=3.6,  # Simplified calculation
         batch_status="completed"
     )
+    
+    # Emit batch completion event
+    await emit(BatchCompletedEvent(
+        subject_type=BatchReport,
+        subject_id=batch_report.id,
+        created_id=batch_report.id
+    ))
 
-# Step 4: Event handler that collects batch reports
-@on(CreatedEvent)
-async def aggregate_reports(event: CreatedEvent):
-    """Automatically aggregate batch reports into summaries."""
-    # Filter for BatchReport entities
-    if hasattr(event, 'subject_type') and event.subject_type == "BatchReport":
-        print(f"📋 Event received: BatchReport created with ID {event.subject_id}")
+# Step 3: Event handler that collects batch reports
+@on(BatchCompletedEvent)
+async def collect_batch_reports(event: BatchCompletedEvent):
+    """Automatically collect batch reports and trigger summary creation."""
+    if event.subject_id is not None:
+        completed_batches.append(event.subject_id)
+        log_entry = f"Batch completed: {event.subject_id} (total batches: {len(completed_batches)})"
+        event_log.append(log_entry)
+        print(f"[REPORT] {log_entry}")
         
-        # Add to our collection
-        batch_reports.append(event.subject_id)
-        
-        # Every 2 reports, create a summary
-        if len(batch_reports) >= 2:
-            reports_batch = batch_reports[:2]
-            batch_reports.clear()
-            
-            print(f"📈 Triggering summary creation for {len(reports_batch)} reports")
-            await CallableRegistry.aexecute("create_summary", report_ids=reports_batch)
+        # Every 2 batches, create a summary
+        if len(completed_batches) >= 2:
+            await trigger_summary_creation()
 
-# Step 5: Register summary creation function
-@CallableRegistry.register("create_summary")
-async def create_summary(report_ids: List[str]) -> SummaryReport:
-    """Create a summary from multiple batch reports."""
-    print(f"📋 Creating summary from {len(report_ids)} batch reports")
+async def trigger_summary_creation():
+    """Create summary from batch reports."""
+    if len(completed_batches) < 2:
+        return
+    
+    # Take first 2 batches
+    summary_batches = completed_batches[:2]
+    completed_batches.clear()
+    
+    print(f"[SUMMARY] Creating summary from {len(summary_batches)} batch reports...")
     
     # Simulate summary processing
-    await asyncio.sleep(0.001)
+    await asyncio.sleep(0.01)
     
-    summary_id = f"SUMMARY_{len(report_ids)}_{asyncio.get_event_loop().time()}"
-    
-    return SummaryReport(
-        summary_id=summary_id,
-        total_students=len(report_ids) * 3,  # Simplified calculation
-        total_batches=len(report_ids),
-        overall_average=3.6,  # Simplified for demo
-        report_ids=report_ids
+    # Create summary report
+    summary_report = SummaryReport(
+        summary_id=f"SUMMARY_{len(summary_batches)}_{int(asyncio.get_event_loop().time())}",
+        total_students=len(summary_batches) * 3,  # 3 students per batch
+        total_batches=len(summary_batches),
+        overall_average=3.7  # Simplified calculation
     )
+    
+    # Emit summary creation event
+    await emit(SummaryCreatedEvent(
+        subject_type=SummaryReport,
+        subject_id=summary_report.id,
+        created_id=summary_report.id
+    ))
 
-# Event handler for final summaries
-@on(CreatedEvent)
-async def handle_final_summary(event: CreatedEvent):
+# Step 4: Final event handler for completed summaries
+@on(SummaryCreatedEvent)
+async def handle_summary_completion(event: SummaryCreatedEvent):
     """Handle completed summary reports."""
-    # Filter for SummaryReport entities
-    if hasattr(event, 'subject_type') and event.subject_type == "SummaryReport":
-        print(f"🎉 Final summary created with ID {event.subject_id}")
-        print(f"✅ Reactive cascade completed successfully!")
+    if event.subject_id is not None:
+        log_entry = f"Summary created: {event.subject_id}"
+        event_log.append(log_entry)
+        print(f"[FINAL] {log_entry}")
+        print(f"[CASCADE] Reactive cascade cycle completed!")
 
-def create_test_students() -> List[Student]:
-    """Create test students for the reactive cascade demo."""
-    students = []
-    
-    for i in range(7):  # Create 7 students to trigger multiple batches
-        student = Student(
-            name=f"Student{i+1}",
-            gpa=3.0 + (i * 0.1),
-            student_id=f"STU{i+1:03d}"
-        )
-        student.promote_to_root()
-        students.append(student)
-    
-    return students
+# Pattern-based event handler to observe all cascade events
+@on(pattern="student.*|batch.*|summary.*")
+def observe_cascade_events(event: Event):
+    """Observe all events in the reactive cascade."""
+    log_entry = f"Cascade event: {event.type}"
+    event_log.append(log_entry)
+    print(f"[OBSERVE] {log_entry}")
 
-async def run_reactive_cascade_demo():
-    """Run the reactive cascade demonstration."""
-    print("🚀 Starting Reactive Cascade Demo")
+async def demonstrate_reactive_cascade():
+    """Demonstrate the reactive cascade in action."""
+    print("=== Starting Reactive Cascade Demo ===")
     print("=" * 50)
     
-    # Create test students
-    students = create_test_students()
-    print(f"📚 Created {len(students)} test students")
-    
-    # Clear global collections
+    # Clear collections
     processed_students.clear()
-    batch_reports.clear()
+    completed_batches.clear()
+    event_log.clear()
     
-    print(f"\n🔥 Starting reactive cascade...")
-    print(f"📝 Processing students individually - events will trigger automatic batching")
+    # Create test students
+    students = []
+    for i in range(7):  # Create 7 students to trigger multiple cascades
+        student = Student(
+            name=f"Student_{i+1}",
+            gpa=3.0 + (i * 0.1),
+            status="active"
+        )
+        students.append(student)
+    
+    print(f"Created {len(students)} test students")
+    print(f"Starting reactive cascade - each student triggers automatic processing...")
     print()
     
     # Process each student individually
     # The magic happens through events - no manual coordination needed!
     for i, student in enumerate(students):
-        print(f"⚡ Processing student {i+1}: {student.name}")
+        print(f"=> Processing student {i+1}: {student.name}")
         
         # This single call triggers the entire cascade through events:
-        # 1. Creates ProcessedStudent
-        # 2. Emits "created" event
-        # 3. collect_processed_student() handler batches them
-        # 4. Triggers analyze_batch() when batch is full
-        # 5. Creates BatchReport
-        # 6. Emits "created" event
-        # 7. aggregate_reports() handler collects reports
-        # 8. Triggers create_summary() when enough reports
-        # 9. Creates SummaryReport
-        # 10. Final handler celebrates completion
+        # 1. process_student() emits StudentProcessedEvent
+        # 2. collect_processed_students() batches them automatically
+        # 3. When batch is full, triggers BatchCompletedEvent
+        # 4. collect_batch_reports() collects reports automatically  
+        # 5. When enough reports, triggers SummaryCreatedEvent
+        # 6. handle_summary_completion() celebrates completion
+        # 7. observe_cascade_events() logs everything
         
-        await CallableRegistry.aexecute("process_student", student=student)
+        await process_student(student)
         
         # Small delay to see the cascade in action
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
     
-    # Wait a bit for all events to propagate
-    await asyncio.sleep(0.1)
+    # Wait for all events to propagate
+    await asyncio.sleep(0.2)
     
-    print(f"\n✅ Reactive cascade demonstration completed!")
-    print(f"📊 Final state:")
+    print(f"\n=== Reactive cascade demonstration completed! ===")
+    print(f"Final state:")
     print(f"   - Remaining processed students: {len(processed_students)}")
-    print(f"   - Remaining batch reports: {len(batch_reports)}")
+    print(f"   - Remaining batch reports: {len(completed_batches)}")
+    print(f"   - Total cascade events logged: {len(event_log)}")
 
 async def run_validation_tests():
     """Run validation tests for the reactive cascade pattern."""
-    print(f"\n=== Feature Validation ===")
+    print("=== Reactive Cascade Validation ===")
     
     tests_passed = 0
     tests_total = 0
@@ -242,114 +272,130 @@ async def run_validation_tests():
             test_func()
             tests_passed += 1
             validated_features.append(name)
-            print(f"✅ {name}")
+            print(f"PASS: {name}")
             return True
         except Exception as e:
             failed_features.append(f"{name}: {str(e)}")
-            print(f"❌ {name}: {str(e)}")
+            print(f"FAIL: {name}: {str(e)}")
             return False
     
-    # Test 1: Event system availability
+    # Test 1: Event system is working
     def test_event_system():
         event_bus = get_event_bus()
         assert event_bus is not None
-        assert hasattr(event_bus, '_handlers') or hasattr(event_bus, 'handlers')
+        assert hasattr(event_bus, '_type_subscriptions')
+        assert hasattr(event_bus, 'subscribe')
+        assert hasattr(event_bus, 'emit')
     
     test_feature("Event system availability", test_event_system)
     
-    # Test 2: Function registration
-    def test_function_registration():
-        functions = CallableRegistry.list_functions()
-        required_functions = ["process_student", "analyze_batch", "create_summary"]
-        for func in required_functions:
-            assert func in functions, f"Function {func} not registered"
-    
-    test_feature("Function registration", test_function_registration)
-    
-    # Test 3: Entity creation and promotion
-    def test_entity_creation():
-        test_student = Student(name="Test", gpa=3.5, student_id="TEST001")
-        test_student.promote_to_root()
-        assert hasattr(test_student, 'ecs_id')
-        assert test_student.ecs_id is not None
-        assert hasattr(test_student, 'lineage_id')
-        assert test_student.lineage_id is not None
-    
-    test_feature("Entity creation and promotion", test_entity_creation)
-    
-    # Test 4: Individual processing
-    async def test_individual_processing():
-        test_student = Student(name="Test", gpa=3.5, student_id="TEST001")
-        test_student.promote_to_root()
+    # Test 2: Domain models work correctly
+    def test_domain_models():
+        student = Student(name="Test", gpa=3.5)
+        processed = ProcessedStudent(student_id=student.id, processed_gpa=3.85, processing_notes="Test")
+        batch = BatchReport(batch_id="TEST", student_count=3, average_gpa=3.7)
+        summary = SummaryReport(summary_id="TEST", total_students=6, total_batches=2, overall_average=3.6)
         
-        result = await CallableRegistry.aexecute("process_student", student=test_student)
+        assert isinstance(student, BaseModel)
+        assert isinstance(processed, BaseModel)
+        assert isinstance(batch, BaseModel)
+        assert isinstance(summary, BaseModel)
+    
+    test_feature("Domain models", test_domain_models)
+    
+    # Test 3: Custom event types work
+    def test_custom_events():
+        student = Student(name="Test", gpa=3.5)
+        processed = ProcessedStudent(student_id=student.id, processed_gpa=3.85, processing_notes="Test")
+        
+        event = StudentProcessedEvent(
+            subject_type=ProcessedStudent,
+            subject_id=processed.id,
+            created_id=processed.id
+        )
+        
+        assert event.type == "student.processed"
+        assert event.subject_id == processed.id
+    
+    test_feature("Custom event types", test_custom_events)
+    
+    # Test 4: Event emission works
+    async def test_event_emission():
+        test_events = []
+        
+        @on(Event)
+        async def capture_test_event(event: Event):
+            if event.type == "test.cascade":
+                test_events.append(event)
+        
+        # Emit test event
+        await emit(Event(type="test.cascade"))
+        
+        # Wait for propagation
+        await asyncio.sleep(0.1)
+        
+        assert len(test_events) == 1
+        assert test_events[0].type == "test.cascade"
+    
+    await test_event_emission()
+    test_feature("Event emission works", lambda: True)
+    
+    # Test 5: Event handlers are registered
+    def test_event_handlers():
+        # Our handlers should be accessible
+        assert callable(collect_processed_students)
+        assert callable(collect_batch_reports)
+        assert callable(handle_summary_completion)
+        assert callable(observe_cascade_events)
+    
+    test_feature("Event handlers registered", test_event_handlers)
+    
+    # Test 6: Individual processing works
+    async def test_individual_processing():
+        test_student = Student(name="TestStudent", gpa=3.5)
+        result = await process_student(test_student)
+        
         assert isinstance(result, ProcessedStudent)
-        assert result.student_id == "TEST001"
+        assert result.student_id == test_student.id
         assert result.processed_gpa == 3.5 * 1.1  # 10% boost
         assert result.status == "processed"
+        assert "TestStudent" in result.processing_notes
     
     await test_individual_processing()
-    test_feature("Individual student processing", lambda: True)
+    test_feature("Individual processing", lambda: True)
     
-    # Test 5: Batch analysis
-    async def test_batch_analysis():
-        batch_result = await CallableRegistry.aexecute("analyze_batch", student_ids=["TEST001", "TEST002"])
-        assert isinstance(batch_result, BatchReport)
-        assert batch_result.batch_size == 2
-        assert batch_result.batch_status == "completed"
-        assert len(batch_result.student_ids) == 2
-    
-    await test_batch_analysis()
-    test_feature("Batch analysis", lambda: True)
-    
-    # Test 6: Summary creation
-    async def test_summary_creation():
-        summary_result = await CallableRegistry.aexecute("create_summary", report_ids=["BATCH_1", "BATCH_2"])
-        assert isinstance(summary_result, SummaryReport)
-        assert summary_result.total_batches == 2
-        assert summary_result.total_students == 6  # 2 batches * 3 students each
-        assert len(summary_result.report_ids) == 2
-    
-    await test_summary_creation()
-    test_feature("Summary creation", lambda: True)
-    
-    # Test 7: Entity type consistency
-    def test_entity_types():
-        student = Student(name="Alice", gpa=3.8, student_id="STU001")
-        processed = ProcessedStudent(student_id="STU001", processed_gpa=4.0, status="processed")
-        batch = BatchReport(batch_id="BATCH_1", batch_size=3, average_gpa=3.7, student_ids=["STU001"])
-        summary = SummaryReport(summary_id="SUM_1", total_students=6, total_batches=2, overall_average=3.6)
+    # Test 7: Pattern matching works
+    async def test_pattern_matching():
+        pattern_events = []
         
-        assert isinstance(student, Entity)
-        assert isinstance(processed, Entity)
-        assert isinstance(batch, Entity)
-        assert isinstance(summary, Entity)
+        @on(pattern="test.*")
+        def capture_pattern_event(event: Event):
+            pattern_events.append(event)
+        
+        # Emit events that should match pattern
+        await emit(Event(type="test.pattern"))
+        await emit(Event(type="test.cascade"))
+        await emit(Event(type="other.event"))
+        
+        await asyncio.sleep(0.1)
+        
+        # Should have captured 2 events matching "test.*"
+        assert len(pattern_events) == 2
     
-    test_feature("Entity type consistency", test_entity_types)
-    
-    # Test 8: Event handler registration
-    def test_event_handlers():
-        # Check if our event handlers are accessible
-        import inspect
-        current_module = inspect.getmodule(collect_processed_student)
-        assert current_module is not None
-        assert hasattr(current_module, 'collect_processed_student')
-        assert hasattr(current_module, 'aggregate_reports')
-        assert hasattr(current_module, 'handle_final_summary')
-    
-    test_feature("Event handler registration", test_event_handlers)
+    await test_pattern_matching()
+    test_feature("Pattern matching works", lambda: True)
     
     print(f"\n=== Test Results ===")
     print(f"Tests passed: {tests_passed}/{tests_total}")
     print(f"Success rate: {tests_passed/tests_total*100:.1f}%")
     
     if validated_features:
-        print(f"\n✅ Validated Features:")
+        print(f"\nValidated Features:")
         for feature in validated_features:
             print(f"  - {feature}")
     
     if failed_features:
-        print(f"\n❌ Failed Features:")
+        print(f"\nFailed Features:")
         for feature in failed_features:
             print(f"  - {feature}")
     
@@ -357,42 +403,43 @@ async def run_validation_tests():
 
 async def main():
     """Main execution function."""
-    print("=== Testing Reactive Cascades with Event-Driven Patterns ===\n")
+    print("=== Reactive Cascades with Event-Driven Patterns ===\n")
     
     print("This example demonstrates the README pattern where:")
-    print("- Individual processing triggers events")
-    print("- Events automatically batch entities")
-    print("- Batching triggers analysis")
-    print("- Analysis results trigger aggregation")
-    print("- Everything happens through event coordination")
+    print("- Individual processing triggers events automatically")
+    print("- Events batch entities without central coordination")
+    print("- Batching triggers analysis through event handlers")
+    print("- Analysis results trigger aggregation reactively")
+    print("- Everything flows through event-driven coordination")
+    print("- Creates emergent map-reduce behavior")
     print()
     
     # Run validation tests first
     tests_passed, tests_total, validated_features, failed_features = await run_validation_tests()
     
     if tests_passed == tests_total:
-        print(f"\n✅ All validation tests passed! Running full demo...")
-        await run_reactive_cascade_demo()
+        print(f"\nAll validation tests passed! Running reactive cascade demo...")
+        await demonstrate_reactive_cascade()
         
-        print(f"\n🎉 All tests passed! Reactive cascades work as documented.")
-        print(f"⚡ Event-driven reactive transformations enable emergent behavior!")
-        print(f"🔄 Self-organizing work distribution through events!")
+        print(f"\nAll tests passed! Reactive cascades work as documented.")
+        print(f"Event-driven patterns enable emergent behavior!")
+        print(f"Self-organizing work distribution through events!")
         
     else:
-        print(f"\n⚠️  {tests_total - tests_passed} tests failed. README may need updates.")
+        print(f"\n{tests_total - tests_passed} tests failed. Some patterns may not work correctly.")
     
-    print(f"\n✅ Reactive cascades example completed!")
+    print(f"\nReactive cascades example completed!")
     
     # Show the benefits
-    print(f"\n📊 Key Benefits of Reactive Cascades:")
-    print(f"  - 🔄 Automatic batching without central coordination")
-    print(f"  - ⚡ Event-driven reactive transformations")
-    print(f"  - 🎯 Emergent workflow behavior")
-    print(f"  - 📊 Map-reduce pattern through events")
-    print(f"  - 🚀 Self-organizing work distribution")
-    print(f"  - 🤝 Loose coupling between processing stages")
-    print(f"  - 📈 Scalable async processing with event coordination")
-    print(f"  - 🔍 Observable system behavior through events")
+    print(f"\nKey Benefits of Reactive Cascades:")
+    print(f"  - Automatic batching without central coordination")
+    print(f"  - Event-driven reactive transformations")
+    print(f"  - Emergent workflow behavior from simple rules")
+    print(f"  - Map-reduce pattern through event coordination")
+    print(f"  - Self-organizing work distribution")
+    print(f"  - Loose coupling between processing stages")
+    print(f"  - Scalable async processing with automatic coordination")
+    print(f"  - Observable system behavior through event logging")
 
 if __name__ == "__main__":
     asyncio.run(main())

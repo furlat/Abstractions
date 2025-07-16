@@ -340,16 +340,38 @@ class Subscription:
     is_async: bool = field(init=False)
     is_weak: bool = False
     handler_ref: Optional[weakref.ref] = field(init=False, default=None)
+    # For weak bound methods - store method name to reconstruct later
+    method_name: Optional[str] = field(init=False, default=None)
     
     def __post_init__(self):
         self.is_async = inspect.iscoroutinefunction(self.handler)
         if self.is_weak:
-            self.handler_ref = weakref.ref(self.handler)
+            # For bound methods, create weak reference to the object, not the method
+            if hasattr(self.handler, '__self__'):
+                # This is a bound method - weak ref the object and store method name
+                self.handler_ref = weakref.ref(self.handler.__self__)
+                self.method_name = self.handler.__name__
+                # Clear the handler reference to break the strong reference cycle
+                self.handler = None
+            else:
+                # This is a function or other callable
+                self.handler_ref = weakref.ref(self.handler)
+                # Clear the handler reference to break the strong reference cycle
+                self.handler = None
     
     def get_handler(self) -> Optional[Callable]:
         """Get handler, handling weak references."""
         if self.is_weak and self.handler_ref:
-            return self.handler_ref()
+            if self.method_name:
+                # This was a bound method - reconstruct from weak ref to object
+                obj = self.handler_ref()
+                if obj is None:
+                    return None
+                # Reconstruct the bound method
+                return getattr(obj, self.method_name)
+            else:
+                # This was a function or other callable
+                return self.handler_ref()
         return self.handler
     
     def matches(self, event: Event) -> bool:
