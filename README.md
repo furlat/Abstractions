@@ -562,115 +562,16 @@ The framework is architected to support distributed deployment patterns:
 
 The framework includes comprehensive examples demonstrating real-world usage patterns:
 
-- **[01_basic_entity_transformation.py](examples/readme_examples/01_basic_entity_transformation.py)** - Core entity operations and transformations (sync + async)
-- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries (sync + async)  
-- **[03_multi_entity_transformations.py](examples/readme_examples/03_multi_entity_transformations.py)** - Tuple unpacking and sibling relationships (sync + async)
-- **[04_distributed_grade_processing.py](examples/readme_examples/04_distributed_grade_processing.py)** - Complex multi-stage data pipelines (sync + async)
-- **[05_reactive_cascades.py](examples/readme_examples/05_reactive_cascades.py)** - Event-driven reactive workflows (async only)
+- **[01_basic_entity_transformation.py](examples/readme_examples/01_basic_entity_transformation.py)** - Core entity operations and transformations
+- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries  
+- **[03_multi_entity_transformations.py](examples/readme_examples/03_multi_entity_transformations.py)** - Tuple unpacking and sibling relationships
+- **[04_distributed_grade_processing.py](examples/readme_examples/04_distributed_grade_processing.py)** - Complex multi-stage data pipelines
+- **[05_async_patterns.py](examples/readme_examples/05_async_patterns.py)** - Async and concurrent execution without interference
+- **[06_event_system_working.py](examples/readme_examples/06_event_system_working.py)** - Event-driven observation and coordination
+- **[07_reactive_cascades.py](examples/readme_examples/07_reactive_cascades.py)** - Multi-step reactive cascades with emergent behavior
 
 Each example includes comprehensive test suites validating the documented behavior and can be run directly to see the framework in action.
 
-## Real-world example: Distributed grade processing pipeline
-
-```python
-from abstractions.ecs import Entity, CallableRegistry
-from typing import List, Dict, Tuple
-from datetime import datetime
-from pydantic import Field
-
-# Define entities for a distributed gradebook system
-class Assignment(Entity):
-    name: str = ""
-    points_possible: float = 100.0
-    weight: float = 1.0
-
-class Submission(Entity):
-    student_id: str = ""
-    assignment_id: str = ""  
-    points_earned: float = 0.0
-    submitted_at: datetime = None
-
-class GradeReport(Entity):
-    student_id: str = ""
-    course_id: str = ""
-    assignments: Dict[str, float] = Field(default_factory=dict)
-    weighted_average: float = 0.0
-    letter_grade: str = ""
-
-# Register distributed processing functions
-@CallableRegistry.register("calculate_weighted_grade")
-def calculate_weighted_grade(
-    submissions: List[Submission],
-    assignments: List[Assignment]
-) -> GradeReport:
-    """Calculate grades with proper weighting"""
-    
-    assignment_map = {a.ecs_id: a for a in assignments}
-    grade_map = {}
-    total_weight = 0
-    weighted_sum = 0
-    
-    for sub in submissions:
-        assignment = assignment_map.get(sub.assignment_id)
-        if assignment:
-            percentage = sub.points_earned / assignment.points_possible
-            grade_map[assignment.name] = percentage * 100
-            weighted_sum += percentage * assignment.weight
-            total_weight += assignment.weight
-    
-    weighted_avg = (weighted_sum / total_weight * 100) if total_weight > 0 else 0
-    
-    return GradeReport(
-        student_id=submissions[0].student_id if submissions else "",
-        assignments=grade_map,
-        weighted_average=weighted_avg,
-        letter_grade=calculate_letter_grade(weighted_avg)
-    )
-
-def calculate_letter_grade(weighted_avg: float) -> str:
-    """Helper function to calculate letter grade from weighted average."""
-    if weighted_avg >= 90:
-        return "A"
-    elif weighted_avg >= 80:
-        return "B"
-    elif weighted_avg >= 70:
-        return "C"
-    elif weighted_avg >= 60:
-        return "D"
-    else:
-        return "F"
-
-# Execute across distributed data (use aexecute for async)
-report = await CallableRegistry.aexecute("calculate_weighted_grade",
-    # Submissions might come from one service
-    submissions=f"@{submission_collection_id}.items",
-    # Assignments from another service
-    assignments=f"@{course_catalog_id}.assignments"  
-)
-
-# Result is automatically versioned and addressable
-print(f"Grade report created: @{report.ecs_id}")
-print(f"Student average: {report.weighted_average}%")
-print(f"Letter grade: {report.letter_grade}")
-
-# Other services can now reference this computed data
-notification_service.send(
-    template="grade_report",
-    student=f"@{report.ecs_id}.student_id",
-    grade=f"@{report.ecs_id}.letter_grade"
-)
-
-# React to new grade reports (optional)
-from abstractions.events.events import on
-
-@on(lambda event: event.type == "created" and event.subject_type == GradeReport)
-async def handle_new_grade_report(event):
-    # Send notification when grades are calculated
-    await send_notification(event.subject_id)
-
-# The rest of your code stays the same
-# Events are just a way to react to changes if you need to
-```
 
 ## Why this approach scales
 
