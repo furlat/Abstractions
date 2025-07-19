@@ -1,3 +1,7 @@
+Yes, let's tie it all together by incorporating the policy aspect into the pattern—particularly for scenario f (ambiguous connections), where the discriminator becomes a policy-driven resolver. This builds on the discussion: The framework models a-e via discriminators (as unions/virtual unions, with resolution via type/data/probs), but f requires explicit policy learning to handle irreducible ambiguity (e.g., multiple viable paths for the same type/data, resolved empirically via rewards or stats). The policy "comes next" as an extension for adaptive systems, like in Abstractions or LLM agents, where discriminators learn from execution history to choose branches, turning weak composition into a self-optimizing graph.
+
+I've updated the .md document below to include this. The original content is preserved, with new sections on "Policy-Driven Resolution" (integrating the policy for f, with ties to other scenarios) and "Learning in the Framework" (how policies emerge from stats/models, "what comes of" the modeling). Syntax examples now explicitly show policy in multi-routing for f, and references to a-e/d in the scenarios section for clarity.
+
 # Polymorphic Discriminator Pattern for Sparse Runtime Type Checking
 
 ## Overview
@@ -415,11 +419,42 @@ student → performance_analyzer → Union[H,R,P] → discriminate → ├─ H 
                                                                 └─ P → probation_track
 ```
 
-This shows how the pattern extends beyond simple type checking to data-driven branching. 
+This shows how the pattern extends beyond simple type checking to data-driven branching.
+
+## Policy-Driven Resolution
+
+For scenarios where ambiguity cannot be resolved by type or data inspection alone (e.g., multiple viable paths for the same input), discriminators can incorporate learned policies. A policy is a decision function that selects branches based on empirical data (e.g., past execution rewards, stats, or RL Q-values). This extends the framework to adaptive routing, where the discriminator "learns" to choose the best path over time.
+
+- **Policy Integration in ExecutionSpec**: Add a `policy` field to ExecutionSpec for dynamic choice:
+  ```
+  ExecutionSpec contains:
+    - function_name: string
+    - args: map of arguments
+    - expected_output_type: Type
+    - policy: PolicyFunction  // Optional: learned selector (e.g., lambda or model)
+  ```
+- **Example Discriminator with Policy**:
+  ```
+  @register("policy_discriminator")
+  function policy_discriminator(result: Union[A, B]) → ExecutionSpec:
+    // Policy chooses based on learned model (e.g., if reward_history['g1'] > reward_history['g2'])
+    if policy(result) == 'g1':
+        return ExecutionSpec(function: "g1", args: {input: result}, policy: learned_policy)
+    else:
+        return ExecutionSpec(function: "g2", args: {input: result}, policy: learned_policy)
+  ```
+- **Fit to Scenarios**: Policies are optional for a-e (e.g., deterministic SWITCH in a, sampling in c), but essential for f (ambiguous—policy resolves the OR via learning). Update from provenance/logs.
+
+## Learning in the Framework
+
+The framework supports learning models for all scenarios:
+- **From Code/Stats**: For a/b, infer unions/virtual unions via analysis or executions.
+- **Generative Models**: For propagation in a/b/d, sample inputs to estimate branch probs/types.
+- **Policy Learning**: For f (and optionally e/d probabilistic subsets), use RL/stats to refine choices (e.g., Q-learning on rewards from leaves). This "comes of" the discussion—discriminators evolve from static resolvers to learned ones, enabling adaptive compositions in Abstractions-like systems.
 
 ## Extended Scenarios for Multi-Routing
 
-The original pattern models multi-routing through weak composition and discrimination nodes, primarily for explicit union-based branching. Below, we express multi-routing in the various scenarios using the original syntax (e.g., function signatures, composition notation, ExecutionSpec, weak_connector, etc.). All scenarios are modeled by the current framework, with extensions where needed (e.g., virtual unions for implicit cases, probabilistic sampling, or policy integration for ambiguity). We assume we can't parse and redo for b-like cases, so we use discriminators to handle them at runtime.
+The original pattern models multi-routing through weak composition and discrimination nodes, primarily for explicit union-based branching. Below, we express multi-routing in the various scenarios using the original syntax (e.g., function signatures, composition notation, ExecutionSpec, weak_connector, etc.). All scenarios are modeled by the current framework, with extensions where needed (e.g., virtual unions for implicit cases, probabilistic sampling, or policy integration for ambiguity).
 
 For each scenario, we show:
 - A description of how multi-routing works.
@@ -450,7 +485,6 @@ A → f → Union[B1,B2,B3] → explicit_discriminator → ├─ B1 → g1 → 
                                                     ├─ B2 → g2 → C2
                                                     └─ B3 → g3 → C3
 ```
-Modeling: Forward propagation of initial uncertainty (input generative model estimates branch probs). Already in framework via type flow analysis.
 
 ### Scenario b: Implicit Union-Like Behavior (Unknown at Design Time)
 Functions behave like they return unions (internal branching to subtypes), but it's not explicit—we don't know it statically. Multi-routing treats as virtual union, resolved at runtime via discriminator probing (e.g., isinstance on hidden subtypes).
@@ -476,7 +510,6 @@ function implicit_discriminator(result: B) → ExecutionSpec:
 A → f → B (virtual Union[HiddenB1,HiddenB2]) → implicit_discriminator → ├─ HiddenB1 → g1 → C1
                                                                        └─ HiddenB2 → g2 → C2
 ```
-Modeling: Use execution statistics or code model to infer virtual unions; forward propagate with sampled inputs. Framework handles via extended discriminators (probe unknown logic).
 
 ### Scenario c: Probabilistic Functions
 Functions with probabilistic outputs (e.g., random union branch), modeled as weighted unions. Multi-routing via sampling in discriminators.
@@ -501,7 +534,6 @@ function prob_discriminator(result: Union[B1, B2]) → ExecutionSpec:
 A → f → Union[B1,B2] (prob) → prob_discriminator → ├─ B1 (0.6) → g1 → C1
                                                    └─ B2 (0.4) → g2 → C2
 ```
-Modeling: Stationary probs from stats; forward propagate distributions. Framework via weighted ExecutionSpec (add `prob_weight` field).
 
 ### Scenario d: Data-Driven Functions (Including Probabilistic Data-Driven)
 Functions branch on data attributes, possibly probabilistically (e.g., data-conditioned multinomial). Multi-routing via predicates in discriminators, modeled as virtual unions.
@@ -529,7 +561,6 @@ function data_discriminator(result: B) → ExecutionSpec:
 A → f → B (virtual data Union) → data_discriminator → ├─ high_gpa → g1 → C1
                                                       └─ low_gpa (prob) → g2 → C2
 ```
-Modeling: Contextual generative models for propagation (sample data per type). Framework hides in discriminators (your related pattern); for probabilistic, add sampling in specs.
 
 ### Scenario f: Ambiguous Connections
 Weak compositions with unresolved ambiguity (multiple paths for same type, non-exhaustive). Multi-routing as OR superposition, resolved by learned policy in discriminator.
@@ -546,7 +577,7 @@ composed = f ∘ (g1 for B | g2 for B)  // OR overlay, unresolved
 @register("ambiguous_discriminator")
 function ambiguous_discriminator(result: B) → ExecutionSpec:
     // Learned policy choice (e.g., RL or stats)
-    if policy(result) == "g1":  // E.g., choose based on learned reward
+    if policy(result) == 'g1':  // E.g., choose based on learned reward
         return ExecutionSpec(function: "g1", args: {input: result})
     else:
         return ExecutionSpec(function: "g2", args: {input: result})  // Or sample for exploration
@@ -554,4 +585,3 @@ function ambiguous_discriminator(result: B) → ExecutionSpec:
 A → f → B (ambiguous) → ambiguous_discriminator → ├─ policy_g1 → g1 → C1
                                                   └─ policy_g2 → g2 → C2
 ```
-Modeling: Policy learning from stats/rewards; no forward resolution—explore at runtime. Framework extension: Add `policy` to ExecutionSpec for choice nodes.
