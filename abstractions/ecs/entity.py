@@ -1266,76 +1266,7 @@ def validate_tree_consistency_after_versioning(tree: EntityTree, test_name: str 
         return False
 
 
-def generate_mermaid_diagram(tree: EntityTree, include_attributes: bool = False) -> str:
-    """
-    Generate a Mermaid diagram from an EntityTree.
-    
-    Args:
-        tree: The entity tree to visualize
-        include_attributes: Whether to include entity attributes in the diagram
-        
-    Returns:
-        A string containing the Mermaid diagram code
-    """
-    if not tree.nodes:
-        return "```mermaid\ntree TD\n  Empty[Empty Tree]\n```"
-        
-    lines = ["```mermaid", "tree TD"]
-    
-    # Entity nodes
-    for entity_id, entity in tree.nodes.items():
-        # Use a shortened version of ID for display
-        short_id = str(entity_id)[-8:]
-        
-        # Create node with label
-        entity_type = entity.__class__.__name__
-        
-        if include_attributes:
-            # Include some attributes in the label
-            attrs = [
-                f"ecs_id: {short_id}",
-                f"lineage_id: {str(entity.lineage_id)[-8:]}"
-            ]
-            if entity.root_ecs_id:
-                attrs.append(f"root: {str(entity.root_ecs_id)[-8:]}")
-                
-            node_label = f"{entity_type}\\n{' | '.join(attrs)}"
-        else:
-            # Simple label with just type and short ID
-            node_label = f"{entity_type} {short_id}"
-            
-        lines.append(f"  {entity_id}[\"{node_label}\"]")
-    
-    # Root node styling
-    lines.append(f"  {tree.root_ecs_id}:::rootNode")
-    
-    # Add edges
-    for edge_key, edge in tree.edges.items():
-        source_id, target_id = edge_key
-        
-        # All edges are hierarchical since we don't support circular trees yet
-        edge_style = "-->"
-        
-        # Add edge label based on field name and container info
-        edge_label = edge.field_name
-        
-        if edge.container_index is not None:
-            edge_label += f"[{edge.container_index}]"
-        elif edge.container_key is not None:
-            edge_label += f"[{edge.container_key}]"
-            
-        # Create the edge line
-        edge_line = f"  {source_id} {edge_style}|{edge_label}| {target_id}:::hierarchicalEdge"
-        lines.append(edge_line)
-    
-    # Add styling classes
-    lines.extend([
-        "  classDef rootNode fill:#f9f,stroke:#333,stroke-width:2px",
-        "  classDef hierarchicalEdge stroke:#333,stroke-width:2px"
-    ])
-    
-    lines.append("```")
-    return "\n".join(lines)
+
 
 class EntityRegistry():
     """ A registry for tree entities, is mantains a versioned collection of all entities in the system
