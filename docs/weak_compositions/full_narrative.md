@@ -1459,128 +1459,235 @@ The framework embraces this reality. Types have:
 
 This creates a rich, context-sensitive system where the same type can afford different transformations based on where and how it appears.
 
-#### The Connection to Reactive Scatter-Gather
+#### Preventing Double-Firing: Provenance-Aware Affordances
 
-Now we can see the reactive scatter-gather pattern in a new light. When a `TupleEntity` is created and emits its event, the `@on` handlers that fire are declaring global affordances for that tuple pattern:
+A crucial detail: when types flow through compositions, we need to ensure handlers don't fire multiple times unless explicitly desired. The framework achieves this through provenance checking in event metadata:
 
 ```python
-# Composition creates scoped affordances
-pipeline = "classify" ∘par (
-    "student_path": Student |
-    "teacher_path": Teacher
-) 
+# Global handler that checks provenance
+@on(CreatedEvent[Student], 
+    predicate=lambda e: "composition_id" not in e.metadata)
+async def global_student_auditor(event: CreatedEvent[Student]):
+    """Only fires for Students created outside of compositions"""
+    student = get(f"@{event.subject_id}")
+    await audit_log.record(f"Student created globally: {student.name}")
 
-# This produces TupleEntity[Optional[StudentResult], Optional[TeacherResult]]
-
-# Global affordance for this tuple pattern
-@on(CreatedEvent[TupleEntity[Optional[StudentResult], Optional[TeacherResult]]])
-async def gather_education_results(event):
-    # This handler declares that this specific tuple pattern
-    # affords education result gathering
-    pass
-
-# Different global affordance for same pattern
-@on(lambda e: is_education_tuple(e))
-async def audit_education_processing(event):
-    # This tuple pattern also affords auditing
-    pass
+# Composition-scoped handler that checks it's in the right pipeline
+@on(CreatedEvent[Student],
+    predicate=lambda e: e.metadata.get("composition_id") == "enrollment_pipeline" and
+                       e.metadata.get("composition_step") == "validate_identity")
+async def enrollment_specific_handler(event: CreatedEvent[Student]):
+    """Only fires for Students at the validate_identity step of enrollment_pipeline"""
+    student = get(f"@{event.subject_id}")
+    await check_enrollment_prerequisites(student)
 ```
 
-The `@on` decorators are declaring what the `TupleEntity` affords globally, while the composition that created it declared what affordances were available at that computation step.
-
-#### The Philosophy: Types Define Possibilities
-
-This leads to a fundamental shift in how we think about types:
-
-**Traditional view**: Types describe data structure
-- `Student` has fields: name, gpa, enrollment_date
-- Functions validate they receive correct fields
-- Type checking ensures structural compatibility
-
-**Affordance view**: Types describe transformation possibilities
-- `Student` affords: enrollment, grading, transcript generation
-- Functions declare what transformations they provide
-- Type checking ensures transformation compatibility
-
-The difference is profound. In the traditional view, types are passive descriptions. In the affordance view, types are active declarations of possibility. When you create a new type, you're not just defining data structure - you're opening a space of potential transformations.
-
-#### Composition as Affordance Declaration
-
-When we compose functions, we're explicitly declaring which affordances are available at each step:
+When a composition executes, it adds metadata to track provenance:
 
 ```python
-# This composition declares a specific affordance path
-academic_flow = (
-    "fetch_student" >>           # Start: produces Student
-    "calculate_gpa" >>           # Step 1: Student affords GPA calculation here
-    "determine_standing" >>      # Step 2: GradeReport affords standing determination here
-    "generate_letter"            # Step 3: Standing affords letter generation here
+# This is what happens internally when you compose
+enrollment_pipeline = (
+    "fetch_student" >>           # Adds: composition_id="enrollment_pipeline", step=0
+    "validate_identity" >>       # Adds: composition_id="enrollment_pipeline", step=1  
+    "check_prerequisites"        # Adds: composition_id="enrollment_pipeline", step=2
 )
 
-# At each step, we've declared what transformation is possible
-# Other functions that accept these types don't interfere
-# The composition creates its own affordance scope
+# Events emitted during composition carry this metadata
+# CreatedEvent[Student](
+#     subject_id=student.ecs_id,
+#     metadata={
+#         "composition_id": "enrollment_pipeline",
+#         "composition_step": "validate_identity",
+#         "composition_depth": 1,
+#         "source_function": "validate_identity"
+#     }
+# )
 ```
 
-This is why composition is so powerful in the framework. You're not just chaining functions - you're creating a specific path through the space of possibilities, declaring which affordances are available at each step.
-
-#### Emergent Behavior Through Affordance Interaction
-
-Complex behavior emerges when affordances interact:
-
-1. **Types afford transformations** (via registered functions)
-2. **Compositions scope affordances** (via >> and ∘par operators)  
-3. **Events propagate affordances** (via @on decorators)
-4. **Parallel execution explores affordances** (via polymorphic dispatch)
-
-The system's behavior emerges from these interactions without central planning. You don't design workflows - you declare affordances and let the system discover paths through the possibility space.
-
-#### Practical Implications
-
-This philosophy suggests concrete practices:
-
-**Design functions as affordance providers**:
 ```python
-# Don't think: "This function needs a Student with these fields"
-# Think: "This function provides the enrollment affordance for Student"
-@CallableRegistry.register("enroll_in_course")
-def enroll_in_course(student: Student, course: Course) -> Enrollment:
-    pass
-```
+# Handler that should fire in multiple specific pipelines
+@on(CreatedEvent[GradeReport],
+    predicate=lambda e: e.metadata.get("composition_id") in ["academic_pipeline", "scholarship_pipeline"])
+async def update_academic_standing(event: CreatedEvent[GradeReport]):
+    """Fires in both academic and scholarship pipelines, but not others"""
+    report = get(f"@{event.subject_id}")
+    standing = await calculate_standing(report)
+    # The standing update is relevant to both contexts
 
-**Use composition to declare affordance paths**:
-```python
-# Don't manually orchestrate
-# Declare the affordance path and let it execute
-registration_flow = (
-    "validate_student" >>
-    "check_prerequisites" >>
-    "create_enrollment" >>
-    "send_confirmation"
+# Handler that tracks if it already processed this lineage
+@on(CreatedEvent[Student],
+    predicate=lambda e: f"processed_by_validator_{e.lineage_id}" not in e.metadata)
+async def validate_once_per_lineage(event: CreatedEvent[Student]):
+    """Ensures validation happens only once per computation lineage"""
+    student = get(f"@{event.subject_id}")
+    validation_result = await validate_student(student)
+    
+    # Mark this lineage as processed
+    await emit(ValidationCompleteEvent(
+        subject_id=validation_result.ecs_id,
+        metadata={
+            **event.metadata,
+            f"processed_by_validator_{event.lineage_id}": True
+        }
+    ))
+
+# Pipeline that deliberately uses same function twice
+analysis_pipeline = (
+    "fetch_data" >>
+    "normalize_data" >>
+    "analyze_pattern" >>
+    "normalize_data" >>  # Deliberate second normalization
+    "final_report"
 )
+
+# Handler that allows double execution when explicitly declared
+@on(CreatedEvent[NormalizedData],
+    predicate=lambda e: 
+        e.metadata.get("composition_id") == "analysis_pipeline" and
+        (e.metadata.get("composition_step") == "normalize_data" or
+         e.metadata.get("allow_repeated_execution") == True))
+async def normalize_handler(event: CreatedEvent[NormalizedData]):
+    """Fires at specific steps OR when explicitly allowed"""
+    data = get(f"@{event.subject_id}")
+    # Process normalization
 ```
 
-**Let types flow through natural affordances**:
 ```python
-# Don't force type conversions
-# Let entities flow through their natural affordances
-result = execute_par("process_entity" ∘par (
-    "academic": Student |
-    "administrative": Employee |
-    "general": Person
+# Reactive scatter-gather with provenance awareness
+@on(CreatedEvent[TupleEntity],
+    predicate=lambda e: 
+        e.metadata.get("source_operation") == "∘par" and
+        e.metadata.get("composition_id") is not None)
+async def gather_composed_results(event: CreatedEvent[TupleEntity]):
+    """Only gathers results from ∘par operations within compositions"""
+    tuple_entity = get(f"@{event.subject_id}")
+    composition_id = event.metadata["composition_id"]
+    
+    # Different gathering strategies based on which composition
+    if composition_id == "document_analysis":
+        report = create_analysis_report(tuple_entity)
+    elif composition_id == "student_evaluation":
+        report = create_evaluation_summary(tuple_entity)
+    
+    # Emit with provenance to prevent duplicate processing
+    await emit(CreatedEvent(
+        subject_type=type(report),
+        subject_id=report.ecs_id,
+        metadata={
+            **event.metadata,
+            "gathered_from": event.subject_id,
+            "gathering_complete": True
+        }
+    ))
+```
+
+This provenance-aware system means:
+
+1. **Types afford different transformations in different contexts** - The same `Student` type might afford validation in one pipeline but not another
+
+2. **Affordances are scoped by composition** - The `>>` operator creates isolated affordance scopes that don't interfere
+
+3. **Global affordances respect composition boundaries** - `@on` handlers can check provenance to avoid interfering with composed flows
+
+4. **Deliberate repetition is possible** - When you want the same transformation twice, you can declare it explicitly
+
+#### The Complete Picture: Affordances All the Way Down
+
+Putting it all together, we see that the framework implements affordances at every level:
+
+```python
+# Level 1: Functions declare what types they afford transformation for
+@CallableRegistry.register("calculate_gpa")
+def calculate_gpa(student: Student) -> GradeReport:
+    """This function provides the GPA calculation affordance for Student type"""
+    pass
+
+# Level 2: Compositions declare affordance paths
+academic_pipeline = (
+    "fetch_student" >>          # Student appears here
+    "calculate_gpa" >>          # Student affords GPA calculation at this step
+    "determine_standing"        # GradeReport affords standing determination here
+)
+
+# Level 3: Events propagate affordances with context
+@on(CreatedEvent[Student],
+    predicate=lambda e: "composition_id" not in e.metadata)
+async def global_student_handler(event):
+    """Student affords this transformation globally (outside compositions)"""
+    pass
+
+# Level 4: Parallel execution explores all affordances
+result = execute_par("classify" ∘par (
+    "academic": Student |       # Entity might afford academic processing
+    "financial": Student |      # Entity might afford financial processing
+    "administrative": Person    # Entity might afford admin processing
 ))
+# All affordances explored in parallel, with provenance tracking
 ```
+
+The beauty is that these levels work together:
+- Functions define base affordances
+- Compositions scope them
+- Events propagate them with context
+- Parallel execution explores them completely
+- Provenance prevents interference
+
+This creates a system where affordances naturally flow through computations, scoped appropriately, without central coordination.
+
+#### The Philosophy Made Concrete
+
+This provenance-aware affordance system embodies the philosophical shift we discussed:
+
+**Traditional Systems**: "What is this data?"
+- Check type structure
+- Route to single handler
+- Lose context information
+- Force global consistency
+
+**Affordance Systems**: "What can this data become here?"
+- Check type + provenance
+- Explore all possibilities
+- Preserve context through metadata
+- Embrace contextual differences
+
+When you write:
+
+```python
+# Declare that Student affords enrollment, but only in registration context
+@on(CreatedEvent[Student],
+    predicate=lambda e: 
+        e.metadata.get("service") == "registration" or
+        e.metadata.get("composition_id") == "enrollment_flow")
+async def enroll_student_handler(event):
+    """Student affords enrollment in registration context"""
+    student = get(f"@{event.subject_id}")
+    enrollment = await create_enrollment(student)
+```
+
+You're declaring a contextual affordance. The `Student` type doesn't universally afford enrollment - it affords enrollment in specific contexts. The provenance metadata carries this context, allowing fine-grained control over which transformations are possible where.
+
+#### Why This Matters for Distributed Systems
+
+In distributed systems, this contextual affordance model solves real problems:
+
+1. **Service Isolation** - Services can declare their local affordances without affecting others
+2. **Pipeline Integrity** - Compositions maintain their affordance paths without interference  
+3. **Debugging Clarity** - Provenance metadata shows exactly why each transformation fired
+4. **Evolution Safety** - New affordances can be added without breaking existing flows
+
+The framework doesn't fight distributed reality - it embraces it. Types afford different things in different places, and that's not a bug, it's a feature.
 
 #### Conclusion: A New Way of Thinking
 
 The Abstractions framework embodies a simple but powerful idea: **types are not descriptions of what data is, but declarations of what data can become**. 
 
-Functions don't operate on passive data structures - they actualize possibilities that types afford. Compositions don't just chain operations - they declare paths through possibility space. Events don't just notify - they propagate affordances for reactive handling.
+Functions don't operate on passive data structures - they actualize possibilities that types afford. Compositions don't just chain operations - they declare paths through possibility space. Events don't just notify - they propagate affordances with full context. Provenance doesn't just track - it scopes affordances appropriately.
 
 This creates a programming model where:
 - The same type affords different transformations in different contexts
 - Parallel execution explores multiple affordances without choosing
 - Complex workflows emerge from simple affordance declarations
+- Context is preserved through provenance metadata
 - The system adapts by discovering new paths through the possibility space
 
 In distributed systems, where services have partial knowledge and contexts vary, this affordance-based model aligns perfectly with reality. You stop fighting to maintain global type consistency and embrace that affordances are naturally scoped, contextual, and composable.
