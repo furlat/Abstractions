@@ -971,3 +971,286 @@ This creates a fully reactive system where:
 - **No orchestration** is needed
 
 The entire pattern emerges from local rules: functions declare what they can process, the framework executes all matches in parallel, results emit events, and handlers react to continue the flow. Complex workflows self-organize from these simple principles.
+
+### Types as Affordances: What Functions Make Possible
+
+The reactive scatter-gather pattern revealed something profound about the framework. When `∘par` scatters computation and `@on` gathers results, what's really happening is that types are creating possibilities for transformation. Each registered function that accepts a type is declaring an affordance - a transformation that type makes possible.
+
+Consider what we just saw with reactive gathering:
+
+```python
+# These functions define what Student affords
+@CallableRegistry.register("calculate_gpa")
+def calculate_gpa(student: Student) -> GradeReport:
+    pass
+
+@CallableRegistry.register("check_enrollment")  
+def check_enrollment(student: Student) -> EnrollmentStatus:
+    pass
+
+@CallableRegistry.register("generate_transcript")
+def generate_transcript(student: Student) -> Transcript:
+    pass
+
+# When we execute ∘par, we're exploring all affordances
+result = execute_par("process_student" ∘par (
+    "gpa": Student |
+    "enrollment": Student |
+    "transcript": Student
+))
+
+# The Student type affords all three transformations
+# They execute in parallel because they're all possible
+```
+
+The key insight: **types don't describe data structure - they describe what functions are available**. When you register a function that accepts `Student`, you're adding to what `Student` affords in the system.
+
+#### Composition Creates Scoped Affordances
+
+Here's where it gets interesting. When you compose functions, you're not just chaining transformations - you're declaring what affordances are available at each step of the computation:
+
+```python
+# Global affordances - available anywhere
+@on(CreatedEvent[Student])
+async def global_student_handler(event):
+    # This fires whenever ANY Student is created
+    
+# But composition creates scoped affordances
+composition = "get_student" >> "calculate_gpa" >> "determine_honors"
+
+# This is essentially creating:
+# @on(type:Student, from:["get_student"], execute:"calculate_gpa")
+# @on(type:GradeReport, from:["calculate_gpa"], execute:"determine_honors")
+```
+
+The composition operator (`>>` or `∘`) is really creating event handlers that only fire in the context of that specific computation chain. When `get_student` produces a `Student`, only the `calculate_gpa` in this composition fires, not every function that accepts `Student`.
+
+This is the crucial difference:
+- **Global `@on`**: Fires whenever the type appears anywhere in the system
+- **Composed functions**: Fire only when the type appears at that specific depth in the computation
+
+Let's make this concrete:
+
+```python
+# These are global affordances
+@CallableRegistry.register("validate_student")
+def validate_student(s: Student) -> ValidationResult:
+    pass
+
+@CallableRegistry.register("enroll_in_course")
+def enroll_in_course(s: Student, c: Course) -> Enrollment:
+    pass
+
+# But when we compose, we create a specific path
+academic_pipeline = (
+    "fetch_student" >>           # Produces Student
+    "calculate_gpa" >>           # Student → GradeReport (only from fetch_student)
+    "check_academic_standing"    # GradeReport → Standing (only from calculate_gpa)
+)
+
+# Even though validate_student and enroll_in_course accept Student,
+# they don't fire in this composition - the affordances are scoped
+```
+
+The composition declares: "At this step, Student affords calculate_gpa transformation, and that's it."
+
+#### The Polymorphic Parallel Operator and Scoped Affordances
+
+The `∘par` operator becomes even more powerful in this light. It's not just exploring all type matches - it's exploring all affordances available at that specific point in the computation:
+
+```python
+# Define a branching composition
+analysis_pipeline = (
+    "fetch_entity" >>
+    "classify_entity" ∘par (
+        "as_student": Student |
+        "as_teacher": Teacher |
+        "as_admin": Admin
+    ) >>
+    "generate_report"
+)
+
+# This creates scoped affordances:
+# 1. After fetch_entity: Entity affords classify_entity
+# 2. After classify_entity: 
+#    - Student output affords as_student (scoped to this pipeline)
+#    - Teacher output affords as_teacher (scoped to this pipeline)
+#    - Admin output affords as_admin (scoped to this pipeline)
+# 3. The TupleEntity result affords generate_report
+```
+
+The brilliance is that these affordances are isolated to this composition. If you have another pipeline:
+
+```python
+enrollment_pipeline = (
+    "fetch_entity" >>
+    "validate_identity" >>
+    "check_prerequisites" ∘par (
+        "for_student": Student |
+        "for_teacher": Teacher
+    ) >>
+    "create_enrollment"
+)
+```
+
+The `Student` type has different affordances at each step:
+- In `analysis_pipeline`: Student affords `as_student` after classification
+- In `enrollment_pipeline`: Student affords `for_student` after prerequisites
+
+Same type, different context, different affordances. The composition declares what's possible at each depth.
+
+#### Why This Matters for Distributed Systems
+
+In a monolithic application, you might maintain the illusion of global type knowledge - every function that accepts `Student` is available everywhere. But distributed systems shatter this illusion in a useful way:
+
+```python
+# Registration Service - local affordances
+@CallableRegistry.register("enroll_in_course")
+def enroll_in_course(student: Student, course: Course) -> Enrollment:
+    pass
+
+# Billing Service - different local affordances  
+@CallableRegistry.register("calculate_tuition")
+def calculate_tuition(student: Student) -> TuitionBill:
+    pass
+
+# Same Student type, but:
+# - In Registration Service: Student affords enrollment
+# - In Billing Service: Student affords tuition calculation
+# - In composition: Student affords what the composition declares
+```
+
+The framework embraces this reality. Types have:
+1. **Global affordances** via `@on` decorators - available whenever the type appears
+2. **Service affordances** via local function registry - available in that service
+3. **Composition affordances** via `>>` and `∘par` - available at specific computation steps
+
+This creates a rich, context-sensitive system where the same type can afford different transformations based on where and how it appears.
+
+#### The Connection to Reactive Scatter-Gather
+
+Now we can see the reactive scatter-gather pattern in a new light. When a `TupleEntity` is created and emits its event, the `@on` handlers that fire are declaring global affordances for that tuple pattern:
+
+```python
+# Composition creates scoped affordances
+pipeline = "classify" ∘par (
+    "student_path": Student |
+    "teacher_path": Teacher
+) 
+
+# This produces TupleEntity[Optional[StudentResult], Optional[TeacherResult]]
+
+# Global affordance for this tuple pattern
+@on(CreatedEvent[TupleEntity[Optional[StudentResult], Optional[TeacherResult]]])
+async def gather_education_results(event):
+    # This handler declares that this specific tuple pattern
+    # affords education result gathering
+    pass
+
+# Different global affordance for same pattern
+@on(lambda e: is_education_tuple(e))
+async def audit_education_processing(event):
+    # This tuple pattern also affords auditing
+    pass
+```
+
+The `@on` decorators are declaring what the `TupleEntity` affords globally, while the composition that created it declared what affordances were available at that computation step.
+
+#### The Philosophy: Types Define Possibilities
+
+This leads to a fundamental shift in how we think about types:
+
+**Traditional view**: Types describe data structure
+- `Student` has fields: name, gpa, enrollment_date
+- Functions validate they receive correct fields
+- Type checking ensures structural compatibility
+
+**Affordance view**: Types describe transformation possibilities
+- `Student` affords: enrollment, grading, transcript generation
+- Functions declare what transformations they provide
+- Type checking ensures transformation compatibility
+
+The difference is profound. In the traditional view, types are passive descriptions. In the affordance view, types are active declarations of possibility. When you create a new type, you're not just defining data structure - you're opening a space of potential transformations.
+
+#### Composition as Affordance Declaration
+
+When we compose functions, we're explicitly declaring which affordances are available at each step:
+
+```python
+# This composition declares a specific affordance path
+academic_flow = (
+    "fetch_student" >>           # Start: produces Student
+    "calculate_gpa" >>           # Step 1: Student affords GPA calculation here
+    "determine_standing" >>      # Step 2: GradeReport affords standing determination here
+    "generate_letter"            # Step 3: Standing affords letter generation here
+)
+
+# At each step, we've declared what transformation is possible
+# Other functions that accept these types don't interfere
+# The composition creates its own affordance scope
+```
+
+This is why composition is so powerful in the framework. You're not just chaining functions - you're creating a specific path through the space of possibilities, declaring which affordances are available at each step.
+
+#### Emergent Behavior Through Affordance Interaction
+
+Complex behavior emerges when affordances interact:
+
+1. **Types afford transformations** (via registered functions)
+2. **Compositions scope affordances** (via >> and ∘par operators)  
+3. **Events propagate affordances** (via @on decorators)
+4. **Parallel execution explores affordances** (via polymorphic dispatch)
+
+The system's behavior emerges from these interactions without central planning. You don't design workflows - you declare affordances and let the system discover paths through the possibility space.
+
+#### Practical Implications
+
+This philosophy suggests concrete practices:
+
+**Design functions as affordance providers**:
+```python
+# Don't think: "This function needs a Student with these fields"
+# Think: "This function provides the enrollment affordance for Student"
+@CallableRegistry.register("enroll_in_course")
+def enroll_in_course(student: Student, course: Course) -> Enrollment:
+    pass
+```
+
+**Use composition to declare affordance paths**:
+```python
+# Don't manually orchestrate
+# Declare the affordance path and let it execute
+registration_flow = (
+    "validate_student" >>
+    "check_prerequisites" >>
+    "create_enrollment" >>
+    "send_confirmation"
+)
+```
+
+**Let types flow through natural affordances**:
+```python
+# Don't force type conversions
+# Let entities flow through their natural affordances
+result = execute_par("process_entity" ∘par (
+    "academic": Student |
+    "administrative": Employee |
+    "general": Person
+))
+```
+
+#### Conclusion: A New Way of Thinking
+
+The Abstractions framework embodies a simple but powerful idea: **types are not descriptions of what data is, but declarations of what data can become**. 
+
+Functions don't operate on passive data structures - they actualize possibilities that types afford. Compositions don't just chain operations - they declare paths through possibility space. Events don't just notify - they propagate affordances for reactive handling.
+
+This creates a programming model where:
+- The same type affords different transformations in different contexts
+- Parallel execution explores multiple affordances without choosing
+- Complex workflows emerge from simple affordance declarations
+- The system adapts by discovering new paths through the possibility space
+
+In distributed systems, where services have partial knowledge and contexts vary, this affordance-based model aligns perfectly with reality. You stop fighting to maintain global type consistency and embrace that affordances are naturally scoped, contextual, and composable.
+
+The question shifts from "what is this data?" to "what can this data become here, in this context, at this step?" And that's exactly the right question for building flexible, evolvable distributed systems.
