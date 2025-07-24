@@ -14,7 +14,8 @@ The integration is entirely external to the abstractions package.
 
 from typing import Any, Dict, Optional, Tuple, List, Union
 from uuid import UUID
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -25,7 +26,8 @@ from abstractions.ecs.entity import EntityRegistry, Entity
 from abstractions.ecs.ecs_address_parser import (
     ECSAddressParser, 
     InputPatternClassifier,
-    EntityReferenceResolver
+    EntityReferenceResolver,
+    get
 )
 from abstractions.events.events import (
     Event, CreatedEvent, ProcessingEvent, ProcessedEvent,
@@ -111,6 +113,277 @@ class GoalAchieved(BaseModel):
     errors: List[str] = Field(default_factory=list)  # Any errors encountered
     entity_ids_referenced: List[str] = Field(default_factory=list)  # UUIDs mentioned/used
     functions_used: List[str] = Field(default_factory=list)  # Functions called
+
+
+# ============================================================================
+# POLYMORPHIC GOAL SYSTEM
+# ============================================================================
+
+class GoalError(BaseModel):
+    """Clean error model for goal failures."""
+    error_type: str
+    error_message: str
+    suggestions: List[str] = Field(default_factory=list)
+    debug_info: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BaseGoal(BaseModel):
+    """Base goal with ECS address-based typed result loading."""
+    
+    model_config = {"validate_assignment": True, "revalidate_instances": "always"}
+    
+    goal_type: str
+    goal_completed: bool = False
+    summary: str
+    
+    # Agent sets this ECS address string
+    typed_result_ecs_address: Optional[str] = None
+    
+    # Gets overridden in dynamic subclasses with proper types
+    typed_result: Optional[Entity] = None
+    
+    # Optional separate error model
+    error: Optional[GoalError] = None
+    
+    @model_validator(mode='after')
+    def load_and_validate_typed_result(self):
+        """Load typed result and validate required fields."""
+        if self.typed_result_ecs_address and not self.typed_result:
+            # Load from ECS address
+            self.typed_result = get(self.typed_result_ecs_address)
+        
+        # Validation: Must have (string OR entity) OR error
+        has_string = bool(self.typed_result_ecs_address)
+        has_entity = bool(self.typed_result)
+        has_error = bool(self.error)
+        
+        if not (has_string or has_entity or has_error):
+            raise ValueError("Must provide typed_result_ecs_address, typed_result, or error")
+        
+        return self
+
+
+# Simple result entity types with comprehensive docstrings
+class OrderProcessingResult(Entity):
+    """
+    Result entity for order processing operations.
+    
+    This entity captures the outcome of order fulfillment processes including
+    order confirmation, customer updates, and inventory changes.
+    
+    Fields:
+    - order_id: The unique identifier of the processed order
+    - order_status: Current status after processing (confirmed, shipped, etc.)
+    - customer_updates: Dictionary of customer fields that were modified
+    - product_updates: Dictionary of product/inventory fields that were modified
+    """
+    order_id: str
+    order_status: str
+    customer_updates: Dict[str, Any]
+    product_updates: Dict[str, Any]
+
+
+class EntityRetrievalResult(Entity):
+    """
+    Result entity for entity search and retrieval operations.
+    
+    This entity captures the outcome of searching for entities in the registry
+    based on various criteria like type, attributes, or relationships.
+    
+    Fields:
+    - entities_found: List of ECS IDs for entities that matched the search criteria
+    - total_count: Total number of entities found during the search operation
+    """
+    entities_found: List[str]  # ECS IDs
+    total_count: int
+
+
+class FunctionExecutionResult(Entity):
+    """
+    Result entity for function execution operations.
+    
+    This entity captures the outcome of executing registered functions including
+    success status, function identification, and the returned data.
+    
+    Fields:
+    - function_name: Name of the function that was executed
+    - success: Boolean indicating if the function executed successfully
+    - result_data: The actual data/results returned by the function execution
+    """
+    function_name: str
+    success: bool
+    result_data: Dict[str, Any]
+
+
+@dataclass
+class SystemPromptComponents:
+    """Modular components for building agent system prompts."""
+    
+    framework_context: str = """
+The Abstractions Entity Framework is a functional data processing system where:
+- Entities are immutable data units with global identity (ecs_id)
+- Functions transform entities and are tracked in a registry
+- All operations maintain complete provenance and lineage
+- String addressing allows distributed data access (@uuid.field syntax)
+"""
+    
+    response_options: str = """
+You have 3 options for responses:
+
+1. SUCCESS WITH ECS ADDRESS:
+   - Set typed_result_ecs_address to point to result entity
+   - Never set typed_result directly - it loads automatically
+   - Set goal_completed=true
+
+2. SUCCESS WITH DIRECT ENTITY:
+   - Set typed_result directly to entity
+   - Set goal_completed=true
+
+3. FAILURE:
+   - Set error with GoalError object
+   - Set goal_completed=false
+"""
+    
+    available_capabilities: str = """
+Available capabilities:
+- execute_function(function_name, **kwargs) - Execute registered functions
+- list_functions() - Show available functions with metadata
+- get_all_lineages() - Show entity lineages
+- get_entity() - Get specific entity details
+"""
+    
+    parameter_passing_examples: str = """
+CRITICAL: How to pass parameters to execute_function:
+
+Example 1 - Function expects primitive parameters, extract from entity fields:
+Function: send_email(recipient: str, subject: str, body: str) -> EmailResult
+Entity: NotificationConfig with ecs_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890" and fields: recipient_email, email_subject, message_body
+Correct call: execute_function("send_email", recipient="@a1b2c3d4-e5f6-7890-abcd-ef1234567890.recipient_email", subject="@a1b2c3d4-e5f6-7890-abcd-ef1234567890.email_subject", body="@a1b2c3d4-e5f6-7890-abcd-ef1234567890.message_body")
+
+Example 2 - Function expects entity object directly:
+Function: analyze_customer(customer: Customer) -> AnalysisResult  
+Entity: Customer with ecs_id="b2c3d4e5-f6g7-8901-bcde-f23456789012"
+Correct call: execute_function("analyze_customer", customer="@b2c3d4e5-f6g7-8901-bcde-f23456789012")
+"""
+    
+    addressing_examples: str = """
+STRING ADDRESSING EXAMPLES:
+
+Success with ECS address:
+typed_result_ecs_address = "@f1e2d3c4-b5a6-9870-fedc-ba9876543210"
+
+Failure handling:
+error = GoalError(
+    error_type="FunctionExecutionFailed",
+    error_message="Could not execute function due to missing parameters",
+    suggestions=["Check function signature", "Verify entity field names"]
+)
+"""
+    
+    key_rules: str = """
+KEY RULES:
+- Use @uuid.field to extract primitive values from entity fields
+- Use @uuid (without .field) to pass entire entity objects
+- Always check function signature with get_function_signature() to understand parameter types
+- Match entity field types to function parameter types (str to str, int to int, etc.)
+- Functions CREATE the result entities - you reference them with typed_result_ecs_address
+"""
+
+
+def build_goal_system_prompt(goal_type: str, result_entity_class) -> str:
+    """Build complete system prompt for specific goal type."""
+    
+    components = SystemPromptComponents()
+    result_docstring = result_entity_class.__doc__ or f"Result entity for {goal_type} operations."
+    
+    prompt = f"""
+You are handling {goal_type} goals for the Abstractions Entity Framework.
+
+{components.framework_context}
+
+{components.response_options}
+
+TARGET RESULT ENTITY:
+The result entity should be type {result_entity_class.__name__}.
+
+{result_docstring}
+
+{components.available_capabilities}
+
+{components.parameter_passing_examples}
+
+{components.addressing_examples}
+
+{components.key_rules}
+
+You MUST provide either typed_result_ecs_address, typed_result, or error.
+"""
+    
+    return prompt
+
+
+class GoalFactory:
+    """Create Goal subclasses with proper typed result fields using create_model."""
+    
+    _registry = {
+        "order_processing": OrderProcessingResult,
+        "entity_retrieval": EntityRetrievalResult,
+        "function_execution": FunctionExecutionResult,
+    }
+    
+    @classmethod
+    def create_goal_class(cls, goal_type: str):
+        """Create Goal subclass with properly typed result field."""
+        
+        result_class = cls._registry.get(goal_type)
+        if not result_class:
+            raise ValueError(f"Unknown goal type: {goal_type}")
+        
+        # Use create_model with proper field definition tuple
+        dynamic_class_name = f"{goal_type.title().replace('_', '')}Goal"
+        
+        # Create the dynamic goal class using create_model
+        DynamicGoal = create_model(
+            dynamic_class_name,
+            __base__=BaseGoal,
+            __module__=__name__,
+            # This is the key - typed_result field with proper type
+            typed_result=(Optional[result_class], None),
+        )
+        
+        return DynamicGoal
+    
+    @classmethod
+    def get_available_goal_types(cls) -> List[str]:
+        """Get available goal types."""
+        return list(cls._registry.keys())
+
+
+class TypedAgentFactory:
+    """Create agents with specific goal types."""
+    
+    @classmethod
+    def create_agent(cls, goal_type: str):
+        """Create agent for specific goal type."""
+        
+        goal_class = GoalFactory.create_goal_class(goal_type)
+        result_entity_class = GoalFactory._registry[goal_type]
+        
+        system_prompt = build_goal_system_prompt(goal_type, result_entity_class)
+        
+        agent = Agent(
+            'anthropic:claude-sonnet-4-20250514',
+            output_type=goal_class,
+            toolsets=[registry_toolset],
+            system_prompt=system_prompt
+        )
+        
+        return agent
+
+
+# ============================================================================
+# END POLYMORPHIC GOAL SYSTEM
+# ============================================================================
 
 
 class AddressErrorHandler:
@@ -567,50 +840,3 @@ def get_entity(root_ecs_id: str, ecs_id: str) -> Union[EntityInfo, ToolError]:
     )
 
 
-# Create the agent with comprehensive system prompt
-registry_agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
-    output_type=GoalAchieved,
-    toolsets=[registry_toolset],
-    system_prompt="""
-    You are an assistant for the Abstractions Entity Framework that returns structured GoalAchieved responses.
-    
-    The framework is a functional data processing system where:
-    - Entities are immutable data units with global identity
-    - Functions transform entities and are tracked in a registry
-    - All operations maintain complete provenance and lineage
-    - String addressing allows distributed data access (@uuid.field syntax)
-    
-    Available capabilities:
-    - execute_function(function_name, **kwargs) - Execute registered functions with enhanced error handling
-    - list_functions() - Show available functions with metadata  
-    - get_function_signature(function_name) - Get function type information
-    - get_all_lineages() - Show all entity lineages and versions
-    - get_lineage_history(lineage_id) - Get version history for specific lineage
-    - get_entity(root_ecs_id, ecs_id) - Get specific entity details
-    
-    IMPORTANT: You must always return a GoalAchieved response with:
-    - goal_completed: true if the user's request was fulfilled, false if errors occurred
-    - primary_action: the main type of action performed ("function_execution", "data_retrieval", "exploration", "error_handling")
-    - summary: a clear, concise summary of what was accomplished
-    - data: structured results from tools (if any)
-    - recommendations: helpful next steps for the user
-    - errors: any errors encountered
-    - entity_ids_referenced: list of UUIDs mentioned or accessed
-    - functions_used: list of functions that were called
-    
-    For function execution, you can use @uuid.field syntax. The system provides impressive debugging
-    help for address syntax errors. Always provide actionable recommendations and track all entity
-    IDs and functions used in your structured response.
-    """
-)
-
-
-if __name__ == "__main__":
-    # Example usage
-    
-    result = registry_agent.run_sync(
-        "List all available functions and show me the entity lineages"
-    )
-    print("Agent Response:")
-    print(result.output)
