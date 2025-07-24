@@ -9,7 +9,7 @@ from typing import Dict
 from datetime import datetime, timezone
 from pydantic import Field
 
-from abstractions.ecs.registry_agent import (
+from abstractions.registry_agent import (
     TypedAgentFactory, GoalFactory, FunctionExecutionResult
 )
 from abstractions.ecs.entity import Entity, ConfigEntity
