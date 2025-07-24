@@ -97,22 +97,7 @@ class ToolError(BaseModel):
     debug_info: Optional[Dict[str, Any]] = None
 
 
-# Agent response model
-class GoalAchieved(BaseModel):
-    """
-    Structured response indicating the agent has completed the user's request.
-    
-    This provides typed, structured responses instead of unstructured text,
-    making the agent output more reliable and easier to process programmatically.
-    """
-    goal_completed: bool
-    primary_action: str  # "function_execution", "data_retrieval", "error_handling", etc.
-    summary: str  # Brief summary of what was accomplished
-    data: Optional[Dict[str, Any]] = None  # Structured data results
-    recommendations: List[str] = Field(default_factory=list)  # Next steps or suggestions
-    errors: List[str] = Field(default_factory=list)  # Any errors encountered
-    entity_ids_referenced: List[str] = Field(default_factory=list)  # UUIDs mentioned/used
-    functions_used: List[str] = Field(default_factory=list)  # Functions called
+
 
 
 # ============================================================================
