@@ -27,48 +27,48 @@ class ECSAddressParser:
     # Pattern for entity-only addresses: @uuid
     ENTITY_ONLY_PATTERN = re.compile(r'^@([a-f0-9\-]{36})$')
     
-    @classmethod
-    def parse_address(cls, address: str) -> Tuple[UUID, List[str]]:
-        """
-        Parse an ECS address string into entity ID and field path.
+    # @classmethod
+    # def parse_address(cls, address: str) -> Tuple[UUID, List[str]]:
+    #     """
+    #     Parse an ECS address string into entity ID and field path.
         
-        Args:
-            address: String like "@uuid.field.subfield"
+    #     Args:
+    #         address: String like "@uuid.field.subfield"
             
-        Returns:
-            Tuple of (entity_ecs_id, field_path_list)
+    #     Returns:
+    #         Tuple of (entity_ecs_id, field_path_list)
             
-        Raises:
-            ValueError: If address format is invalid
+    #     Raises:
+    #         ValueError: If address format is invalid
         
-        Examples:
-            "@f65cf3bd-9392-499f-8f57-dba701f5069c.name" 
-            -> (UUID('f65cf3bd-9392-499f-8f57-dba701f5069c'), ['name'])
+    #     Examples:
+    #         "@f65cf3bd-9392-499f-8f57-dba701f5069c.name" 
+    #         -> (UUID('f65cf3bd-9392-499f-8f57-dba701f5069c'), ['name'])
             
-            "@f65cf3bd-9392-499f-8f57-dba701f5069c.record.gpa"
-            -> (UUID('f65cf3bd-9392-499f-8f57-dba701f5069c'), ['record', 'gpa'])
-        """
-        if not isinstance(address, str) or not address.startswith('@'):
-            raise ValueError(f"Invalid ECS address format: {address}")
+    #         "@f65cf3bd-9392-499f-8f57-dba701f5069c.record.gpa"
+    #         -> (UUID('f65cf3bd-9392-499f-8f57-dba701f5069c'), ['record', 'gpa'])
+    #     """
+    #     if not isinstance(address, str) or not address.startswith('@'):
+    #         raise ValueError(f"Invalid ECS address format: {address}")
         
-        match = cls.ADDRESS_PATTERN.match(address)
-        if not match:
-            raise ValueError(f"Invalid ECS address format: {address}")
+    #     match = cls.ADDRESS_PATTERN.match(address)
+    #     if not match:
+    #         raise ValueError(f"Invalid ECS address format: {address}")
         
-        uuid_str, field_path = match.groups()
+    #     uuid_str, field_path = match.groups()
         
-        try:
-            entity_id = UUID(uuid_str)
-        except ValueError as e:
-            raise ValueError(f"Invalid UUID in address {address}: {e}")
+    #     try:
+    #         entity_id = UUID(uuid_str)
+    #     except ValueError as e:
+    #         raise ValueError(f"Invalid UUID in address {address}: {e}")
         
-        # Split field path on dots
-        field_parts = field_path.split('.')
+    #     # Split field path on dots
+    #     field_parts = field_path.split('.')
         
-        return entity_id, field_parts
+    #     return entity_id, field_parts
     
     @classmethod
-    def parse_address_flexible(cls, address: str) -> Tuple[UUID, List[str]]:
+    def parse_address(cls, address: str) -> Tuple[UUID, List[str]]:
         """
         Parse address supporting entity-only format.
         
@@ -130,7 +130,7 @@ class ECSAddressParser:
             Tuple of (resolved_value, resolution_type)
             resolution_type: "entity" | "field_value" | "sub_entity"
         """
-        entity_id, field_path = cls.parse_address_flexible(address)
+        entity_id, field_path = cls.parse_address(address)
         
         # Get root entity
         root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)

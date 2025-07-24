@@ -253,7 +253,7 @@ def create_composite_entity_with_pattern_detection_advanced(
                 resolved_value, _ = ECSAddressParser.resolve_address_advanced(value)
                 resolved_mappings[field_name] = resolved_value
                 # Track source entity
-                entity_id, _ = ECSAddressParser.parse_address_flexible(value)
+                entity_id, _ = ECSAddressParser.parse_address(value)
                 root_ecs_id = EntityRegistry.ecs_id_to_root_id.get(entity_id)
                 if root_ecs_id:
                     # Get the live entity from the root
@@ -277,7 +277,7 @@ def create_composite_entity_with_pattern_detection_advanced(
         if field_info["type"] in ["entity_address", "field_address", "sub_entity_address"]:
             # Parse to get source entity ID
             if isinstance(value, str):
-                entity_id, _ = ECSAddressParser.parse_address_flexible(value)
+                entity_id, _ = ECSAddressParser.parse_address(value)
                 entity.attribute_source[field_name] = entity_id
             else:
                 entity.attribute_source[field_name] = None

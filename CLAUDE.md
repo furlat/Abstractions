@@ -452,3 +452,10 @@ detailed_diagram = generate_mermaid_diagram(graph, include_attributes=True)
 ```
 
 The diagram can be rendered in any Markdown viewer that supports Mermaid diagrams, including GitHub and many documentation tools.
+
+#current task July 2025
+we are using pydantic-ai to build an agent interface that can use the registry as tools. [written by user]
+in `\pydantic-ai-docs` we can find the full documentation, inside  the file \pydantic-ai-docs\llms-full.txt [more than 50k liunes can not read need to grep]
+in `pydantic-ai-docs\llm-index.txt` there is a index to help grepping the full docs. 
+
+we are workin in the examples folder `C:\Users\Tommaso\Documents\Dev\Abstractions\examples\pydantic-ai`
