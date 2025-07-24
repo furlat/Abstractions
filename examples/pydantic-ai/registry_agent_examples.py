@@ -258,7 +258,7 @@ def create_test_data() -> Tuple[List[Customer], List[Product], List[Order]]:
 @on(EntityPromotionEvent)
 async def handle_entity_promotion(event: EntityPromotionEvent):
     """Handle entity promotion events."""
-    print(f"Entity promoted: {event.subject_id} to root")
+    print(f"Entity promoted: {event.subject_id} to root of type {event.entity_type}")
     # Additional logic can be added here if needed
 
 if __name__ == "__main__":
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     # results = registry_agent.run_sync("What entities are in thesystem?")
     # print(f"Available entities: {results.output}")
 
-    results = registry_agent.run_sync(f"can you process an orders  placement with the available entities you cna choose which entities to use by yourself? First request from teh registry the available entities then choose any valid combination and process the order placement")
+    results = registry_agent.run_sync(f"can you process an orders  placement with the available entities you cna choose which entities to use by yourself? First request from teh registry the available entities then choose any valid combination and process the order placement remember to refer to all the attributes when you call the function - if you fail you can try again following the debug info")
     print(f"processed order: {results.output}")
 
-    print(f"all messages: {results.all_messages()}")
+    # print(f"all messages: {results.all_messages()}")

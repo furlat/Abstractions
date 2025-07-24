@@ -332,7 +332,7 @@ class SystemShutdownEvent(SystemEvent):
 @dataclass
 class Subscription:
     """Represents a single event subscription."""
-    handler: Callable
+    handler: Optional[Callable]
     event_types: Set[Type[Event]] = field(default_factory=set)
     pattern: Optional[Pattern] = None
     predicate: Optional[Callable[[Event], bool]] = None
@@ -344,20 +344,24 @@ class Subscription:
     method_name: Optional[str] = field(init=False, default=None)
     
     def __post_init__(self):
-        self.is_async = inspect.iscoroutinefunction(self.handler)
-        if self.is_weak:
-            # For bound methods, create weak reference to the object, not the method
-            if hasattr(self.handler, '__self__'):
-                # This is a bound method - weak ref the object and store method name
-                self.handler_ref = weakref.ref(self.handler.__self__)
-                self.method_name = self.handler.__name__
-                # Clear the handler reference to break the strong reference cycle
-                self.handler = None
-            else:
-                # This is a function or other callable
-                self.handler_ref = weakref.ref(self.handler)
-                # Clear the handler reference to break the strong reference cycle
-                self.handler = None
+        if self.handler is not None:
+            self.is_async = inspect.iscoroutinefunction(self.handler)
+            if self.is_weak:
+                # For bound methods, create weak reference to the object, not the method
+                if hasattr(self.handler, '__self__') and hasattr(self.handler, '__name__'):
+                    # This is a bound method - weak ref the object and store method name
+                    bound_method = self.handler  # Type narrowing for type checker
+                    self.handler_ref = weakref.ref(bound_method.__self__)  # type: ignore
+                    self.method_name = bound_method.__name__
+                    # Clear the handler reference to break the strong reference cycle
+                    self.handler = None
+                else:
+                    # This is a function or other callable
+                    self.handler_ref = weakref.ref(self.handler)
+                    # Clear the handler reference to break the strong reference cycle
+                    self.handler = None
+        else:
+            self.is_async = False
     
     def get_handler(self) -> Optional[Callable]:
         """Get handler, handling weak references."""
@@ -558,6 +562,29 @@ class EventBus:
         """
         # Add to queue for processing
         await self._event_queue.put(event)
+        return event
+    
+    def emit_sync(self, event: Event) -> Event:
+        """
+        Emit an event synchronously from sync context.
+        
+        This handles both sync and async contexts appropriately:
+        - In pure sync context: Creates new event loop and processes immediately
+        - In async context: Schedules as background task
+        """
+        # Create a temporary async context to run the internal emission
+        async def _emit_and_process():
+            await self._emit_internal(event)
+        
+        try:
+            # Check if we're already in an async context
+            loop = asyncio.get_running_loop()
+            # We're in an async context - schedule as background task
+            loop.create_task(_emit_and_process())
+        except RuntimeError:
+            # No event loop running - create one and process immediately
+            asyncio.run(_emit_and_process())
+        
         return event
     
     async def _emit_internal(self, event: Event) -> None:
@@ -1128,11 +1155,7 @@ def emit_events(
                     push_event_context(start_event)
                     
                     # Emit the start event
-                    try:
-                        asyncio.create_task(bus.emit(start_event))
-                    except RuntimeError:
-                        # No event loop running, skip event
-                        pass
+                    bus.emit_sync(start_event)
                     
                     lineage_id = start_event.lineage_id
                 else:
@@ -1165,11 +1188,7 @@ def emit_events(
                             end_event.duration_ms = (time.time() - start_time) * 1000
                         
                         # Emit completion event
-                        try:
-                            asyncio.create_task(bus.emit(end_event))
-                        except RuntimeError:
-                            # No event loop running, skip event
-                            pass
+                        bus.emit_sync(end_event)
                     
                     return result
                     
@@ -1197,10 +1216,7 @@ def emit_events(
                             error_event.duration_ms = (time.time() - start_time) * 1000
                         
                         # Emit error event
-                        try:
-                            asyncio.create_task(bus.emit(error_event))
-                        except RuntimeError:
-                            pass
+                        bus.emit_sync(error_event)
                     raise
                 
                 finally:

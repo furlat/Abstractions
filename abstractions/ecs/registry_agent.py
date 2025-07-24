@@ -12,7 +12,7 @@ Entity Framework using pydantic-ai agents. Features include:
 The integration is entirely external to the abstractions package.
 """
 
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Union
 from uuid import UUID
 from pydantic import BaseModel, Field
 
@@ -83,6 +83,16 @@ class LineageInfo(BaseModel):
 class LineageList(BaseModel):
     total_lineages: int
     lineages: Dict[str, LineageInfo]
+
+
+# Error handling for tools
+class ToolError(BaseModel):
+    """Structured error response for tools."""
+    success: bool = False
+    error_type: str
+    error_message: str
+    suggestions: List[str] = Field(default_factory=list)
+    debug_info: Optional[Dict[str, Any]] = None
 
 
 # Agent response model
@@ -384,11 +394,19 @@ def list_functions() -> FunctionList:
 
 
 @registry_toolset.tool
-def get_function_signature(function_name: str) -> FunctionInfo:
+def get_function_signature(function_name: str) -> Union[FunctionInfo, ToolError]:
     """Get detailed function signature and type information."""
     info = CallableRegistry.get_function_info(function_name)
     if not info:
-        raise ValueError(f"Function '{function_name}' not found")
+        return ToolError(
+            error_type="function_not_found",
+            error_message=f"Function '{function_name}' not found",
+            suggestions=[
+                "Use list_functions() to see all available functions",
+                "Check the function name spelling",
+                "Ensure the function has been registered"
+            ]
+        )
     
     return FunctionInfo(
         name=info['name'],
@@ -427,13 +445,32 @@ def get_all_lineages() -> LineageList:
 
 
 @registry_toolset.tool
-def get_lineage_history(lineage_id: str) -> LineageInfo:
+def get_lineage_history(lineage_id: str) -> Union[LineageInfo, ToolError]:
     """Get complete version history for a specific lineage."""
-    lineage_uuid = UUID(lineage_id)
+    try:
+        lineage_uuid = UUID(lineage_id)
+    except ValueError:
+        return ToolError(
+            error_type="invalid_uuid",
+            error_message=f"Invalid UUID format: {lineage_id}",
+            suggestions=[
+                "Ensure the lineage_id is a valid UUID",
+                "Use get_all_lineages() to see available lineage IDs"
+            ]
+        )
+    
     root_ids = EntityRegistry.lineage_registry.get(lineage_uuid, [])
     
     if not root_ids:
-        raise ValueError(f"Lineage {lineage_id} not found")
+        return ToolError(
+            error_type="lineage_not_found",
+            error_message=f"Lineage {lineage_id} not found",
+            suggestions=[
+                "Use get_all_lineages() to see available lineages",
+                "Check the lineage_id spelling and format",
+                "Ensure entities have been created and registered"
+            ]
+        )
     
     latest_root_id = root_ids[-1]
     tree = EntityRegistry.get_stored_tree(latest_root_id)
@@ -448,18 +485,66 @@ def get_lineage_history(lineage_id: str) -> LineageInfo:
             version_history=[str(rid) for rid in root_ids]
         )
     else:
-        raise ValueError(f"Unable to retrieve entity data for lineage {lineage_id}")
+        return ToolError(
+            error_type="entity_data_unavailable",
+            error_message=f"Unable to retrieve entity data for lineage {lineage_id}",
+            suggestions=[
+                "The lineage exists but entity data is corrupted or missing",
+                "Try using get_all_lineages() to see overall status",
+                "Contact system administrator if this persists"
+            ],
+            debug_info={
+                "latest_root_id": str(latest_root_id),
+                "tree_available": tree is not None,
+                "nodes_count": len(tree.nodes) if tree else 0
+            }
+        )
 
 
 @registry_toolset.tool
-def get_entity(root_ecs_id: str, ecs_id: str) -> EntityInfo:
+def get_entity(root_ecs_id: str, ecs_id: str) -> Union[EntityInfo, ToolError]:
     """Retrieve specific entity with complete details."""
-    root_uuid = UUID(root_ecs_id)
-    entity_uuid = UUID(ecs_id)
+    try:
+        root_uuid = UUID(root_ecs_id)
+    except ValueError:
+        return ToolError(
+            error_type="invalid_root_uuid",
+            error_message=f"Invalid root UUID format: {root_ecs_id}",
+            suggestions=[
+                "Ensure the root_ecs_id is a valid UUID",
+                "Use get_all_lineages() to see available root entity IDs"
+            ]
+        )
+    
+    try:
+        entity_uuid = UUID(ecs_id)
+    except ValueError:
+        return ToolError(
+            error_type="invalid_entity_uuid",
+            error_message=f"Invalid entity UUID format: {ecs_id}",
+            suggestions=[
+                "Ensure the ecs_id is a valid UUID",
+                "Check the entity ID spelling and format"
+            ]
+        )
     
     entity = EntityRegistry.get_stored_entity(root_uuid, entity_uuid)
     if not entity:
-        raise ValueError(f"Entity {ecs_id} not found in root {root_ecs_id}")
+        return ToolError(
+            error_type="entity_not_found",
+            error_message=f"Entity {ecs_id} not found in root {root_ecs_id}",
+            suggestions=[
+                "Verify both UUIDs are correct",
+                "Use get_all_lineages() to find available entities",
+                "Check if the entity exists in a different root tree",
+                "Ensure the entity has been registered"
+            ],
+            debug_info={
+                "root_ecs_id": root_ecs_id,
+                "entity_ecs_id": ecs_id,
+                "root_exists": EntityRegistry.get_stored_tree(root_uuid) is not None
+            }
+        )
     
     # Get entity tree for relationship context
     tree = EntityRegistry.get_stored_tree(root_uuid)
@@ -473,9 +558,9 @@ def get_entity(root_ecs_id: str, ecs_id: str) -> EntityInfo:
         is_root=entity.is_root_entity(),
         ancestry_path=[str(uid) for uid in ancestry_path],
         attributes={
-            k: str(v) for k, v in entity.__dict__.items() 
+            k: str(v) for k, v in entity.__dict__.items()
             if not k.startswith('_') and k not in [
-                'ecs_id', 'live_id', 'root_ecs_id', 'root_live_id', 
+                'ecs_id', 'live_id', 'root_ecs_id', 'root_live_id',
                 'lineage_id', 'created_at', 'forked_at'
             ]
         }
