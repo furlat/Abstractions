@@ -1371,7 +1371,7 @@ class EntityRegistry():
         """ Get the entity for a given root_ecs_id and ecs_id """
         tree = cls.get_stored_tree(root_ecs_id)
         if tree is None:
-            raise ValueError("tree not registered")
+            return None
         entity = tree.get_entity(ecs_id)
         if entity is None:
             return None

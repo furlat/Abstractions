@@ -13,3 +13,4 @@ abstractions/text/chat/conversation_graph
 *.parquet
 /.venv
 /.venv_wsl
+.env
