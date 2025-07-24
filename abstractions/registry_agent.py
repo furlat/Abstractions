@@ -148,58 +148,6 @@ class BaseGoal(BaseModel):
         return self
 
 
-# Simple result entity types with comprehensive docstrings
-class OrderProcessingResult(Entity):
-    """
-    Result entity for order processing operations.
-    
-    This entity captures the outcome of order fulfillment processes including
-    order confirmation, customer updates, and inventory changes.
-    
-    Fields:
-    - order_id: The unique identifier of the processed order
-    - order_status: Current status after processing (confirmed, shipped, etc.)
-    - customer_updates: Dictionary of customer fields that were modified
-    - product_updates: Dictionary of product/inventory fields that were modified
-    """
-    order_id: str
-    order_status: str
-    customer_updates: Dict[str, Any]
-    product_updates: Dict[str, Any]
-
-
-class EntityRetrievalResult(Entity):
-    """
-    Result entity for entity search and retrieval operations.
-    
-    This entity captures the outcome of searching for entities in the registry
-    based on various criteria like type, attributes, or relationships.
-    
-    Fields:
-    - entities_found: List of ECS IDs for entities that matched the search criteria
-    - total_count: Total number of entities found during the search operation
-    """
-    entities_found: List[str]  # ECS IDs
-    total_count: int
-
-
-class FunctionExecutionResult(Entity):
-    """
-    Result entity for function execution operations.
-    
-    This entity captures the outcome of executing registered functions including
-    success status, function identification, and the returned data.
-    
-    Fields:
-    - function_name: Name of the function that was executed
-    - success: Boolean indicating if the function executed successfully
-    - result_data: The actual data/results returned by the function execution
-    """
-    function_name: str
-    success: bool
-    result_data: Dict[str, Any]
-
-
 @dataclass
 class SystemPromptComponents:
     """Modular components for building agent system prompts."""
@@ -310,22 +258,19 @@ You MUST provide either typed_result_ecs_address, typed_result, or error.
 class GoalFactory:
     """Create Goal subclasses with proper typed result fields using create_model."""
     
-    _registry = {
-        "order_processing": OrderProcessingResult,
-        "entity_retrieval": EntityRetrievalResult,
-        "function_execution": FunctionExecutionResult,
-    }
-    
     @classmethod
-    def create_goal_class(cls, goal_type: str):
-        """Create Goal subclass with properly typed result field."""
+    def create_goal_class(cls, result_entity_class: type[Entity]):
+        """Create Goal subclass with properly typed result field from entity class."""
         
-        result_class = cls._registry.get(goal_type)
-        if not result_class:
-            raise ValueError(f"Unknown goal type: {goal_type}")
+        # Validate input
+        if not (isinstance(result_entity_class, type) and issubclass(result_entity_class, Entity)):
+            raise ValueError(f"result_entity_class must be an Entity subclass, got {result_entity_class}")
         
-        # Use create_model with proper field definition tuple
-        dynamic_class_name = f"{goal_type.title().replace('_', '')}Goal"
+        # Derive goal type from class name
+        goal_type = cls._derive_goal_type_from_class(result_entity_class)
+        
+        # Create dynamic goal class name
+        dynamic_class_name = f"{result_entity_class.__name__.replace('Result', '')}Goal"
         
         # Create the dynamic goal class using create_model
         DynamicGoal = create_model(
@@ -333,26 +278,37 @@ class GoalFactory:
             __base__=BaseGoal,
             __module__=__name__,
             # This is the key - typed_result field with proper type
-            typed_result=(Optional[result_class], None),
+            typed_result=(Optional[result_entity_class], None),
         )
         
         return DynamicGoal
     
     @classmethod
-    def get_available_goal_types(cls) -> List[str]:
-        """Get available goal types."""
-        return list(cls._registry.keys())
+    def _derive_goal_type_from_class(cls, result_entity_class: type[Entity]) -> str:
+        """Derive goal type string from result entity class name."""
+        import re
+        
+        class_name = result_entity_class.__name__
+        
+        # Remove 'Result' suffix if present
+        if class_name.endswith('Result'):
+            class_name = class_name[:-6]  # Remove 'Result'
+        
+        # Convert CamelCase to snake_case
+        goal_type = re.sub('([A-Z]+)', r'_\1', class_name).lower().lstrip('_')
+        
+        return goal_type
 
 
 class TypedAgentFactory:
     """Create agents with specific goal types."""
     
     @classmethod
-    def create_agent(cls, goal_type: str):
-        """Create agent for specific goal type."""
+    def create_agent(cls, result_entity_class: type[Entity]):
+        """Create agent for specific result entity class."""
         
-        goal_class = GoalFactory.create_goal_class(goal_type)
-        result_entity_class = GoalFactory._registry[goal_type]
+        goal_class = GoalFactory.create_goal_class(result_entity_class)
+        goal_type = GoalFactory._derive_goal_type_from_class(result_entity_class)
         
         system_prompt = build_goal_system_prompt(goal_type, result_entity_class)
         
