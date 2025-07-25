@@ -805,12 +805,18 @@ The framework is architected to support distributed deployment patterns:
 The framework includes comprehensive examples demonstrating real-world usage patterns:
 
 - **[01_basic_entity_transformation.py](examples/readme_examples/01_basic_entity_transformation.py)** - Core entity operations and transformations
-- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries  
+- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries
 - **[03_multi_entity_transformations.py](examples/readme_examples/03_multi_entity_transformations.py)** - Tuple unpacking and sibling relationships
 - **[04_distributed_grade_processing.py](examples/readme_examples/04_distributed_grade_processing.py)** - Complex multi-stage data pipelines
 - **[05_async_patterns.py](examples/readme_examples/05_async_patterns.py)** - Async and concurrent execution without interference
 - **[06_event_system_working.py](examples/readme_examples/06_event_system_working.py)** - Event-driven observation and coordination
 - **[07_reactive_cascades.py](examples/readme_examples/07_reactive_cascades.py)** - Multi-step reactive cascades with emergent behavior
+
+**Pydantic-AI Integration Examples:**
+
+- **[single_step_function.py](examples/pydantic-ai/single_step_function.py)** - Natural language interface for single function execution with entity addressing
+- **[multi_step_workflow.py](examples/pydantic-ai/multi_step_workflow.py)** - Complex multi-step workflows coordinated through natural language instructions
+- **[multi_path_bias_experiment.py](examples/pydantic-ai/multi_path_bias_experiment.py)** - Union types and few-shot learning for path selection in large state spaces
 
 Each example includes comprehensive test suites validating the documented behavior and can be run directly to see the framework in action.
 
