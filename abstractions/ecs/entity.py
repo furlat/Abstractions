@@ -1753,9 +1753,15 @@ class Entity(BaseModel):
         """
         Promote the entity to the root of its tree
         """
-        self.root_ecs_id = self.ecs_id
-        self.root_live_id = self.live_id
-        self.update_ecs_ids()
+        if self.root_ecs_id is None or self.root_live_id is None:
+            # Case 2: Entity is not attached to anything, promote to root
+            self.root_ecs_id = self.ecs_id
+            self.root_live_id = self.live_id
+        
+        elif self.root_ecs_id != self.ecs_id and self.root_live_id != self.live_id:
+            self.root_ecs_id = self.ecs_id
+            self.root_live_id = self.live_id
+            self.update_ecs_ids()
         EntityRegistry.register_entity(self)
     
     @emit_events(
