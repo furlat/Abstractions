@@ -515,6 +515,245 @@ for student in students:
 
 This pattern creates emergent behavior where the system automatically organizes work into batches and aggregates results without central coordination. Each step only knows about its immediate inputs and outputs, but the event system coordinates the overall flow.
 
+
+### Pydantic-AI Integration: Typed Goal-Driven Function Calling
+
+The framework includes a natural language interface through pydantic-ai agents that act as intelligent coordinators for the entity system. These agents understand registered functions and can execute complex workflows using natural language instructions while maintaining strict type safety.
+
+#### Registry Agent Architecture
+
+The registry agent is a specialized pydantic-ai agent that operates as a **state-space navigator**. It cannot create new data - it can only **forward propagate** through the registered function space to reach a desired goal state from the current state:
+
+```python
+from abstractions.registry_agent import TypedAgentFactory
+
+# The agent has access to these tools:
+# - execute_function(function_name, **kwargs) - Execute registered functions
+# - list_functions() - Discover available functions  
+# - get_all_lineages() - Explore entity relationships
+# - get_entity() - Inspect specific entities
+
+# Create an agent that produces FunctionExecutionResult entities
+class FunctionExecutionResult(Entity):
+    function_name: str
+    success: bool
+    result_data: Dict[str, Any]
+
+agent = TypedAgentFactory.create_agent(FunctionExecutionResult)
+```
+
+The agent operates within strict constraints:
+- **Cannot create entities directly** - must use registered functions
+- **Cannot modify entities in place** - follows immutability rules
+- **Can only reference existing entities** via string addressing (`@uuid.field`)
+- **Must produce typed results** that match the specified goal type
+
+#### Goal Objects and State Navigation
+
+Goal objects define both the **target state** and **validation rules** for agent execution. They encapsulate:
+
+```python
+class BaseGoal(BaseModel):
+    goal_type: str                    # Type of goal being pursued
+    goal_completed: bool = False      # Whether target state reached
+    summary: str                      # Natural language summary
+    
+    # The agent sets this to reference the result entity
+    typed_result_ecs_address: Optional[str] = None
+    
+    # Automatically loaded from the address
+    typed_result: Optional[Entity] = None
+    
+    # Or populated if goal fails
+    error: Optional[GoalError] = None
+```
+
+The agent must reach one of three terminal states:
+1. **Success with ECS address** - Point to result entity via `typed_result_ecs_address`
+2. **Success with direct entity** - Set `typed_result` directly
+3. **Failure** - Populate `error` with structured failure information
+
+#### Single Function Execution
+
+Simple function execution with entity addressing:
+
+```python
+class DateRangeConfig(ConfigEntity):
+    start_date: str
+    end_date: str
+
+@CallableRegistry.register("calculate_revenue_metrics")
+async def calculate_revenue_metrics(start_date: str, end_date: str) -> FunctionExecutionResult:
+    return FunctionExecutionResult(
+        function_name="calculate_revenue_metrics",
+        success=True,
+        result_data={"total_revenue": 15750.50, "orders": 123}
+    )
+
+# Usage
+date_config = DateRangeConfig(start_date="2024-10-01", end_date="2024-12-31")
+date_config.promote_to_root()
+
+agent = TypedAgentFactory.create_agent(FunctionExecutionResult)
+result = await agent.run(f"""
+Calculate Q4 2024 revenue metrics using:
+start_date=@{date_config.ecs_id}.start_date
+end_date=@{date_config.ecs_id}.end_date
+""")
+
+# Agent navigates: current state → execute function → goal state
+print(f"Revenue: ${result.output.typed_result.result_data['total_revenue']}")
+```
+
+The agent automatically:
+- Parses string addresses to extract entity field values
+- Validates parameter types before function execution  
+- Creates properly typed goal objects with results
+
+#### Multi-Step Workflow Coordination
+
+Complex workflows with interdependent function calls:
+
+```python
+class UserCredentials(Entity):
+    user_id: str
+    role: str
+    session_token: str
+
+class DataTransformConfig(Entity):
+    source_format: str
+    target_format: str
+    batch_size: int
+
+@CallableRegistry.register("validate_user_credentials")
+async def validate_user_credentials(credentials: UserCredentials) -> AuthValidationResult:
+    return AuthValidationResult(
+        user_id=credentials.user_id,
+        is_authenticated=len(credentials.session_token) > 10,
+        is_authorized=credentials.role in ["admin", "manager"]
+    )
+
+@CallableRegistry.register("transform_data_batch")
+async def transform_data_batch(config: DataTransformConfig) -> DataProcessingResult:
+    return DataProcessingResult(
+        process_id=f"BATCH_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        records_processed=config.batch_size,
+        transformation_applied=f"{config.source_format}_to_{config.target_format}"
+    )
+
+# Multi-step execution
+user_creds = UserCredentials(user_id="USR_12345", role="manager", session_token="VALID_SESSION")
+data_config = DataTransformConfig(source_format="csv", target_format="json", batch_size=500)
+
+workflow_agent = TypedAgentFactory.create_agent(FunctionExecutionResult)
+result = await workflow_agent.run(f"""
+Execute data processing workflow:
+1. Validate credentials using @{user_creds.ecs_id}
+2. Transform data using @{data_config.ecs_id}
+3. Pass user_id from step 1 and process_id from step 2 to generate audit
+""")
+```
+
+The agent maintains execution context across steps, automatically threading results between function calls and managing complex parameter dependencies.
+
+#### Multi-Objective Goals (Union Types)
+
+Agents can be configured with multiple valid goal states, succeeding when any of the specified result types is achieved:
+
+```python
+class DataProcessingResult(Entity):
+    """Technical processing metrics."""
+    process_id: str
+    processing_duration_ms: float
+    database_queries_executed: int
+    performance_metrics: Dict[str, Any]
+
+class WorkflowSummaryResult(Entity):
+    """Business workflow summary."""
+    workflow_id: str
+    order_status: str
+    total_order_value: float
+    business_impact: str
+
+# Agent can succeed with either result type
+multi_objective_agent = TypedAgentFactory.create_agent([DataProcessingResult, WorkflowSummaryResult])
+
+# Agent chooses the most appropriate path given the available functions and context
+result = await multi_objective_agent.run("Process the order data")
+# May return either DataProcessingResult OR WorkflowSummaryResult depending on execution path
+```
+
+This enables **multi-objective optimization** where the agent can reach the goal state through different valid terminal states, choosing the most appropriate based on available functions and execution context.
+
+#### Few-Shot Learning for Path Selection
+
+When the state space is very large, few-shot learning through prompt examples helps guide agent navigation:
+
+```python
+# Technical bias examples (debugging technique for large state spaces)
+technical_examples = """
+Example: execute_function("process_order_inventory", order="@uuid", config="@uuid2")
+Example: execute_function("calculate_shipping_details", order="@uuid", config="@uuid3")
+"""
+
+# Business bias examples (alternative path selection)
+business_examples = """
+Example: execute_function("finalize_order_workflow", order="@uuid")
+Example: execute_function("send_customer_notification", order="@uuid", status="confirmed")
+"""
+
+# Same multi-objective agent, different path selection priors
+technical_agent = TypedAgentFactory.create_agent(
+    [DataProcessingResult, WorkflowSummaryResult],
+    custom_examples=technical_examples  # Guides toward technical functions
+)
+
+business_agent = TypedAgentFactory.create_agent(
+    [DataProcessingResult, WorkflowSummaryResult],
+    custom_examples=business_examples   # Guides toward business functions
+)
+```
+
+The examples act as **function selection priors** - not features, but prompt engineering techniques to help agents navigate large function registries more effectively.
+
+#### Model Selection and Advanced Features
+
+Agents support different language models and enhanced error handling:
+
+```python
+# Model selection for different capabilities
+fast_agent = TypedAgentFactory.create_agent(
+    FunctionExecutionResult,
+    model='anthropic:claude-3-5-haiku-20241022'  # Fast for simple tasks
+)
+
+reasoning_agent = TypedAgentFactory.create_agent(
+    [DataProcessingResult, WorkflowSummaryResult],
+    model='anthropic:claude-sonnet-4-20250514'  # Complex reasoning
+)
+
+# Enhanced address validation with debugging context
+result = await agent.run("Process @invalid-uuid.bad-field")
+# Returns structured error with:
+# - Step-by-step validation process  
+# - Suggestions for address syntax fixes
+# - Available entity fields and similar UUIDs
+# - Complete debugging context
+```
+
+#### Theoretical Foundation
+
+The registry agent implements a **constrained state-space search** where:
+
+- **Current State**: Set of entities that can be currently referenced by string addresses
+- **Goal State**: Typed result entity matching the specified goal type, it can include further "semantic" validation, similar to liquid types using arbitrary fields and model validators.
+- **Actions**: Registered functions that transform and create entities
+- **Constraints**: Type safety, immutability, address validation
+
+The agent navigates this space using natural language understanding to select appropriate functions and parameter bindings, but cannot violate the fundamental constraints of the entity system. This creates an intelligent interface that maintains all the guarantees of functional purity while enabling complex reasoning about data transformations.
+
+This approach transforms the entity framework into a goal-oriented programming system where natural language descriptions of desired outcomes are automatically translated into sequences of registered function calls with proper entity addressing and type-safe result validation.
+
 ## Core concepts for distributed data processing
 
 ### Entity as distributed data unit
@@ -566,12 +805,18 @@ The framework is architected to support distributed deployment patterns:
 The framework includes comprehensive examples demonstrating real-world usage patterns:
 
 - **[01_basic_entity_transformation.py](examples/readme_examples/01_basic_entity_transformation.py)** - Core entity operations and transformations
-- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries  
+- **[02_distributed_addressing.py](examples/readme_examples/02_distributed_addressing.py)** - String-based entity addressing across system boundaries
 - **[03_multi_entity_transformations.py](examples/readme_examples/03_multi_entity_transformations.py)** - Tuple unpacking and sibling relationships
 - **[04_distributed_grade_processing.py](examples/readme_examples/04_distributed_grade_processing.py)** - Complex multi-stage data pipelines
 - **[05_async_patterns.py](examples/readme_examples/05_async_patterns.py)** - Async and concurrent execution without interference
 - **[06_event_system_working.py](examples/readme_examples/06_event_system_working.py)** - Event-driven observation and coordination
 - **[07_reactive_cascades.py](examples/readme_examples/07_reactive_cascades.py)** - Multi-step reactive cascades with emergent behavior
+
+**Pydantic-AI Integration Examples:**
+
+- **[single_step_function.py](examples/pydantic-ai/single_step_function.py)** - Natural language interface for single function execution with entity addressing
+- **[multi_step_workflow.py](examples/pydantic-ai/multi_step_workflow.py)** - Complex multi-step workflows coordinated through natural language instructions
+- **[multi_path_bias_experiment.py](examples/pydantic-ai/multi_path_bias_experiment.py)** - Union types and few-shot learning for path selection in large state spaces
 
 Each example includes comprehensive test suites validating the documented behavior and can be run directly to see the framework in action.
 
