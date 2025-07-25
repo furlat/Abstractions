@@ -5,15 +5,33 @@ Focus on the problematic date range function execution example.
 """
 
 import asyncio
-from typing import Dict
+from typing import Dict, Any
 from datetime import datetime, timezone
 from pydantic import Field
 
 from abstractions.registry_agent import (
-    TypedAgentFactory, GoalFactory, FunctionExecutionResult
+    TypedAgentFactory, GoalFactory
 )
 from abstractions.ecs.entity import Entity, ConfigEntity
 from abstractions.ecs.callable_registry import CallableRegistry
+
+
+# Result entity for function execution operations
+class FunctionExecutionResult(Entity):
+    """
+    Result entity for function execution operations.
+    
+    This entity captures the outcome of executing registered functions including
+    success status, function identification, and the returned data.
+    
+    Fields:
+    - function_name: Name of the function that was executed
+    - success: Boolean indicating if the function executed successfully
+    - result_data: The actual data/results returned by the function execution
+    """
+    function_name: str
+    success: bool
+    result_data: Dict[str, Any]
 
 # Simple config entity for date ranges
 class DateRangeConfig(ConfigEntity):
@@ -53,7 +71,7 @@ async def test_function_execution_goal():
     date_config.promote_to_root()
     
     # Create a function execution agent
-    execution_agent = TypedAgentFactory.create_agent("function_execution")
+    execution_agent = TypedAgentFactory.create_agent(FunctionExecutionResult)
     
     # Test agent with date range from config entity
     request = f"""
@@ -94,12 +112,7 @@ async def main():
     print("🚀 Debug Function Execution Test")
     print("=" * 50)
     
-    # Show available goal types
-    available_types = GoalFactory.get_available_goal_types()
-    print(f"📋 Available goal types: {', '.join(available_types)}")
-    print()
-    
-    # Run the problematic test
+    # Run the test with the FunctionExecutionResult class
     await test_function_execution_goal()
 
 if __name__ == "__main__":
