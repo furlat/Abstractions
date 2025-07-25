@@ -12,7 +12,7 @@ Entity Framework using pydantic-ai agents. Features include:
 The integration is entirely external to the abstractions package.
 """
 
-from typing import Any, Dict, Optional, Tuple, List, Union
+from typing import Any, Dict, Optional, Tuple, List, Union, Literal
 from uuid import UUID
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, create_model, model_validator
@@ -36,6 +36,18 @@ from abstractions.events.events import (
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# Type definitions for union types and model selection
+ResultEntityInput = Union[type[Entity], List[type[Entity]]]
+
+# Model type for better type safety (RIP Claude 3 Haiku 🪦)
+ModelName = Literal[
+    'anthropic:claude-sonnet-4-20250514',
+    'anthropic:claude-3-5-sonnet-20241022',
+    'anthropic:claude-3-5-haiku-20241022',  # The successor to the beloved original
+    'openai:gpt-4o',
+    'openai:gpt-4o-mini'
+]
 
 # Pydantic models for tool responses
 class ExecutionResult(BaseModel):
@@ -223,11 +235,46 @@ KEY RULES:
 """
 
 
-def build_goal_system_prompt(goal_type: str, result_entity_class) -> str:
-    """Build complete system prompt for specific goal type."""
+def build_goal_system_prompt(
+    goal_type: str,
+    result_entity_classes: ResultEntityInput,
+    custom_examples: Optional[str] = None
+) -> str:
+    """Build system prompt supporting single or union result entity types."""
     
     components = SystemPromptComponents()
-    result_docstring = result_entity_class.__doc__ or f"Result entity for {goal_type} operations."
+    
+    # Normalize to list (NEW SWITCH CASE)
+    if isinstance(result_entity_classes, list):
+        class_list = result_entity_classes
+    else:
+        class_list = [result_entity_classes]
+    
+    # TARGET RESULT ENTITIES section (NEW SWITCH CASE)
+    if len(class_list) == 1:
+        # Single type (PRESERVES CURRENT BEHAVIOR)
+        result_class = class_list[0]
+        result_docstring = result_class.__doc__ or f"Result entity for {goal_type} operations."
+        target_section = f"""
+TARGET RESULT ENTITY:
+The result entity should be type {result_class.__name__}.
+
+{result_docstring}
+"""
+    else:
+        # Union types (NEW CASE)
+        target_section = "TARGET RESULT ENTITIES (choose the most appropriate):\n\n"
+        for i, result_class in enumerate(class_list, 1):
+            result_docstring = result_class.__doc__ or f"Result entity for operations."
+            target_section += f"""
+{i}. {result_class.__name__}:
+{result_docstring}
+
+"""
+        target_section += "Choose the result type that best fits the specific task requirements.\n"
+    
+    # Use custom examples if provided, otherwise use default examples (UNCHANGED)
+    examples_section = custom_examples if custom_examples else components.parameter_passing_examples
     
     prompt = f"""
 You are handling {goal_type} goals for the Abstractions Entity Framework.
@@ -236,14 +283,11 @@ You are handling {goal_type} goals for the Abstractions Entity Framework.
 
 {components.response_options}
 
-TARGET RESULT ENTITY:
-The result entity should be type {result_entity_class.__name__}.
-
-{result_docstring}
+{target_section}
 
 {components.available_capabilities}
 
-{components.parameter_passing_examples}
+{examples_section}
 
 {components.addressing_examples}
 
@@ -259,26 +303,48 @@ class GoalFactory:
     """Create Goal subclasses with proper typed result fields using create_model."""
     
     @classmethod
-    def create_goal_class(cls, result_entity_class: type[Entity]):
-        """Create Goal subclass with properly typed result field from entity class."""
+    def create_goal_class(cls, result_entity_classes: ResultEntityInput):
+        """Create Goal subclass supporting single or union result types."""
         
-        # Validate input
-        if not (isinstance(result_entity_class, type) and issubclass(result_entity_class, Entity)):
-            raise ValueError(f"result_entity_class must be an Entity subclass, got {result_entity_class}")
+        # Normalize input to list (NEW SWITCH CASE)
+        if isinstance(result_entity_classes, list):
+            # Union types case
+            class_list = result_entity_classes
+        else:
+            # Single type case (PRESERVES CURRENT BEHAVIOR)
+            class_list = [result_entity_classes]
         
-        # Derive goal type from class name
-        goal_type = cls._derive_goal_type_from_class(result_entity_class)
+        # Validate all are Entity subclasses
+        for result_class in class_list:
+            if not (isinstance(result_class, type) and issubclass(result_class, Entity)):
+                raise ValueError(f"All classes must be Entity subclasses, got {result_class}")
         
-        # Create dynamic goal class name
-        dynamic_class_name = f"{result_entity_class.__name__.replace('Result', '')}Goal"
+        # Goal type derivation (NEW SWITCH CASE)
+        if len(class_list) == 1:
+            # Single type (PRESERVES CURRENT BEHAVIOR)
+            goal_type = cls._derive_goal_type_from_class(class_list[0])
+            dynamic_class_name = f"{class_list[0].__name__.replace('Result', '')}Goal"
+        else:
+            # Union types (NEW CASE)
+            class_names = [cls._derive_goal_type_from_class(c) for c in class_list]
+            goal_type = "_or_".join(class_names)
+            dynamic_class_name = f"Multi{len(class_list)}PathGoal"
         
-        # Create the dynamic goal class using create_model
+        # Typed result field creation (NEW SWITCH CASE)
+        if len(class_list) == 1:
+            # Single type (PRESERVES CURRENT BEHAVIOR)
+            result_type_annotation = Optional[class_list[0]]
+        else:
+            # Union types (NEW CASE)
+            result_type_annotation = Optional[Union[tuple(class_list)]]
+        
+        # Create dynamic goal class (UNCHANGED)
         DynamicGoal = create_model(
             dynamic_class_name,
             __base__=BaseGoal,
             __module__=__name__,
             # This is the key - typed_result field with proper type
-            typed_result=(Optional[result_entity_class], None),
+            typed_result=(result_type_annotation, None),
         )
         
         return DynamicGoal
@@ -301,19 +367,42 @@ class GoalFactory:
 
 
 class TypedAgentFactory:
-    """Create agents with specific goal types."""
+    """Create agents with specific goal types and model selection."""
+    
+    DEFAULT_MODEL = 'anthropic:claude-sonnet-4-20250514'
     
     @classmethod
-    def create_agent(cls, result_entity_class: type[Entity]):
-        """Create agent for specific result entity class."""
+    def create_agent(
+        cls,
+        result_entity_classes: ResultEntityInput,
+        custom_examples: Optional[str] = None,
+        model: Optional[str] = None
+    ):
+        """Create agent supporting single/union result types with model selection."""
         
-        goal_class = GoalFactory.create_goal_class(result_entity_class)
-        goal_type = GoalFactory._derive_goal_type_from_class(result_entity_class)
+        # Use default model if none specified (NEW PARAMETER)
+        model_name = model or cls.DEFAULT_MODEL
         
-        system_prompt = build_goal_system_prompt(goal_type, result_entity_class)
+        # Create goal class (handles both single and union types)
+        goal_class = GoalFactory.create_goal_class(result_entity_classes)
         
+        # Derive goal type (NEW SWITCH CASE)
+        if isinstance(result_entity_classes, list):
+            if len(result_entity_classes) == 1:
+                goal_type = GoalFactory._derive_goal_type_from_class(result_entity_classes[0])
+            else:
+                class_names = [GoalFactory._derive_goal_type_from_class(c) for c in result_entity_classes]
+                goal_type = "_or_".join(class_names)
+        else:
+            # Single type case (PRESERVES CURRENT BEHAVIOR)
+            goal_type = GoalFactory._derive_goal_type_from_class(result_entity_classes)
+        
+        # Build system prompt (handles both single and union types)
+        system_prompt = build_goal_system_prompt(goal_type, result_entity_classes, custom_examples)
+        
+        # Create agent with specified model (NEW PARAMETER)
         agent = Agent(
-            'anthropic:claude-sonnet-4-20250514',
+            model_name,
             output_type=goal_class,
             toolsets=[registry_toolset],
             system_prompt=system_prompt
