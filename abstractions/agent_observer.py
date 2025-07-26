@@ -1,12 +1,3 @@
-"""
-All Agent Execution Patterns Test - Clean Generic Implementation
-
-This file demonstrates all 9 agent execution patterns with completely generic
-ASCII formatting that works for any function - no hardcoded entity searches.
-
-Based on the proven approach from event_tracking_test.py.
-"""
-
 import asyncio
 from typing import Any, Dict, Optional, List, Tuple
 from uuid import UUID
