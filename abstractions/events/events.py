@@ -421,6 +421,10 @@ class EventBus:
         # Event history (ring buffer)
         self._history: deque[Event] = deque(maxlen=history_size)
         
+        # Event indexing for fast lookups
+        self._events_by_id: Dict[UUID, Event] = {}
+        self._children_by_parent: Dict[UUID, List[Event]] = defaultdict(list)
+        
         # Parent-child tracking
         self._pending_parents: Dict[UUID, Event] = {}
         self._child_futures: Dict[UUID, List[asyncio.Future]] = defaultdict(list)
@@ -593,7 +597,14 @@ class EventBus:
         self._history.append(event)
         self._event_counts[event.type] += 1
         
-        # Track parent-child relationships
+        # Index event for fast lookups
+        self._events_by_id[event.id] = event
+        
+        # Index parent-child relationships
+        if event.parent_id:
+            self._children_by_parent[event.parent_id].append(event)
+        
+        # Track parent-child relationships for completion tracking
         if event.parent_id and event.parent_id in self._pending_parents:
             parent = self._pending_parents[event.parent_id]
             if event.id not in parent.children_ids:
@@ -859,6 +870,47 @@ class EventBus:
             events = events[-limit:]
         
         return events
+    
+    def get_event_by_id(self, event_id: UUID) -> Optional[Event]:
+        """
+        Get event by ID - O(1) lookup.
+        
+        Args:
+            event_id: UUID of the event to retrieve
+            
+        Returns:
+            Copy of event if found, None otherwise
+        """
+        event = self._events_by_id.get(event_id)
+        return event.model_copy(deep=True) if event else None
+    
+    def get_children(self, parent_id: UUID) -> List[Event]:
+        """
+        Get all child events for a given parent - O(1) lookup.
+        
+        Args:
+            parent_id: UUID of the parent event
+            
+        Returns:
+            List of child event copies (empty if no children)
+        """
+        children = self._children_by_parent.get(parent_id, [])
+        return [child.model_copy(deep=True) for child in children]
+    
+    def get_siblings(self, event_id: UUID) -> List[Event]:
+        """
+        Get all sibling events (events with the same parent).
+        
+        Args:
+            event_id: UUID of the event whose siblings to find
+            
+        Returns:
+            List of sibling event copies (including the event itself)
+        """
+        event = self._events_by_id.get(event_id)
+        if not event or not event.parent_id:
+            return [event.model_copy(deep=True)] if event else []
+        return self.get_children(event.parent_id)
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get event bus statistics."""

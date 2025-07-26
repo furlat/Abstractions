@@ -33,6 +33,10 @@ from abstractions.events.events import (
     Event, CreatedEvent, ProcessingEvent, ProcessedEvent,
     on, emit, get_event_bus
 )
+from abstractions.events.events import (
+    Event, EventPhase, emit_events, on, get_event_bus,
+    ProcessingEvent, ProcessedEvent
+)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -173,18 +177,14 @@ The Abstractions Entity Framework is a functional data processing system where:
 """
     
     response_options: str = """
-You have 3 options for responses:
+You have 2 options for responses:
 
 1. SUCCESS WITH ECS ADDRESS:
    - Set typed_result_ecs_address to point to result entity
    - Never set typed_result directly - it loads automatically
    - Set goal_completed=true
 
-2. SUCCESS WITH DIRECT ENTITY:
-   - Set typed_result directly to entity
-   - Set goal_completed=true
-
-3. FAILURE:
+2. FAILURE:
    - Set error with GoalError object
    - Set goal_completed=false
 """
@@ -192,9 +192,11 @@ You have 3 options for responses:
     available_capabilities: str = """
 Available capabilities:
 - execute_function(function_name, **kwargs) - Execute registered functions
-- list_functions() - Show available functions with metadata
-- get_all_lineages() - Show entity lineages
-- get_entity() - Get specific entity details
+- list_functions() - Show available functions with metadata (contains signatures)
+- get_function_signature(function_name) - Get detailed function signature and type information
+- get_all_lineages() - Show all entities by lineage.
+- get_lineage_history(lineage_id) - Get complete version history for a specific lineage
+- get_entity(root_ecs_id, ecs_id) - Get specific entity details
 """
     
     parameter_passing_examples: str = """
@@ -376,7 +378,8 @@ class TypedAgentFactory:
         cls,
         result_entity_classes: ResultEntityInput,
         custom_examples: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        output_retries: int = 2
     ):
         """Create agent supporting single/union result types with model selection."""
         
@@ -405,7 +408,8 @@ class TypedAgentFactory:
             model_name,
             output_type=goal_class,
             toolsets=[registry_toolset],
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            output_retries=output_retries
         )
         
         return agent
@@ -594,8 +598,207 @@ class AddressErrorHandler:
 # Create the toolset
 registry_toolset = FunctionToolset()
 
+class AgentFunctionCallStartEvent(ProcessingEvent):
+    """Event emitted when agent tool call begins."""
+    type: str = "agent.tool_call.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+    # Agent-specific data
+    function_name: str = Field(description="Function being called")
+    raw_parameters: Dict[str, Any] = Field(default_factory=dict, description="Raw tool parameters")
+    pattern_classification: Optional[str] = Field(default=None, description="Input pattern type")
+    parameter_count: int = Field(default=0, description="Number of parameters")
+
+
+class AgentFunctionCallCompletedEvent(ProcessedEvent):
+    """Event emitted when agent tool call completes successfully."""
+    type: str = "agent.tool_call.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    # Agent-specific data
+    function_name: str = Field(description="Function that was called")
+    result_type: str = Field(description="Type of result returned")
+    entity_id: Optional[str] = Field(default=None, description="ID of result entity (single entity)")
+    entity_type: Optional[str] = Field(default=None, description="Type of result entity")
+    entity_count: Optional[int] = Field(default=None, description="Number of entities returned")
+    entity_ids: List[str] = Field(default_factory=list, description="All entity IDs (multi-entity)")
+    success: bool = Field(default=True, description="Whether execution succeeded")
+
+
+class AgentFunctionCallFailedEvent(ProcessingEvent):
+    """Event emitted when agent tool call fails."""
+    type: str = "agent.tool_call.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    # Agent-specific data  
+    function_name: str = Field(description="Function that failed")
+    error_type: str = Field(description="Type of error")
+    failed_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters that caused failure")
+
+
+class AgentListFunctionsEvent(ProcessingEvent):
+    """Event emitted when agent lists available functions."""
+    type: str = "agent.list_functions.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+class AgentListFunctionsCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully lists functions."""
+    type: str = "agent.list_functions.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    # Agent-specific data
+    total_functions: int = Field(default=0, description="Total number of functions listed")
+    function_list: FunctionList = Field(description="List of available functions with metadata")
+
+
+class AgentListFunctionsFailedEvent(ProcessingEvent):
+    """Event emitted when agent fails to list functions."""
+    type: str = "agent.list_functions.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    error_type: str = Field(description="Type of error")
+
+
+class AgentGetFunctionSignatureEvent(ProcessingEvent):
+    """Event emitted when agent gets function signature."""
+    type: str = "agent.get_function_signature.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+    function_name: str = Field(description="Function name being queried")
+
+
+class AgentGetFunctionSignatureCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully gets function signature."""
+    type: str = "agent.get_function_signature.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    function_name: str = Field(description="Function name queried")
+    signature_found: bool = Field(description="Whether function signature was found")
+
+
+class AgentGetFunctionSignatureFailedEvent(ProcessingEvent):
+    """Event emitted when agent fails to get function signature."""
+    type: str = "agent.get_function_signature.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    function_name: str = Field(description="Function name that failed")
+    error_type: str = Field(description="Type of error")
+
+
+class AgentGetAllLineagesEvent(ProcessingEvent):
+    """Event emitted when agent gets all lineages."""
+    type: str = "agent.get_all_lineages.start"
+    phase: EventPhase = EventPhase.STARTED
+
+
+class AgentGetAllLineagesCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully gets all lineages."""
+    type: str = "agent.get_all_lineages.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    total_lineages: int = Field(description="Total number of lineages found")
+
+
+class AgentGetAllLineagesFailedEvent(ProcessingEvent):
+    """Event emitted when agent fails to get all lineages."""
+    type: str = "agent.get_all_lineages.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    error_type: str = Field(description="Type of error")
+
+
+class AgentGetLineageHistoryEvent(ProcessingEvent):
+    """Event emitted when agent gets lineage history."""
+    type: str = "agent.get_lineage_history.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+    target_lineage_id: str = Field(description="Lineage ID being queried")
+
+
+class AgentGetLineageHistoryCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully gets lineage history."""
+    type: str = "agent.get_lineage_history.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    target_lineage_id: str = Field(description="Lineage ID queried")
+    history_found: bool = Field(description="Whether lineage history was found")
+    total_versions: Optional[int] = Field(default=None, description="Number of versions in lineage")
+
+
+class AgentGetLineageHistoryFailedEvent(ProcessingEvent):
+    """Event emitted when agent fails to get lineage history."""
+    type: str = "agent.get_lineage_history.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    target_lineage_id: str = Field(description="Lineage ID that failed")
+    error_type: str = Field(description="Type of error")
+
+
+class AgentGetEntityEvent(ProcessingEvent):
+    """Event emitted when agent gets entity."""
+    type: str = "agent.get_entity.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+    root_ecs_id: str = Field(description="Root entity ID")
+    ecs_id: str = Field(description="Entity ID being queried")
+
+
+class AgentGetEntityCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully gets entity."""
+    type: str = "agent.get_entity.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    root_ecs_id: str = Field(description="Root entity ID")
+    ecs_id: str = Field(description="Entity ID queried")
+    entity_found: bool = Field(description="Whether entity was found")
+    entity_type: Optional[str] = Field(default=None, description="Type of entity found")
+
+
+class AgentGetEntityFailedEvent(ProcessingEvent):
+    """Event emitted when agent fails to get entity."""
+    type: str = "agent.get_entity.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    root_ecs_id: str = Field(description="Root entity ID that failed")
+    ecs_id: str = Field(description="Entity ID that failed")
+    error_type: str = Field(description="Type of error")
+
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda function_name, **kwargs: AgentFunctionCallStartEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        raw_parameters=kwargs,
+        parameter_count=len(kwargs)
+    ),
+    created_factory=lambda result, function_name, **kwargs: AgentFunctionCallCompletedEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        result_type=result.result_type if hasattr(result, 'result_type') else "unknown",
+        entity_id=result.entity_id if hasattr(result, 'entity_id') else None,
+        entity_type=result.entity_type if hasattr(result, 'entity_type') else None,
+        entity_count=result.entity_count if hasattr(result, 'entity_count') else None,
+        entity_ids=(
+            result.debug_info.get('entity_ids', [])
+            if hasattr(result, 'debug_info') and isinstance(result.debug_info, dict)
+            else []
+        ),
+        success=result.success if hasattr(result, 'success') else True,
+        output_ids=(
+            result.debug_info.get('entity_ids', [])
+            if hasattr(result, 'debug_info') and isinstance(result.debug_info, dict)
+            else []
+        )
+    ),
+    failed_factory=lambda error, function_name, **kwargs: AgentFunctionCallFailedEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        error_type=type(error).__name__,
+        failed_parameters=kwargs,
+        error=str(error)
+    )
+)
 async def execute_function(function_name: str, **kwargs) -> ExecutionResult:
     """
     Execute a registered function with enhanced address debugging.
@@ -672,6 +875,21 @@ async def execute_function(function_name: str, **kwargs) -> ExecutionResult:
 
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda: AgentListFunctionsEvent(
+        process_name="list_functions"
+    ),
+    created_factory=lambda result: AgentListFunctionsCompletedEvent(
+        process_name="list_functions",
+        total_functions=result.total_functions,
+        function_list=result
+    ),
+    failed_factory=lambda error: AgentListFunctionsFailedEvent(
+        process_name="list_functions",
+        error_type=type(error).__name__,
+        error=str(error)
+    )
+)
 def list_functions() -> FunctionList:
     """List all available functions with metadata."""
     functions = CallableRegistry.list_functions()
@@ -697,6 +915,23 @@ def list_functions() -> FunctionList:
 
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda function_name: AgentGetFunctionSignatureEvent(
+        process_name="get_function_signature",
+        function_name=function_name
+    ),
+    created_factory=lambda result, function_name: AgentGetFunctionSignatureCompletedEvent(
+        process_name="get_function_signature",
+        function_name=function_name,
+        signature_found=not isinstance(result, ToolError)
+    ),
+    failed_factory=lambda error, function_name: AgentGetFunctionSignatureFailedEvent(
+        process_name="get_function_signature",
+        function_name=function_name,
+        error_type=type(error).__name__,
+        error=str(error)
+    )
+)
 def get_function_signature(function_name: str) -> Union[FunctionInfo, ToolError]:
     """Get detailed function signature and type information."""
     info = CallableRegistry.get_function_info(function_name)
@@ -722,6 +957,20 @@ def get_function_signature(function_name: str) -> Union[FunctionInfo, ToolError]
 
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda: AgentGetAllLineagesEvent(
+        process_name="get_all_lineages"
+    ),
+    created_factory=lambda result: AgentGetAllLineagesCompletedEvent(
+        process_name="get_all_lineages",
+        total_lineages=result.total_lineages
+    ),
+    failed_factory=lambda error: AgentGetAllLineagesFailedEvent(
+        process_name="get_all_lineages",
+        error_type=type(error).__name__,
+        error=str(error)
+    )
+)
 def get_all_lineages() -> LineageList:
     """Show all entity lineages with version history."""
     lineages = {}
@@ -748,6 +997,24 @@ def get_all_lineages() -> LineageList:
 
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda lineage_id: AgentGetLineageHistoryEvent(
+        process_name="get_lineage_history",
+        target_lineage_id=lineage_id
+    ),
+    created_factory=lambda result, lineage_id: AgentGetLineageHistoryCompletedEvent(
+        process_name="get_lineage_history",
+        target_lineage_id=lineage_id,
+        history_found=not isinstance(result, ToolError),
+        total_versions=result.total_versions if isinstance(result, LineageInfo) else None
+    ),
+    failed_factory=lambda error, lineage_id: AgentGetLineageHistoryFailedEvent(
+        process_name="get_lineage_history",
+        target_lineage_id=lineage_id,
+        error_type=type(error).__name__,
+        error=str(error)
+    )
+)
 def get_lineage_history(lineage_id: str) -> Union[LineageInfo, ToolError]:
     """Get complete version history for a specific lineage."""
     try:
@@ -805,6 +1072,27 @@ def get_lineage_history(lineage_id: str) -> Union[LineageInfo, ToolError]:
 
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda root_ecs_id, ecs_id: AgentGetEntityEvent(
+        process_name="get_entity",
+        root_ecs_id=root_ecs_id,
+        ecs_id=ecs_id
+    ),
+    created_factory=lambda result, root_ecs_id, ecs_id: AgentGetEntityCompletedEvent(
+        process_name="get_entity",
+        root_ecs_id=root_ecs_id,
+        ecs_id=ecs_id,
+        entity_found=not isinstance(result, ToolError),
+        entity_type=result.entity_type if isinstance(result, EntityInfo) else None
+    ),
+    failed_factory=lambda error, root_ecs_id, ecs_id: AgentGetEntityFailedEvent(
+        process_name="get_entity",
+        root_ecs_id=root_ecs_id,
+        ecs_id=ecs_id,
+        error_type=type(error).__name__,
+        error=str(error)
+    )
+)
 def get_entity(root_ecs_id: str, ecs_id: str) -> Union[EntityInfo, ToolError]:
     """Retrieve specific entity with complete details."""
     try:

@@ -932,7 +932,8 @@ class CallableRegistry:
             )
             
             # Register output entity (automatic versioning)
-            output_entity.promote_to_root()
+            if not output_entity.is_root_entity():
+                output_entity.promote_to_root()
             
             # Record function execution relationship
             await cls._record_basic_execution(input_entity, output_entity, metadata.name)
@@ -1307,7 +1308,8 @@ class CallableRegistry:
                 EntityRegistry.version_entity(original_entity)
             else:
                 # Fallback: treat as creation if we can't find original
-                entity.promote_to_root()
+                if not entity.is_root_entity():
+                    entity.promote_to_root()
             
             # Add function execution tracking
             entity.derived_from_function = metadata.name
@@ -1317,7 +1319,8 @@ class CallableRegistry:
             # Handle creation: new lineage, function derivation
             entity.derived_from_function = metadata.name
             entity.derived_from_execution_id = execution_id
-            entity.promote_to_root()
+            if not entity.is_root_entity():
+                entity.promote_to_root()
             
         elif semantic == "detachment":
             # Handle detachment: promote to root, version parent
