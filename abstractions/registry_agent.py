@@ -33,6 +33,10 @@ from abstractions.events.events import (
     Event, CreatedEvent, ProcessingEvent, ProcessedEvent,
     on, emit, get_event_bus
 )
+from abstractions.events.events import (
+    Event, EventPhase, emit_events, on, get_event_bus,
+    ProcessingEvent, ProcessedEvent
+)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -173,18 +177,14 @@ The Abstractions Entity Framework is a functional data processing system where:
 """
     
     response_options: str = """
-You have 3 options for responses:
+You have 2 options for responses:
 
 1. SUCCESS WITH ECS ADDRESS:
    - Set typed_result_ecs_address to point to result entity
    - Never set typed_result directly - it loads automatically
    - Set goal_completed=true
 
-2. SUCCESS WITH DIRECT ENTITY:
-   - Set typed_result directly to entity
-   - Set goal_completed=true
-
-3. FAILURE:
+2. FAILURE:
    - Set error with GoalError object
    - Set goal_completed=false
 """
@@ -376,7 +376,8 @@ class TypedAgentFactory:
         cls,
         result_entity_classes: ResultEntityInput,
         custom_examples: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        output_retries: int = 2
     ):
         """Create agent supporting single/union result types with model selection."""
         
@@ -405,7 +406,8 @@ class TypedAgentFactory:
             model_name,
             output_type=goal_class,
             toolsets=[registry_toolset],
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            output_retries=output_retries
         )
         
         return agent
@@ -594,8 +596,94 @@ class AddressErrorHandler:
 # Create the toolset
 registry_toolset = FunctionToolset()
 
+class AgentFunctionCallStartEvent(ProcessingEvent):
+    """Event emitted when agent tool call begins."""
+    type: str = "agent.tool_call.start"
+    phase: EventPhase = EventPhase.STARTED
+    
+    # Agent-specific data
+    function_name: str = Field(description="Function being called")
+    raw_parameters: Dict[str, Any] = Field(default_factory=dict, description="Raw tool parameters")
+    pattern_classification: Optional[str] = Field(default=None, description="Input pattern type")
+    parameter_count: int = Field(default=0, description="Number of parameters")
+
+
+class AgentFunctionCallCompletedEvent(ProcessedEvent):
+    """Event emitted when agent tool call completes successfully."""
+    type: str = "agent.tool_call.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    # Agent-specific data
+    function_name: str = Field(description="Function that was called")
+    result_type: str = Field(description="Type of result returned")
+    entity_id: Optional[str] = Field(default=None, description="ID of result entity (single entity)")
+    entity_type: Optional[str] = Field(default=None, description="Type of result entity")
+    entity_count: Optional[int] = Field(default=None, description="Number of entities returned")
+    entity_ids: List[str] = Field(default_factory=list, description="All entity IDs (multi-entity)")
+    success: bool = Field(default=True, description="Whether execution succeeded")
+
+
+class AgentFunctionCallFailedEvent(ProcessingEvent):
+    """Event emitted when agent tool call fails."""
+    type: str = "agent.tool_call.failed"
+    phase: EventPhase = EventPhase.FAILED
+    
+    # Agent-specific data  
+    function_name: str = Field(description="Function that failed")
+    error_type: str = Field(description="Type of error")
+    failed_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters that caused failure")
+
+
+class AgentListFunctionsEvent(CreatedEvent):
+    """Event emitted when agent lists available functions."""
+    type: str = "agent.list_functions"
+    phase: EventPhase = EventPhase.STARTED
+    
+class AgentListFunctionsCompletedEvent(ProcessedEvent):
+    """Event emitted when agent successfully lists functions."""
+    type: str = "agent.list_functions.completed"
+    phase: EventPhase = EventPhase.COMPLETED
+    
+    # Agent-specific data
+    total_functions: int = Field(default=0, description="Total number of functions listed")
+    function_list: FunctionList = Field(description="List of available functions with metadata")
+
 
 @registry_toolset.tool
+@emit_events(
+    creating_factory=lambda function_name, **kwargs: AgentFunctionCallStartEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        raw_parameters=kwargs,
+        parameter_count=len(kwargs)
+    ),
+    created_factory=lambda result, function_name, **kwargs: AgentFunctionCallCompletedEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        result_type=result.result_type if hasattr(result, 'result_type') else "unknown",
+        entity_id=result.entity_id if hasattr(result, 'entity_id') else None,
+        entity_type=result.entity_type if hasattr(result, 'entity_type') else None,
+        entity_count=result.entity_count if hasattr(result, 'entity_count') else None,
+        entity_ids=(
+            result.debug_info.get('entity_ids', [])
+            if hasattr(result, 'debug_info') and isinstance(result.debug_info, dict)
+            else []
+        ),
+        success=result.success if hasattr(result, 'success') else True,
+        output_ids=(
+            result.debug_info.get('entity_ids', [])
+            if hasattr(result, 'debug_info') and isinstance(result.debug_info, dict)
+            else []
+        )
+    ),
+    failed_factory=lambda error, function_name, **kwargs: AgentFunctionCallFailedEvent(
+        process_name="execute_function",
+        function_name=function_name,
+        error_type=type(error).__name__,
+        failed_parameters=kwargs,
+        error=str(error)
+    )
+)
 async def execute_function(function_name: str, **kwargs) -> ExecutionResult:
     """
     Execute a registered function with enhanced address debugging.

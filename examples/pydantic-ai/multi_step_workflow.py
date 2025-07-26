@@ -16,11 +16,12 @@ from datetime import datetime, timezone
 from pydantic import Field
 
 from abstractions.registry_agent import (
-    TypedAgentFactory, GoalFactory
+    TypedAgentFactory, GoalFactory,
 )
 from abstractions.ecs.entity import Entity, ConfigEntity
 from abstractions.ecs.callable_registry import CallableRegistry
-
+from abstractions.events.events import (
+    Event, on, emit, get_event_bus)
 
 # Result entity for function execution operations
 class FunctionExecutionResult(Entity):
@@ -235,18 +236,24 @@ async def send_marketing_notification(settings: NotificationSettings, process_de
 
 # STEP 4: Audit Report Functions
 @CallableRegistry.register("generate_compliance_audit")
-async def generate_compliance_audit(audit_config: AuditConfig, user_id: str, process_id: str) -> AuditReportResult:
+async def generate_compliance_audit(audit_config: AuditConfig, user_id: str, process_id: str) -> FunctionExecutionResult:
     """Generate compliance audit report (CORRECT for audit trail)."""
     # Simulate audit report generation
     event_count = 150 if audit_config.include_user_actions else 50
     
-    result = AuditReportResult(
-        report_id=f"AUDIT_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        report_type=audit_config.report_type,
-        total_events_captured=event_count,
-        report_file_path=f"/reports/audit/{audit_config.report_type}_report.pdf",
-        generation_timestamp=datetime.now(timezone.utc),
-        report_size_bytes=2048 * event_count
+    audit_data = {
+        "report_id": f"AUDIT_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "report_type": audit_config.report_type,
+        "total_events_captured": event_count,
+        "report_file_path": f"/reports/audit/{audit_config.report_type}_report.pdf",
+        "generation_timestamp": datetime.now(timezone.utc).isoformat(),
+        "report_size_bytes": 2048 * event_count
+    }
+    
+    result = FunctionExecutionResult(
+        function_name="generate_compliance_audit",
+        success=True,
+        result_data=audit_data
     )
     
     return result
@@ -309,7 +316,7 @@ def create_workflow_entities():
     
     return user_creds, transform_config, notification_settings, audit_config
 
-async def test_multi_step_workflow():
+async def test_multi_step_workflow(model: Optional[str] = None):
     """Test the complete multi-step workflow with distractors."""
     print("🔄 Testing Multi-Step Workflow with Distractors...")
     
@@ -317,7 +324,7 @@ async def test_multi_step_workflow():
     user_creds, transform_config, notification_settings, audit_config = create_workflow_entities()
     
     # Create a function execution agent
-    workflow_agent = TypedAgentFactory.create_agent(FunctionExecutionResult)
+    workflow_agent = TypedAgentFactory.create_agent(FunctionExecutionResult, model=model)
     
     # Complex multi-step request with potential for confusion
     request = f"""
@@ -361,10 +368,16 @@ async def test_multi_step_workflow():
         if result.error:
             print(f"   Error: {result.error.error_message}")
         
-        print(f"\nall messages: {run_result.all_messages()}")
+        # print(f"\nall messages: {run_result.all_messages()}")
             
     except Exception as e:
         print(f"❌ Multi-step workflow failed: {e}")
+
+# @on(AgentToolCallCompletedEvent)
+# async def format_and_display_execution(event: AgentToolCallCompletedEvent):
+#     """Generic detector using ExecutionResult - works for any function!"""
+#     print(f"\n🎨 ASCII FORMATTER: Detected completed agent call for {event.function_name}")
+    
 
 async def main():
     """Run the multi-step workflow test."""
@@ -376,8 +389,14 @@ async def main():
     print("3. Avoid distractor functions with similar signatures")
     print("4. Maintain context across the entire workflow")
     print()
-    
-    await test_multi_step_workflow()
+    verbose = True  # Set to False for less output
+
+    if verbose:
+        from abstractions.agent_observer import format_and_display_execution
+
+    await test_multi_step_workflow()  # Specify model if needed
+
+    # await test_multi_step_workflow(model='openai:gpt-4o-mini-2024-07-18')  # Specify model if needed
 
 if __name__ == "__main__":
     asyncio.run(main())
