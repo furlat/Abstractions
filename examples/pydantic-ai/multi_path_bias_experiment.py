@@ -309,6 +309,9 @@ async def main():
     print("- WorkflowSummaryResult bias: Shows ONLY finalize_order_workflow & send_customer_notification")
     print("- Goal: Different result types based purely on bias examples")
     print()
+    verbose = True  # Set to False for less output
+    if verbose:
+        from abstractions.agent_observer import format_and_display_execution,on_list_functions_completed,on_get_function_signature_completed,on_get_all_lineages_completed, on_get_lineage_history_completed,on_get_entity_completed
     
     # Test both biases with identical requests
     data_result = await test_data_processing_bias()

@@ -392,7 +392,7 @@ async def main():
     verbose = True  # Set to False for less output
 
     if verbose:
-        from abstractions.agent_observer import format_and_display_execution
+        from abstractions.agent_observer import format_and_display_execution,on_list_functions_completed,on_get_function_signature_completed,on_get_all_lineages_completed, on_get_lineage_history_completed,on_get_entity_completed
 
     await test_multi_step_workflow()  # Specify model if needed
 

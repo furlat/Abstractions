@@ -23,8 +23,13 @@ from abstractions.events.events import (
 from abstractions.ecs.entity import Entity
 from abstractions.ecs.callable_registry import CallableRegistry
 
-# Import the original execution result model
-from abstractions.registry_agent import ExecutionResult, AgentFunctionCallStartEvent, AgentFunctionCallCompletedEvent
+# Import the original execution result model and new event classes
+from abstractions.registry_agent import (
+    ExecutionResult, AgentFunctionCallStartEvent, AgentFunctionCallCompletedEvent,
+    AgentListFunctionsCompletedEvent, AgentGetFunctionSignatureCompletedEvent,
+    AgentGetAllLineagesCompletedEvent, AgentGetLineageHistoryCompletedEvent,
+    AgentGetEntityCompletedEvent
+)
 
 
 # ============================================================================
@@ -402,7 +407,7 @@ def format_from_bus_queries(start_event: Event, completion_event: Event, entity_
 @on(AgentFunctionCallCompletedEvent)
 async def format_and_display_execution(event: AgentFunctionCallCompletedEvent):
     """Generic detector using ExecutionResult - works for any function!"""
-    print(f"\n🎨 ASCII FORMATTER: Detected completed agent function call for {event.function_name}")
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for function call with name: {event.function_name}")
     
     try:
         # Get EventBus and use history to find related events
@@ -444,3 +449,53 @@ async def format_and_display_execution(event: AgentFunctionCallCompletedEvent):
         print(f"❌ Error in ASCII formatting: {e}")
         import traceback
         traceback.print_exc()
+
+
+# ============================================================================
+# SIMPLE EVENT OBSERVERS FOR REGISTRY AGENT TOOLS
+# ============================================================================
+
+@on(AgentListFunctionsCompletedEvent)
+async def on_list_functions_completed(event: AgentListFunctionsCompletedEvent):
+    """Simple observer for list_functions completion."""
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for list_functions")
+    print(f"📋 Listed {event.total_functions} functions")
+
+
+@on(AgentGetFunctionSignatureCompletedEvent)
+async def on_get_function_signature_completed(event: AgentGetFunctionSignatureCompletedEvent):
+    """Simple observer for get_function_signature completion."""
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for get_function_signature")
+    if event.signature_found:
+        print(f"📝 Found signature for function: {event.function_name}")
+    else:
+        print(f"❌ Function not found: {event.function_name}")
+
+
+@on(AgentGetAllLineagesCompletedEvent)
+async def on_get_all_lineages_completed(event: AgentGetAllLineagesCompletedEvent):
+    """Simple observer for get_all_lineages completion."""
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for get_all_lineages")
+    print(f"🌳 Found {event.total_lineages} lineages")
+
+
+@on(AgentGetLineageHistoryCompletedEvent)
+async def on_get_lineage_history_completed(event: AgentGetLineageHistoryCompletedEvent):
+    """Simple observer for get_lineage_history completion."""
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for get_lineage_history")
+    if event.history_found:
+        versions = event.total_versions or 0
+        print(f"📈 Found lineage history: {event.target_lineage_id} ({versions} versions)")
+    else:
+        print(f"❌ Lineage not found: {event.target_lineage_id}")
+
+
+@on(AgentGetEntityCompletedEvent)
+async def on_get_entity_completed(event: AgentGetEntityCompletedEvent):
+    """Simple observer for get_entity completion."""
+    print(f"\n🎨 AGENT TOOL: Detected completed agent tool call for get_entity")
+    if event.entity_found:
+        entity_type = event.entity_type or "Entity"
+        print(f"🎯 Found entity: {entity_type}#{event.ecs_id}")
+    else:
+        print(f"❌ Entity not found: {event.ecs_id} in root {event.root_ecs_id}")
