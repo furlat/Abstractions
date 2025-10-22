@@ -12,9 +12,9 @@ The goal of this post, and of this blog in general, is to contribute a clearer v
 
 We will focus on the general setup of a function-calling agent equipped with a finite set of functions, a computing engine to execute them, and a clear terminal reward signal.Our objective is twofold.
 
-    First, we want to properly characterize the interaction between the LLM and the computing environment as a potentially partially observable Markov Decision Process. This will require a clear separation between the environment’s state, its afferents, the resulting state update rules, and how these elements appear as the agent’s observations and actions.
+First, we want to properly characterize the interaction between the LLM and the computing environment as a potentially partially observable Markov Decision Process. This will require a clear separation between the environment’s state, its afferents, the resulting state update rules, and how these elements appear as the agent’s observations and actions.
 
-    Second, we want to formalize the structure of the computing environment in a way that helps us better understand LLM agents. To do so, we will draw on ideas from pure functional programming and model the computing environment as a category of object types whose morphisms are the typed functions that the agent can execute.
+Second, we want to formalize the structure of the computing environment in a way that helps us better understand LLM agents. To do so, we will draw on ideas from pure functional programming and model the computing environment as a category of object types whose morphisms are the typed functions that the agent can execute.
 
 Under a first, simplified approximation where the problem semantics are fully modeled by the type system, we can define rewards or goals as a partition function over the set of types. In this view, the objective of the agent is to compose a sequence of functions into a program that leads to a terminal type maximizing reward. Alternatively, given a set of initial objects, the task becomes finding a path through a typed category that reaches a reward partition. 
  
