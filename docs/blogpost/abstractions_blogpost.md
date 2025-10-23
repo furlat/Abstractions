@@ -10,7 +10,7 @@ Moreover, agency is only half of the story: if they are agents, what is their en
 
 The goal of this post, and of this blog in general, is to contribute a clearer vision of what we are building, in a way that remains consistent across the entire theoretical stack. We will start from the top, by formalizing in what sense a function-calling LLM can be considered a goal-directed agent.
 
-We will focus on the general setup of a function-calling agent equipped with a finite set of functions, a computing engine to execute them, and a clear terminal reward signal.
+We will focus on the general setup of a function-calling agent equipped with a finite set of functions, a computing engine to execute them, and a clear terminal reward signal. Think of one of the default LangChain constructs or even more accurately a typed PydanticAI agent.
 
 First, we want to properly characterize the interaction between the LLM and the computing environment as a potentially partially observable Markov Decision Process. This will require a clear separation between the environment’s state, its afferents, the resulting state update rules, and how these elements appear as the agent’s observations and actions.
 
@@ -22,4 +22,13 @@ Under a first, simplified approximation where the problem semantics are fully mo
 We will see that in this relatively simplistic setting, we can initially enumerate the complete state space of programs and navigate it using traditional algorithms such as A* or BFS. However, as we include more realistic compositional patterns, the state space explodes, pushing us back toward a reinforcement learning framework in the hope of discovering more efficient navigation policies. 
 
 In the conclusion, we will further emphasize the fundamental role of the language modeling aspect of the agent by exploring the scenario where the given base types are not sufficient to model the goal condition. From a categorical perspective, this requires further refinements, or fibrations, of the base category of types, typically expressed as exhaustive predicates over typed records. From the classical search perspective, this represents not only a combinatorial explosion but also a significant increase in modeling cost, since the minimal set of predicates that fully recovers the maximally coarse fibration sufficient for successful navigation must be known in advance by the researcher designing the environment. Still, LLMs often appear to navigate the fibration implicitly, for instance when they must identify the relevant subrecord to process among several of the same type, suggesting that an approximate encoding of the fibration is already embedded within their learned representations.
+
+## The Reinforcement Learning Perspective to Function Calling Agents
+
+We are now going to build our empirical setup in python and then the corresponding mathematical formulation in terms of a partially observable Markov decision process. As we mentioned earlier it is not simple to lift next-token prediction into a decision making language made of actions, observations and consequences each combining multiple steps of generation. Thankfully modern assistant post-training already solve this problem in practice with the introduction of artificial tokens tha segment the symbolic sequences into turns providing syntactical boundaries between the agent's generations, the tool calls responses, and the user's requests. The inference engine is then able to recursively generate from the transformer's base until a end-of-turn token is reached; the resulting string is then parsed into a (typically Json) object that can be ingested by the computing engine, which in turn responds with a stringifiable object that will be appended to the LLM's context. For this blogpost, we are going to stop at this level of abstraction and define our sequential decision making problem at the turn level. In the future we will attempt a definition of the problem at the token level using the language of options and modeling each turn as a temporally extended action, similar to how local continuous control policies are applied to robots chaining multiple behaviors.
+
+
+```python
+
+```
 
