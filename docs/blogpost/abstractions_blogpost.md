@@ -40,7 +40,7 @@ Because the environment is only *partially observable*, the agent cannot conditi
 Instead, it maintains an **internal state estimate** or **belief representation** $b_t$, summarizing all past interactions:
 
 $$
-b_t = P(s_t \mid h_t, s_0),
+b_t = P(s_t \mid h_t, P(s_0)),
 $$
 
 where $h_t$ is the full visible history of actions and observations.  
@@ -365,10 +365,32 @@ $$
 Equivalently, $\text{Stack}_t$ is a **sufficient statistic** of the history and the history is a sufficient statistic of the memory state.  
 Intuitively, the agent stack acts as a *parser over the LLM’s context window*, turning the textual record of the past into a canonical computational state.
 
-### When does such a parser exist?
+---
 
-A natural sufficient condition is the **pure functional** regime, where the environment is immutable and functions have no side effects beyond their return values.  
-Then, the output is conditionally independent of hidden state:
+### What breaks the parser
+
+Several common features of computing environments prevent any fixed $\Phi$ from making $h_t$ sufficient:
+
+1. **Mutability and in-place updates.** Later calls can read mutated memory that was not serialized in $y_t$.  
+2. **Implicit references/pointers.** Inputs refer to hidden locations rather than stable, serializable identifiers.  
+3. **Non-serialized side effects.** Effects relevant for future behavior (random seeds, file system changes, external services) do not appear in $y_t$.  
+4. **Concurrency and external actors.** The environment can change between turns due to other processes or threads.  
+5. **Nondeterminism/noise.** Stochastic functions without logged randomness make the same history compatible with multiple latent states.
+
+In these settings, the agent must maintain a **belief over hidden states**,
+
+$$
+b_t(s) = P(s_t = s \mid h_t, P(s_0)),
+$$
+
+and the process remains a genuine **POMDP**.
+
+---
+
+### When does such a parser exist? (and what makes an environment desirable)
+
+A natural sufficient condition is the **pure functional** regime with immutability and no side effects beyond return values.  
+Then the output is conditionally independent of hidden state:
 
 $$
 P(y_t \mid f_t, x_t, s_t) = P(y_t \mid f_t, x_t),
@@ -378,44 +400,29 @@ and the state is reconstructible from the initial state and visible history:
 
 $$
 s_t = \text{construct}(s_0, h_t),
-\quad
-P(s_t \mid h_t, s_0) = \mathbb{I}[s_t = \text{construct}(s_0, h_t)].
+\qquad
+P(s_t \mid h_t, P(s_0)) = \mathbb{I}[s_t = \text{construct}(s_0, h_t)].
 $$
 
-Under these conditions, we can define the parsing function $\Phi$ explicitly as the construction of a minimal stack of unique, typed objects sufficient for all future actions:
+Under these conditions, we can define the parsing function $\Phi$ explicitly as a **minimal typed stack** of unique, serializable objects sufficient for all future actions:
 
 $$
 \text{Stack}_t = M_t / \sim,
 $$
 
 where $M_t$ collects the bindings and outputs induced by $h_t$ and $\sim$ identifies equivalent objects of the same type.  
-The stack evolves through simple operations: pushing new outputs, deduplicating repeated ones, and optionally removing unreachable entries.  
+The stack evolves by pushing new outputs, deduplicating repeats, and optionally collecting unreachable entries.  
 With such a parser, the history $h_t$ is enough — the process **collapses to an MDP** on $\text{Stack}_t$.
 
-### What breaks the parser
+**Design conditions that make $\Phi(h_t)$ sufficient in practice:**
+1. **Immutability.** Each function call produces fresh outputs; no in-place mutations.  
+2. **Explicit references.** Inputs refer to prior outputs by stable identifiers or serialized content, not hidden pointers.  
+3. **Complete serialization.** All side effects relevant to future behavior are reflected in $y_t$ (or additional logged channels).  
+4. **Valid-action constraint.** The policy is restricted to admissible actions consistent with the current stack: $x_t \in \mathcal{X}(s_t)$.  
+5. **Deterministic or logged stochasticity.** If randomness is used, log seeds/outcomes so future behavior is reconstructible.
 
-In **mutable environments** (e.g., a Python REPL), in-place updates create hidden dependencies that are not guaranteed to appear in $h_t$.  
-Even if individual functions are pure, the overall system becomes stateful because later calls can read mutated memory that was never revealed in the prior observations.  
-No fixed parser $\Phi$ can make $h_t$ sufficient without explicit logging or serialization of side effects.  
-In this case, the agent must maintain a belief distribution over hidden states:
+**Relation to the typed program space.**  
+Under immutability, each function call is a morphism between typed objects, and $\Phi$ behaves as a **functor** mapping the turn trace to a canonical object graph of typed values.  
+The reconstructed stack is the accumulated composition of morphisms applied to initial objects.  
+With mutability, hidden morphisms act off-trace, the mapping from histories to states is not unique, and partial observability re-emerges.
 
-$$
-b_t(s) = P(s_t = s \mid h_t, s_0),
-$$
-
-and the process remains a true **POMDP**.
-
-### What Makes an Environment Desirable
-
-Under immutability, each function call is a morphism between typed objects, and $\Phi$ behaves as a **functor** mapping the trace of turns (the LLM’s context) into the corresponding object graph of typed values.  
-The reconstructed stack represents the composed morphisms applied to the initial state.  
-With mutability, hidden morphisms act outside this functorial image, and the mapping from histories to states is no longer unique, hence partial observability re-emerges.
-
-To make $\Phi(h_t)$ a valid and sufficient state representation in practice:
-
-1. **Immutability**: each function call produces fresh outputs, never in-place mutations.  
-2. **Explicit references**: inputs must refer to prior outputs by stable identifiers or serialized content.  
-3. **Complete serialization**: all side effects relevant to future behavior must appear in the observation $y_t$.  
-4. **Action validity**: constrain the policy to the environment’s admissible actions so parsed turns remain executable.
-
-When these conditions hold, the **agent stack** is a faithful parse of the LLM’s context, and the system behaves like an **MDP** whose state is explicitly recoverable from history.
