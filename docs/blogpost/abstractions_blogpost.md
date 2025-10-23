@@ -32,9 +32,9 @@ To make our discussion concrete, we start from the general language of POMDPs.
 We define a process composed of a set of possible **environment states** $\mathcal{S}$, **actions** $\mathcal{A}$ available to the agent, and **observations** $\mathcal{O}$ emitted by the environment.  
 The evolution of the system is governed by the following stochastic kernels:
 
-- $P(s' \mid s, a)$ — the **transition kernel**, describing how the environment evolves after an action;  
-- $\Omega(o \mid s', a)$ — the **observation kernel**, specifying what part of the new state is revealed to the agent;  
-- and $R(s, a)$ — the **reward function**, evaluating the desirability of transitions.
+- $P(s' \mid s, a)$: the **transition kernel**, describing how the environment evolves after an action;  
+- $\Omega(o \mid s', a)$: the **observation kernel**, specifying what part of the new state is revealed to the agent;  
+- $R(s, a)$: the **reward function**, evaluating the desirability of transitions.
 
 Because the environment is only *partially observable*, the agent cannot condition its decisions directly on the true state $s_t$.  
 Instead, it maintains an **internal state estimate** or **belief representation** $b_t$, summarizing all past interactions:
