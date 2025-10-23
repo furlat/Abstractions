@@ -137,22 +137,32 @@ $$
 This formulation bridges the low-level token process with the higher-level policy governing full turns.  
 Each completed turn becomes a well-defined *action* in the decision process, while the textual and functional context that follows it constitutes the *observation* for the next step.
 
+### Turns as Options: a Hierarchical View
 
+It is useful to formalize turns as **options** in a hierarchical control sense.  
+We denote the set of options by $\mathcal{W}$ to avoid confusion with the observation kernel $\Omega$.
 
-### Turns as Temporally Extended Actions
+- Each option $\omega \in \mathcal{W}$ has an **initiation set** $\mathcal{I}^\omega$ that specifies when it is admissible, typically as a constraint on the belief $b_t$ or on the parsed history $h_t$.
+- While active, $\omega$ follows a **token-level policy** $\pi_\theta^{\omega}(\tau_k \mid \tau_{\lt k}, b_t)$ that generates a subsequence.
+- $\omega$ terminates according to a **stopping rule** $\beta^\omega(\tau_k = \text{EOT} \mid \tau_{\lt k}, b_t)$, which aligns with the end-of-turn boundary.
+- A **high-level policy** $\mu$ selects options: $\mu(\omega_t \mid b_t, g)$.
 
-From the reinforcement learning perspective, we can interpret each **turn** as a **temporally extended action**, analogous to an *option* in hierarchical RL.  
-Each option corresponds to an internal autoregressive policy over tokens that terminates upon producing an *end-of-turn* token.  
-The higher-level decision process then operates over these options, selecting which structured action (for instance, a reasoning segment or function call) to generate next.
+The **induced turn distribution** is then the marginal over token sequences produced by the chosen option until termination, restricted to turns that parse as **valid actions** in the environment:
 
-For this blog post, we will remain at this level of abstraction and define our sequential decision-making problem at the turn level.  
-In future work, we will attempt a formulation at the token level using the full language of options, where token-level autoregressive policies compose into structured behaviors that define the agent’s turns.
+$$
+P_\theta(\text{turn}_t \mid b_t, g) \propto
+\sum_{\omega \in \mathcal{W}}
+\mu(\omega \mid b_t, g)
+\sum_{L}
+\left(
+\prod_{k=0}^{L-1} \pi_\theta^{\omega}(\tau_{k_t+k} \mid \tau_{\lt k_t+k}, b_t)
+\right)
+\beta^\omega(\tau_{k_t+L} = \text{EOT} \mid \tau_{\lt k_t+L}, b_t)
+\cdot \mathbb{I}[\text{turn}_t \in \mathcal{A}_{env}].
+$$
 
-### Mapping the Turn-Level Process to the POMDP Frame
-
-Having lifted the autoregressive process to the turn level, we can now connect it to the POMDP structure introduced earlier.  
-Our goal is to identify what corresponds to *actions*, *observations*, *state transitions*, and *goals* in the empirical case of a function-calling LLM interacting with a computing environment.
-
+The indicator enforces that only turns which can be parsed into executable calls with **admissible inputs** are considered, that is, inputs that satisfy the compositionality constraint $x_t \in \mathcal{X}(s_t)$ with references grounded in $h_t$ (or $b_t$).  
+This option view makes explicit how the **syntactic support** of the LLM is restricted by the **semantic support** of the environment.
 
 
 ### Observation Space, Valid Actions, and Behavioral Policies
