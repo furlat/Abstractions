@@ -34,10 +34,10 @@ As mentioned earlier, it is not straightforward to lift next-token prediction in
 We start from the basic autoregressive formulation for multistep generation of a language model, which defines a probability distribution over generated token sequences of length $T$ conditional on the semi-infinite prefix of previously generated tokens:
 
 $$
-P_\theta(\tau_{1:T}) = \prod_{t=1}^{T} P_\theta(\tau_t \mid \tau_{<t})
+P_\theta(\tau_{1:T}) = \prod_{t=1}^{T} P_\theta(\tau_t \mid \tau_{\lt t})
 $$
 
-where $\tau_t$ denotes the token generated at position $t$, and $\tau_{<t}$ represents the prefix of previously generated tokens.  
+where $\tau_t$ denotes the token generated at position $t$, and $\tau_{\lt t}$ represents the prefix of previously generated tokens.  
 In this view, the model defines a left-to-right stochastic process that sequentially samples the next symbol conditioned on its textual history.
 
 To move from this token-level process to a **decision-making** framework, we segment the token stream into **turns** using special control tokens inserted during assistant post-training. These artificial tokens define syntactical boundaries between:
