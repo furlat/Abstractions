@@ -4,19 +4,13 @@
 ## Introduction
 This year was supposed to be the year of the agents, yet they stumble. There have been remarkable improvements in coding agents, but the definitely not sporadic mistakes stand out even more against their skillful successes.
 
-I believe this has mostly to do with our lack of understanding, or better, a lack of framing for what LLM agents actually are. As a result, many doubts arise about what they should do and how they should do it. This is not surprising, given the wide range of theories that tempt us while navigating such a complex problem. It is not an easy task to lift the autoregression of symbolic sequences into a coherent theory of agency.
+I believe this has mostly to do with our lack of understanding, or better, a lack of framing for what LLM agents actually are. As a result, many doubts arise about what they should do and how they should do it. This is not surprising, given the wide range of theories that tempt us while navigating such a complex problem. It is not an easy task to lift the autoregression of symbolic sequences into a coherent theory of agency. Moreover, agency is only half of the story: if they are agents, what is their environment?
 
-Moreover, agency is only half of the story: if they are agents, what is their environment?
-
-The goal of this post, and of this blog in general, is to contribute a clearer vision of what we are building, in a way that remains consistent across the entire theoretical stack. We will start from the top, by formalizing in what sense a function-calling LLM can be considered a goal-directed agent.
-
-We will focus on the general setup of a function-calling agent equipped with a finite set of functions, a computing engine to execute them, and a clear terminal reward signal. Think of one of the default LangChain or PydanticAI agents interacting with a Python REPL.
+The goal of this post, and of this blog in general, is to contribute a clearer vision of what we are building, in a way that remains consistent across the entire theoretical stack. We will start from the top, by formalizing in what sense a function-calling LLM can be considered a goal-directed agent. We will focus on the general setup of a function-calling agent equipped with a finite set of functions, a computing engine to execute them, and a clear terminal reward signal. Think of one of the default LangChain or PydanticAI agents interacting with a Python REPL.
 
 First, we want to properly characterize the interaction between the LLM and the computing environment as a potentially partially observable Markov Decision Process. This will require a clear separation between the environment’s state, its afferents, the resulting state update rules, and how these elements appear as the agent’s observations and actions.
 
-Second, we want to formalize the structure of the computing environment in a way that helps us better understand LLM agents. To do so, we will draw on ideas from pure functional programming and model the computing environment as a category of object types whose morphisms are the typed functions that the agent can execute.
-
-Under a first, simplified approximation where the problem semantics are fully modeled by the type system, we can define rewards or goals as a partition function over the set of types. In this view, the objective of the agent is to compose a sequence of functions into a program that leads to a terminal type maximizing reward. Alternatively, given a set of initial objects, the task becomes finding a path through a typed category that reaches a reward partition. 
+Second, we want to formalize the structure of the computing environment in a way that helps us better understand LLM agents. To do so, we will draw on ideas from pure functional programming and model the computing environment as a category of object types whose morphisms are the typed functions that the agent can execute. Under a first, simplified approximation where the problem semantics are fully modeled by the type system, we can define rewards or goals as a partition function over the set of types. In this view, the objective of the agent is to compose a sequence of functions into a program that leads to a terminal type maximizing reward. Alternatively, given a set of initial objects, the task becomes finding a path through a typed category that reaches a reward partition. 
  
 
 We will see that in this relatively simplistic setting, we can initially enumerate the complete state space of programs and navigate it using traditional algorithms such as A* or BFS. However, as we include more realistic compositional patterns, the state space explodes, pushing us back toward a reinforcement learning framework in the hope of discovering more efficient navigation policies. 
@@ -39,7 +33,7 @@ P_\theta(\tau_{1:T}) = \prod_{t=1}^{T} P_\theta(\tau_t \mid \tau_{\lt t})
 $$
 
 where $\tau_t$ denotes the token generated at position $t$, and $\tau_{\lt t}$ represents the prefix of previously generated tokens.  
-In this view, the model defines a left-to-right stochastic process that sequentially samples the next symbol conditioned on its textual history.
+In this view, the model defines a left-to-right stochastic process that sequentially samples the next sequence of symbols conditioned on its textual history.
 
 To move from this token-level process to a **decision-making** framework, we segment the token stream into **turns** using special control tokens inserted during assistant post-training. These artificial tokens define syntactical boundaries between:
 
@@ -86,7 +80,6 @@ $$
 
 where $s_0$ is the initial state of the environment.
 
----
 
 ### Environment Response and State Evolution
 
@@ -107,7 +100,6 @@ $$
 
 Together, these define the environment kernel that mediates the agent’s interaction with the computing system.
 
----
 
 ### Stateful Functions and Non-Degenerate Side Effects
 
