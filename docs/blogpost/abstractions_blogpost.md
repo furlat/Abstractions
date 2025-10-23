@@ -113,10 +113,11 @@ $$
 P_\theta(\text{turn}_{1:N}) = \prod_{t=1}^{N} P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})
 $$
 
-Each conditional distribution $P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})$ represents the **behavioral policy** of the agent at the turn level.  
-It describes how the model generates the next complete action sequence—its next *decision*—conditioned on its full observation history.
+Each conditional distribution represents the **behavioral policy** of the agent at the turn level. It describes how the model generates the next complete action sequence—its next *decision*—conditioned on its full observation history.
 
-
+$$
+P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})
+$$
 
 ### Building Turn Probabilities from Token Probabilities
 
