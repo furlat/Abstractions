@@ -99,9 +99,14 @@ These tokens provide explicit syntactical boundaries between:
 Each **turn** thus corresponds to a higher-level event in the stochastic process, marking a complete *interaction step* between the agent and the environment.  
 This segmentation allows us to reinterpret the autoregressive process in terms of **turn-level sequences**, which naturally play the role of *actions* and *observations* within the POMDP framework.
 
-Let each turn be the contiguous block of tokens  
-$\text{turn}_t = (\tau_{k_t}, \dots, \tau_{k_{t+1}-1})$  
-beginning with a *start-of-turn* token and ending with an *end-of-turn* token.  
+Let each turn be the contiguous block of tokens
+
+$$
+\text{turn}_t = (\tau_{k_t}, \ldots, \tau_{k_{t+1}-1})
+$$
+
+beginning with a *start-of-turn* token and ending with an *end-of-turn* token.
+
 We can then define the induced distribution over turns as:
 
 $$
@@ -275,7 +280,7 @@ $$
 P_\theta(\tau_t \mid \tau_{\lt t})
 $$
 
-Aggregating these local conditionals yields the probability of producing a complete turn—an entire segment between *start-of-turn* and *end-of-turn* tokens:
+Aggregating these local conditionals yields the probability of producing a complete turn: an entire segment between *start-of-turn* and *end-of-turn* tokens:
 
 $$
 P_\theta(\text{turn}_t \mid \text{turn}_{\lt t}) =
