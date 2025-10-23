@@ -234,8 +234,7 @@ $$
 y_t \sim P(y_t \mid s_t, f_t, x_t)
 $$
 
-In the general case, the environment is **stateful**.  
-Functions may have **non-degenerate side effects**, meaning that while their input–output mapping remains constant, they can modify the internal state of the system.  
+In the general case, the environment is **stateful**. Functions may have **side effects**, meaning that while their input–output mapping remains constant, they can modify the internal state of the system.  
 For instance, executing a function that writes a variable in a Python kernel changes the REPL state even though the function interface itself is unchanged.
 
 Under this assumption, the environment’s state at time $t$ can be expressed as a deterministic or stochastic function of the initial state and the entire interaction history:
