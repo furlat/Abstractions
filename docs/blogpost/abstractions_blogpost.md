@@ -25,11 +25,12 @@ In the conclusion, we will further emphasize the fundamental role of the languag
 
 ## The Reinforcement Learning Perspective on Function-Calling Agents
 
-We will now build our empirical setup in Python, followed by the corresponding mathematical formulation in terms of a partially observable Markov Decision Process. More formally, we study the **joint stochastic process** emerging from the interaction between a function calling LLM agent and its computing environment.
+We will now build our mathematical formulation in terms of a partially observable Markov Decision Process. More formally, we study the **joint stochastic process** emerging from the interaction between a function calling LLM agent and its computing environment. Our objective is building an intuition of how the practical implementation of this system will affect crucial properties of the process like stochasticity and observability, this in turn will guide us in a sinergistic design of learning agents and their computing environment.
+
 
 ### From Next-Token Prediction to Decision-Making
 
-As mentioned earlier, it is not straightforward to lift next-token prediction into a decision-making framework composed of actions, observations, and consequences, each of which may involve multiple steps of generation.
+As mentioned earlier, it is not straightforward to lift next-token prediction into a decision-making framework composed of actions, observations, and consequences, each of which may involve multiple steps of generation. Fortunately, modern assistant post-training already addresses this problem in practice through the introduction of artificial tokens that segment symbolic sequences into turns.
 
 We start from the basic autoregressive formulation for multistep generation of a language model, which defines a probability distribution over generated token sequences of length $T$ conditional on the semi-infinite prefix of previously generated tokens:
 
