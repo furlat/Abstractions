@@ -11,7 +11,7 @@ First, we want to properly characterize the interaction between the agent and it
 
 Second, we will see how end of turn tokens (EOTs) create natural boundaries for segmenting the token sequence into actions and observations, and how the language of hierarchical reinforcement learning, more specifically temporal options, can be used to define a two-level problems where our low-level policies are defined in terms of token sequences that implement specific actions. While at the high level policies are defined in terms of actions that implement specific programs.  
 
-Finally, after having established the POMDP nature of the problem, we will study what are the conditions both from both the agent and the environment side that allow the construction of an equivalent MDP. This will be especially helpful in the context of designing a good computational environment for LLM agents. We will see how memory mutability and untracked side-effects propagates uncertainty in the agent's belief space, and how this can be mitigated with functional purity.
+Finally, after having established the POMDP nature of the problem, we will study what are the conditions both for the agent and the environment that allow the construction of an equivalent MDP. This will be especially helpful in the context of designing a good computational environment for LLM agents. We will see how memory mutability and untracked side-effects propagates uncertainty in the agent's belief space, and how this can be mitigated by functional purity.
 
 
 ## The Reinforcement Learning Perspective on Function-Calling Agents
