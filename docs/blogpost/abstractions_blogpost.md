@@ -15,20 +15,79 @@ Rather than directly constructing an ideal, and probably unrealistic, Markov Dec
 
 While the picture is surely complicating, this sort of problem is actually not that novel in reinforcement learning. Think of a robotic arm controlled by a continuous controller which needs to play a videogame using a keyboard. The high level problem is the videogame while the low level problem is the motor control of the arm. This setup is oftern interpreted as a hierarchical reinforcement learning problem, where a set of local policies generate temporally extended actions modelled as temporal options, while the high level policy choose which option to execute. By the better half of the post I hope to have persuaded you that we can interpret an LLM interacting with an environment as Hierarchical POMDP where the transformer can implement micro-level policies at the level of options which compose into a coherent high level controller. 
 
-Unfortunately, that is not great news, actually quite a bad omen for practical application. The pitfalls are many: from having to discover the set of valid options, to maintaining a consistent belief about the latent dynamics of the environment, to the difficulty of disentangling sources of uncertainty between the two levels with proper credit assignment. In general both hierarchy and partial observability are clear no-goes, unless there is a way to recast the problem as a hierarchical MDP with an already given option space. And that is what we will do. We will focus our attention back to the empirical setting of a function-calling agent interacting with a computing engine and study what properties of the environment make the overall problem amenable to such a recasting. We will see how memory mutability and untracked side-effects propagate uncertainty in the agent's belief space, keeping the problem partially observable, while untyped functions effectively keep the space of options unbounded. We will then see how this can be mitigated by fully typed languages and functional purity and how in those scenarios we are able to construct a clean MDP with a compact option space, effectively mapping language modeling to agentic program synthesis.
-
-## The Reinforcement Learning Perspective on Function-Calling Agents
-
-We will now build our mathematical formulation in terms of a **Partially Observable Markov Decision Process (POMDP)**.  
-More formally, we study the **joint stochastic process** emerging from the interaction between a function-calling LLM agent and its computing environment.  
-Our objective is to build an intuition for how the practical implementation of this system shapes crucial properties of the process, such as stochasticity and observability.  
-This understanding will then guide us toward a more coherent and synergistic design of learning agents and their computing environments.
+Unfortunately, that is not great news, actually quite a bad omen for practical application. The pitfalls are many: from having to discover the set of valid options, to maintaining a consistent belief about the latent dynamics of the environment, to the difficulty of disentangling sources of uncertainty between the two levels with proper credit assignment. In general both hierarchy and partial observability are clear no-goes, unless there is a way to recast the problem as a hierarchical MDP with an already given option space. And that is what we will do. 
+We will focus our attention back to the empirical setting of a function-calling agent interacting with a computing engine and study what properties of the environment make the overall problem amenable to such a recasting. We will build an intuition for how the practical implementation of this system shapes crucial properties of the process, such as stochasticity and observability. We will see how memory mutability and untracked side-effects propagate uncertainty in the agent's belief space, keeping the problem partially observable, while untyped functions effectively keep the space of options unbounded. We will then understand how this can be mitigated by fully typed languages and functional purity and how in those scenarios we are able to construct a clean MDP with a compact option space, effectively mapping language modeling to agentic program synthesis.
 
 
 
-#### The POMDP Frame
+#### The POMDP Frame or When is a System Agentic?
 
-To make our discussion concrete, we start from the general language of POMDPs.  
+To make our concrete discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
+
+Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_t$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_t; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t,z_{t+1}; \theta)$. Or explictly with respect to actions and observations $P(a_{t+1},o_{t+1} \mid s_t, \hat{s}_t; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_{t}, a_{t+1})$, its state transition kernel $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, and the agent's policy $\pi(a_{t+1} \mid \hat{s}_{t}; \theta_\pi)$ with its state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t},a_{t+1},o_{t+1}; \theta_{\mathcal{M}})$ with parameters $\theta = (\theta_\pi, \theta_{\mathcal{M}})$.
+
+The emission of the next turn decomposes into agent action selection and environment observation emission:
+$$
+P(z_{t+1} \mid s_t, \hat{s}_t; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta) = \pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
+$$
+Given the emitted turn, both hidden states update according to their respective transition kernels:
+$$
+P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta) = P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+$$
+
+Combining emission and transition dynamics, the complete joint update for each turn $z_{t+1} = (a_{t+1}, o_{t+1})$ becomes:
+$$
+P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta) = P(z_{t+1} \mid s_t, \hat{s}_t; \theta) \cdot P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta).
+$$
+
+Which expands to the full factorization $P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta)$:
+$$
+ \pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+$$
+
+For a complete trajectory $Z = \{z_1, z_2, \ldots, z_T\}$ with $z_t = (a_t, o_t)$, the joint probability over all turns and hidden states given the agent parameters $\theta$ is:
+$$
+P(Z, s_{1:T}, \hat{s}_{1:T} \mid \theta) = P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
+$$
+
+For a given agent, marginalizing over the hidden states gives the observable sequence probability:
+$$
+P(Z \mid \theta) = \sum_{s_{1:T}, \hat{s}_{1:T}} P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
+$$
+
+With the latest formulation we can effectively define the likelihood of our data conditional on a generative model that can be effectively compartmentalized into a parametrized agent and a stationary environment, that is an agentic system. 
+
+When a reward function $R : \mathcal{S} \times \mathcal{A} \to \mathbb{R}$ exists, we define the objective functional:
+
+$$
+J(\theta) = \mathbb{E}_{Z \sim P(Z \mid \theta)}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+$$
+
+Learning then becomes a dynamical process over the parameter space, defined by the update operator $\Phi: \Theta \to \Theta$ such that $\theta_{k+1} = \Phi(\theta_k)$, where $\Phi$ could be gradient ascent:
+
+$$
+\Phi(\theta) = \theta + \eta \nabla_\theta J(\theta)
+$$
+
+or any other optimization procedure. The reinforcement learning problem seeks the fixed point $\theta^* \in \Theta$ satisfying:
+
+$$
+\theta^* = \lim_{k \to \infty} \Phi^{(k)}(\theta_0) = \arg\max_{\theta \in \Theta} J(\theta)
+$$
+
+Since $\theta = (\theta_\pi, \theta_{\mathcal{M}})$, we can make explicit that the optimization operates solely over the agent's policy and world model parameters:
+
+$$
+(\theta_\pi^*, \theta_{\mathcal{M}}^*) = \arg\max_{\theta_\pi, \theta_{\mathcal{M}}} \mathbb{E}_{Z \sim P(Z \mid \theta_\pi, \theta_{\mathcal{M}})}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+$$
+
+where the expectation is taken with respect to trajectories generated by the agent's policy $\pi(\cdot \mid \cdot; \theta_\pi)$ and state updates $\mathcal{M}(\cdot \mid \cdot; \theta_{\mathcal{M}})$, while the environment dynamics $P(o_{t+1} \mid s_t, a_{t+1})$ and $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$ remain fixed and unparameterized. Here $\Phi^{(k)}$ denotes the $k$-fold composition of $\Phi$, assuming convergence from initial parameters $\theta_0$. In practice, we settle for local optima or stationary points where $\|\theta_{k+1} - \theta_k\| < \epsilon$ for some tolerance $\epsilon > 0$.
+
+
+
+
+
+
 We define a process composed of a set of possible **environment states** $\mathcal{S}$, **actions** $\mathcal{A}$ available to the agent, and **observations** $\mathcal{O}$ emitted by the environment.  
 The evolution of the system is governed by the following stochastic kernels:
 
@@ -163,6 +222,15 @@ $$
 
 The indicator enforces that only turns which can be parsed into executable calls with **admissible inputs** are considered, that is, inputs that satisfy the compositionality constraint $x_t \in \mathcal{X}(s_t)$ with references grounded in $h_t$ (or $b_t$).  
 This option view makes explicit how the **syntactic support** of the LLM is restricted by the **semantic support** of the environment.
+
+
+
+## The Reinforcement Learning Perspective on Function-Calling Agents
+
+We will now build our mathematical formulation in terms of a **Partially Observable Markov Decision Process (POMDP)**.  
+More formally, we study the **joint stochastic process** emerging from the interaction between a function-calling LLM agent and its computing environment.  
+
+This understanding will then guide us toward a more coherent and synergistic design of learning agents and their computing environments.
 
 
 ### Observation Space, Valid Actions, and Behavioral Policies
