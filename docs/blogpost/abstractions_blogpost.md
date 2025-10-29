@@ -152,12 +152,18 @@ $$
 
 This decomposition reveals a fundamental principle: accurate state estimation (via the world model) is a prerequisite for optimal decision-making (via the policy). The world model provides the informational substrate upon which the policy operates, transforming partial observations into belief states that support reward-maximizing action selection.
 
-With this formal framework established, we can now examine how these abstract components manifest in the concrete mechanics of autoregressive language models, where both the world model and policy emerge from the same underlying next-token generation engine.
+In this section we derived how a dynamical system can be decomposed into two interacting stationary processes, one representing the environment and the other the agent. In practice this construction guarantees that a sufficiently accurate autoregressive model trained on the joint process $P(Z \mid \theta_\pi, \theta_{\mathcal{M}})$ for a given parametrization $(\theta_\pi, \theta_{\mathcal{M}})$ must learn a latent representation encompassing both the environment and the agent state, as well as emission kernels emulating both the agent's policy and the environment's response and their joint state update rules.
 
-
+That is, if we were to pretrain a Transformer model over sequences of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t \in \mathcal{A}$ and an observation $o_t \in \mathcal{O}$, it would be possible to marginalize the joint process and derive the marginal processes $P(o_{t+1} \mid a_{t+1}, h_t)$ and $P(a_{t+1} \mid h_t)$, which are the emission kernels of the environment and the policy, respectively. Intuitively, we can also observe how it must be easier to learn the joint process when the agent's hidden state is a sufficient statistic of the environment state, drastically reducing the entropy that $h_t$ must encode.
 
 
 ### From Next-Token Prediction to Decision-Making
+
+In the previous section we derived the macro-level decision making problem as a decomposition of the resulting stochastic process connecting the observable autoregressive dynamics to the underlying agent-environment relationship. The one caveat is that we are thinking in terms of autoregression of high-level symbols, that is, we assume the transformer's token space corresponds to the union of the alphabets $\mathcal{O}$ and $\mathcal{A}$ as well as their Cartesian product $\mathcal{O} \times \mathcal{A}$. In the next section we will see how next-token prediction on a finer-grained alphabet equipped with a minimalistic algebra (right-side concatenation) can be used to express the coarser-level alphabet as a quotient space induced by turn-delimiting tokens, that is $\mathcal{Z} = (\Sigma^*, \sim)$ where $\Sigma^*$ is the space of token strings and the equivalence relation $x \sim y$ holds whenever $x$ and $y$ serialize to the same independently parsed components $(a_t, o_t)$. Formally, we define two parsing maps $\rho_{\mathcal{A}} : \Sigma^* \to \mathcal{A}$ and $\rho_{\mathcal{O}} : \Sigma^* \to \mathcal{O}$ corresponding to the token-level decoders for actions and observations respectively, and their joint map $\rho_{\mathcal{Z}}(x) = (\rho_{\mathcal{A}}(x), \rho_{\mathcal{O}}(x))$. The equivalence relation is then $x \sim y$ iff $\rho_{\mathcal{Z}}(x) = \rho_{\mathcal{Z}}(y)$, yielding equivalence classes  
+$$
+[z_t] = \{\, x \in \Sigma^* \mid x \sim z_t \,\}
+$$
+with $z_t = (a_t, o_t) = \rho_{\mathcal{Z}}(x) \in \mathcal{A} \times \mathcal{O}$, so that the high-level turn space $\mathcal{Z}$ is obtained as the product of the independent quotient spaces induced by the two parsers.
 
 Having introduced the POMDP frame, we now return to the base mechanics of language modeling to identify how its components emerge in practice.  
 As mentioned earlier, it is not straightforward to lift next-token prediction into a decision-making framework composed of actions, observations, and consequences, each of which may involve multiple steps of generation.  
@@ -177,15 +183,15 @@ In POMDP terms, this autoregressive process defines the *micro-dynamics* of the 
 
 ### From Tokens to Turns to Actions and Observations
 
-To lift this token-level process into a **decision-making** framework compatible with the POMDP perspective, we segment the token stream into **turns** using special control tokens inserted during assistant post-training.  
+To lift this token-level process into a decision-making framework compatible with the POMDP perspective, we segment the token stream into turns using special control tokens inserted during assistant post-training.  
 These tokens provide explicit syntactical boundaries between:
 
 1. the agent’s generations (tool calls or textual reasoning),
 2. the environment’s responses, and  
 3. the user’s requests.
 
-Each **turn** thus corresponds to a higher-level event in the stochastic process, marking a complete *interaction step* between the agent and the environment.  
-This segmentation allows us to reinterpret the autoregressive process in terms of **turn-level sequences**, which naturally play the role of *actions* and *observations* within the POMDP framework.
+Each turn thus corresponds to a higher-level event in the stochastic process, marking a complete interaction step between the agent and the environment.  
+This segmentation allows us to reinterpret the autoregressive process in terms of turn-level sequences, which naturally play the role of actions and observations within the POMDP framework.
 
 Let each turn be the contiguous block of tokens
 
@@ -193,7 +199,7 @@ $$
 \text{turn}_t = (\tau_{k_t}, \ldots, \tau_{k_{t+1}-1})
 $$
 
-beginning with a *start-of-turn* token and ending with an *end-of-turn* token.
+beginning with a start-of-turn token and ending with an end-of-turn token.
 
 We can then define the induced distribution over turns as:
 
@@ -201,335 +207,269 @@ $$
 P_\theta(\text{turn}_{1:N}) = \prod_{t=1}^{N} P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})
 $$
 
-Each conditional distribution represents the **behavioral policy** of the agent at the turn level. It describes how the model generates the next complete action sequence—its next *decision*—conditioned on its full observation history.
+Each conditional distribution represents the behavioral policy of the agent at the turn level. It describes how the model generates the next complete action sequence, its next decision, conditioned on its full observation history.
 
 $$
 P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})
 $$
 
-### Building Turn Probabilities from Token Probabilities
 
-The turn-level distribution can be constructed directly from the base autoregressive model.  
-Given the token-level probability $P_\theta(\tau_t \mid \tau_{\lt t})$, the probability of generating a specific subsequence of length $L$ is:
 
-$$
-P_\theta(\tau_{t:t+L}) = \prod_{k=0}^{L-1} P_\theta(\tau_{t+k} \mid \tau_{\lt t+k})
-$$
+### Stopping times and measurability
 
-The probability of producing a complete **turn** corresponds to summing over all possible subsequences that terminate with an *end-of-turn* token:
+Let $(\mathcal{F}_k)_{k \ge 0}$ be the natural filtration generated by the token sequence, where $\mathcal{F}_k = \sigma(\tau_{1:k})$.  
+Fix a distinguished delimiter token $\text{EOT} \in \Sigma$.  
+Define the stopping times for turn boundaries by
 
 $$
-P_\theta(\text{turn}_t) = \sum_{L} P_\theta(\tau_{t:t+L}) \cdot \mathbb{I}[\tau_{t+L} = \text{EOT}]
+\kappa_1 \;=\; \inf\{k \ge 1 : \tau_k = \text{EOT}\},
+\qquad
+\kappa_{t+1} \;=\; \inf\{k > \kappa_t : \tau_k = \text{EOT}\}
 $$
 
-This formulation bridges the low-level token process with the higher-level policy governing full turns.  
-Each completed turn becomes a well-defined *action* in the decision process, while the textual and functional context that follows it constitutes the *observation* for the next step.
-
-### Turns as Options: a Hierarchical View
-
-It is useful to formalize turns as **options** in a hierarchical control sense.  
-We denote the set of options by $\mathcal{W}$ to avoid confusion with the observation kernel $\Omega$.
-
-- Each option $\omega \in \mathcal{W}$ has an **initiation set** $\mathcal{I}^\omega$ that specifies when it is admissible, typically as a constraint on the belief $b_t$ or on the parsed history $h_t$.
-- While active, $\omega$ follows a **token-level policy** $\pi_\theta^{\omega}(\tau_k \mid \tau_{\lt k}, b_t)$ that generates a subsequence.
-- $\omega$ terminates according to a **stopping rule** $\beta^\omega(\tau_k = \text{EOT} \mid \tau_{\lt k}, b_t)$, which aligns with the end-of-turn boundary.
-- A **high-level policy** $\mu$ selects options: $\mu(\omega_t \mid b_t, g)$.
-
-The **induced turn distribution** is then the marginal over token sequences produced by the chosen option until termination, restricted to turns that parse as **valid actions** in the environment:
+with the convention that $\inf \emptyset = +\infty$.  
+Each $\kappa_t$ is an $(\mathcal{F}_k)$-stopping time and the $t$-th turn block is
 
 $$
-P_\theta(\text{turn}_t \mid b_t, g) \propto
+\text{turn}_t \;=\; \big(\tau_{\kappa_{t-1}+1}, \ldots, \tau_{\kappa_t}\big),
+\qquad \kappa_0 := 0.
+$$
+
+Thus the micro-to-macro map that takes a token path to the corresponding finite sequence of completed turns is measurable with respect to the filtration.  
+This formalizes the fact that the end of a turn is determined by information available at the stopping time $\kappa_t$.
+
+
+
+### Quotient mapping by independent parsers
+
+Let $\Sigma$ be the token alphabet and $\Sigma^*$ the set of finite token strings.  
+Define two token-level parsers
+
+$$
+\rho_{\mathcal{A}} : \Sigma^* \to \mathcal{A},
+\qquad
+\rho_{\mathcal{O}} : \Sigma^* \to \mathcal{O}
+$$
+
+that independently extract the action and the observation components from a completed turn string.  
+Define the joint parser
+
+$$
+\rho_{\mathcal{Z}}(x) \;=\; \big(\rho_{\mathcal{A}}(x), \rho_{\mathcal{O}}(x)\big) \;\in\; \mathcal{A} \times \mathcal{O}.
+$$
+
+Introduce the equivalence relation on $\Sigma^*$
+
+$$
+x \sim y
+\quad\Longleftrightarrow\quad
+\rho_{\mathcal{Z}}(x) \;=\; \rho_{\mathcal{Z}}(y).
+$$
+
+The quotient space of turn semantics is then
+
+$$
+\mathcal{Z} \;=\; \Sigma^* / \sim,
+\qquad
+[z] \;=\; \{\, x \in \Sigma^* : \rho_{\mathcal{Z}}(x) = z \,\},
+\qquad
+z = (a_t,o_t) \in \mathcal{A} \times \mathcal{O}.
+$$
+
+For any completed turn block $x = \text{turn}_t$ we write $z_t = \rho_{\mathcal{Z}}(x)$ and $x \in [z_t]$.
+
+
+
+### Class-marginalization from tokens to turns
+
+The token model induces a turn-level distribution by marginalizing over all token realizations in the equivalence class of the parsed turn.  
+Conditioned on the past turns,
+
+$$
+P_\theta(z_t \mid \text{turn}_{\lt t})
+\;=\;
+\sum_{x \in [z_t]}
+P_\theta\big(x \mid \text{turn}_{\lt t}\big),
+$$
+
+where for any $x = (\tau_{m}, \ldots, \tau_{n})$ ending with the delimiter,
+
+$$
+P_\theta\big(x \mid \text{turn}_{\lt t}\big)
+\;=\;
+\prod_{k=m}^{n}
+P_\theta\big(\tau_k \mid \tau_{\lt k}\big).
+$$
+
+This recovers the desired turn-level process from the micro-level autoregression while respecting the independent parsing of actions and observations.
+
+
+
+### Concatenation compatibility and class projection
+
+Define the projection
+$$
+q : \Sigma^* \to \mathcal{Z},
+\qquad
+q(x) \;=\; [\,\rho_{\mathcal{Z}}(x)\,].
+$$
+
+Let $\!\small\frown$ denote token concatenation and let $x \Vert y$ denote concatenation along turn boundaries, that is $x$ ends at a delimiter and $y$ begins immediately after.  
+Then concatenation followed by class projection is compatible with turn concatenation modulo delimiters:
+
+$$
+q(x \,\Vert\, y) \;=\; q(x) \,\odot\, q(y),
+$$
+
+where $\odot$ is the induced concatenation of equivalence classes at the turn level.  
+In particular, if $x \in [z_t]$ and $y \in [z_{t+1}]$ with both ending at delimiters, then $x \Vert y \in [z_t] \odot [z_{t+1}]$.  
+This factorization justifies composing probabilities turn by turn, since the projection $q$ respects the segmentation defined by the stopping times $\kappa_t$.
+
+### Admissibility and semantic support
+
+The parser-induced turn space interacts with the environment through admissibility constraints.  
+For each environment state $s_t$ define the admissible class set
+$$
+\mathcal{Z}_{\mathrm{env}}(s_t) \subseteq \mathcal{Z},
+$$
+and write the semantic indicator
+$$
+\mathbb{I}_{\mathrm{env}}(x, s_t) \;=\; \mathbb{I}\!\big[\, q(x) \in \mathcal{Z}_{\mathrm{env}}(s_t) \,\big].
+$$
+This restricts the syntactic support of token strings $x \in \Sigma^*$ to those whose classes are executable in $s_t$.
+
+### Induced macro kernels from micro dynamics
+
+We now return to the parameterization $\theta = (\theta_\pi, \theta_{\mathcal{M}})$ introduced in the POMDP formulation.  
+At the token level, the autoregressive model defines a generator
+
+$$
+\sigma_\theta(\tau_k \mid \tau_{\lt k})
+\;=\;
+P_\theta(\tau_k \mid \tau_{\lt k}),
+$$
+
+whose path probability for a completed turn block $x = (\tau_m, \ldots, \tau_n)$ ending at the delimiter is
+
+$$
+P_\theta(x \mid \text{turn}_{\lt t}) \;=\; \prod_{k=m}^{n} \sigma_\theta(\tau_k \mid \tau_{\lt k}).
+$$
+
+Through the equivalence relation $x \sim y$ induced by the joint parser $\rho_{\mathcal{Z}}$, we recover the class-marginal turn distribution
+
+$$
+P_\theta(z_t \mid \text{turn}_{\lt t}, s_t)
+\;=\;
+\sum_{x \in [z_t]}
+P_\theta(x \mid \text{turn}_{\lt t}) \,
+\mathbb{I}_{\mathrm{env}}(x, s_t),
+$$
+
+where $\mathbb{I}_{\mathrm{env}}(x, s_t)$ enforces that only syntactically valid and semantically admissible token sequences contribute.  
+The induced process over turns then defines the macro-level transition kernel
+
+$$
+P_\theta(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t)
+\;=\;
+P_\theta(z_{t+1} \mid s_t, \hat{s}_t)
+\cdot
+P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}),
+$$
+
+where
+$$
+P_\theta(z_{t+1} \mid s_t, \hat{s}_t)
+=
+\pi_\theta(a_{t+1} \mid \hat{s}_t; \theta_\pi)
+\cdot
+P(o_{t+1} \mid s_t, a_{t+1}).
+$$
+
+This expression is formally equivalent to the emission decomposition in the macro POMDP, except that now each factor arises from the token-level generator $\sigma_\theta$ through the quotient mapping.  
+The same $\theta$ that parameterizes the token model thus induces both the **macro policy** $\pi_\theta$ and the **macro world model** $\mathcal{M}_\theta$, linking the micro autoregressive dynamics to the high-level decision process.
+
+This identification closes the loop between the micro and macro views:  
+the same $\theta$ that parameterizes the low-level token generator $\sigma_\theta$ also parameterizes the induced high-level policy $\pi_\theta$ and transition model $\mathcal{M}_\theta$ after marginalization over equivalence classes $[z_t]$.
+
+
+
+### Hierarchical reinforcement learning link
+
+The same parameters $\theta$ that define the token-level generator $\sigma_\theta$ also determine the induced macro policy $\pi_\theta$ through class marginalization.  
+The generator is **optimal** if and only if its induced class-marginal matches the optimal high-level policy on admissible turns:
+$$
+\forall b_t,\; \forall z \in \mathcal{Z}_{\mathrm{env}}(s_t): \quad
+\sum_{x \in [z]} P_\theta(x \mid \text{turn}_{\lt t}) = \pi^*(z \mid b_t).
+$$
+Within each equivalence class $[z]$, any distribution over token realizations that respects termination and admissibility yields the same macro return.  
+A constructive parameterization that aligns the micro generator with the high-level reward is obtained by exponentially tilting the token likelihood with the class value at termination:
+$$
+P_\lambda(x \mid \text{turn}_{\lt t})
+\;\propto\;
+\Bigg(\prod_{k=m}^{n} \sigma_\theta(\tau_k \mid \tau_{\lt k})\Bigg)
+\exp\!\big(\lambda\, Q(b_t, \rho_{\mathcal{Z}}(x))\big)
+\mathbb{I}_{\mathrm{env}}(x, s_t),
+\quad x \text{ ends at the delimiter.}
+$$
+Marginalizing over $[z]$ yields the soft-optimal turn policy
+$$
+\pi_\lambda(z \mid b_t)
+\;\propto\;
+\exp\!\big(\lambda\, Q(b_t, z)\big),
+\qquad z \in \mathcal{Z}_{\mathrm{env}}(s_t),
+$$
+so that the micro dynamics implement the macro-optimal behavior by allocating token probability mass within each class according to value-weighted preference.
+
+
+
+### Options as micro controllers
+
+The same hierarchy can be framed through **options**.  
+Let $\mathcal{W}$ be a set of token-level controllers $\omega \in \mathcal{W}$, each defined by an initiation set $\mathcal{I}^\omega$, a local token policy $\sigma_\theta^\omega(\tau_k \mid \tau_{\lt k}, b_t)$, and a stopping rule $\beta^\omega(\tau_k = \text{EOT} \mid \tau_{\lt k}, b_t)$.  
+A high-level selector $\mu(\omega_t \mid b_t)$ chooses which option to activate.  
+The induced turn distribution then becomes
+$$
+P_\theta(z_t \mid b_t)
+=
 \sum_{\omega \in \mathcal{W}}
-\mu(\omega \mid b_t, g)
-\sum_{L}
-\left(
-\prod_{k=0}^{L-1} \pi_\theta^{\omega}(\tau_{k_t+k} \mid \tau_{\lt k_t+k}, b_t)
-\right)
-\beta^\omega(\tau_{k_t+L} = \text{EOT} \mid \tau_{\lt k_t+L}, b_t)
-\cdot \mathbb{I}[\text{turn}_t \in \mathcal{A}_{env}].
+\mu(\omega \mid b_t)
+\sum_{x \in [z_t]}
+P_\theta^\omega(x \mid \text{turn}_{\lt t})
+\,\mathbb{I}_{\mathrm{env}}(x, s_t),
 $$
-
-The indicator enforces that only turns which can be parsed into executable calls with **admissible inputs** are considered, that is, inputs that satisfy the compositionality constraint $x_t \in \mathcal{X}(s_t)$ with references grounded in $h_t$ (or $b_t$).  
-This option view makes explicit how the **syntactic support** of the LLM is restricted by the **semantic support** of the environment.
-
+where $P_\theta^\omega$ is defined by $\sigma_\theta^\omega$ and $\beta^\omega$.  
+Optimality holds whenever this marginal equals $\pi^*(\cdot \mid b_t)$ on the admissible turn space $\mathcal{Z}_{\mathrm{env}}(s_t)$, thus making each option a consistent micro realization of a high-level action.
 
 
-## The Reinforcement Learning Perspective on Function-Calling Agents
 
-We will now build our mathematical formulation in terms of a **Partially Observable Markov Decision Process (POMDP)**.  
-More formally, we study the **joint stochastic process** emerging from the interaction between a function-calling LLM agent and its computing environment.  
+### Objective-level statement
 
-This understanding will then guide us toward a more coherent and synergistic design of learning agents and their computing environments.
-
-
-### Observation Space, Valid Actions, and Behavioral Policies
-
-Let there be an agent interacting with a computing environment through a discrete sequence of function calls.  
-At each step $t$, the agent selects a function $f_t$ from a finite set of callable functions and provides an input $x_t$ drawn from its corresponding input space.  
-The environment executes the call $(f_t, x_t)$ and returns an observable output $y_t$, which is appended to the ongoing context available to the agent.
-
-The agent’s **observation space** therefore consists of all visible results of past interactions, summarized by the interaction history:
-
+Let $\Pi_{\mathrm{tok}}$ be the family of token-level generators that almost surely terminate at delimiters and respect admissibility.  
+The overall hierarchical objective can then be written as
 $$
-h_t = ((y_i, (f_i, x_i)))_{i \lt t}.
+\max_{\sigma_\theta \in \Pi_{\mathrm{tok}}}
+\;\;
+\mathbb{E}_\theta\!\left[\sum_{t=1}^T R(s_t, a_t)\right]
+\quad\text{subject to}\quad
+\sum_{x \in [z]} P_\theta(x \mid \text{turn}_{\lt t})
+= \pi^*(z \mid b_t).
 $$
-
-Each $y_i$ is an emitted observation (e.g., a JSON result), while each $(f_i, x_i)$ represents the function invoked and its input at that step.  
-Together, they define the entire visible trajectory from which the agent must infer the current computational state.  
-The LLM’s hidden state or context window serves as an implicit **belief representation** $b_t = \Phi(h_t)$, a compressed, internal estimate of the relevant environment state derived from this history.
-
----
-
-#### Valid actions and compositionality
-
-Not all token sequences the LLM can produce correspond to executable actions in the environment.  
-Each turn must define a **valid function call**, and its input must be **semantically grounded** in the current environment state.  
-Formally, we require that
-
+In practice, this constraint is relaxed by minimizing a divergence between the induced class-marginal $\pi_\theta$ and the target policy $\pi^*$, with an optional regularizer over intra-class distributions:
 $$
-x_t \in \mathcal{X}(s_t),
+\min_{\sigma_\theta \in \Pi_{\mathrm{tok}}}
+\;
+\mathbb{E}_{b_t}\!\left[
+D_{\mathrm{KL}}\!\left(\pi^*(\cdot \mid b_t)\,\big\|\,\pi_\theta(\cdot \mid b_t)\right)
+\right]
++ \lambda\, \mathbb{E}\!\left[
+\sum_{x \in [z_t]} P_\theta(x \mid \text{turn}_{\lt t})\, \mathcal{R}(x)
+\right],
 $$
+where $\mathcal{R}(x)$ encodes secondary objectives such as brevity, determinism, or tool-specific formatting preferences.
 
-where $\mathcal{X}(s_t)$ is the set of admissible inputs given the current environment state $s_t$.  
-In practice, this means that inputs can only reference objects that are already present in the environment —
-either those that were part of the **initial state** $s_0$ or those **produced by previous function calls**.  
+This formulation ties the token-level learning process directly to the high-level objective $J(\theta)$ of the agentic POMDP, completing the correspondence between next-token prediction and optimal decision-making.
 
-This compositionality constraint ensures that the action sequence defines a **well-typed function composition**:
 
-$$
-(f_t, x_t): \quad x_t \mapsto y_t = f_t(x_t), \qquad x_t \in \{ y_i \mid i \lt t \} \cup s_0.
-$$
 
-It enforces that each new computation depends only on known quantities rather than on arbitrary strings generated by the language model.  
-By construction, this keeps the overall process grounded in the environment’s evolving state and prevents the model from “inventing” data out of thin air.
 
----
-
-#### Behavioral policy
-
-Given this structure, the agent’s **behavioral policy** defines the probability of selecting the next valid function and its corresponding input, conditioned on its internal belief derived from the visible history and the initial environment state:
-
-$$
-P(f_t, x_t \mid b_t, s_0),
-\qquad b_t = \Phi(h_t).
-$$
-
-subject to the validity constraint $x_t \in \mathcal{X}(s_t)$ described above.  
-This is the turn-level analogue of the policy $\pi(a_t \mid b_t)$ in the general POMDP formulation, where $b_t$ denotes the agent’s internal estimate of the state rather than an instantaneous observation.
-
-In future work, we will also consider the **open-world case**, where the agent is allowed to generate novel inputs not derived from prior state — for instance, creating new constants, text, or objects dynamically.  
-While such capabilities are crucial for creative reasoning and generative synthesis, they break strict compositionality and require a richer definition of admissible actions, which we defer to a dedicated discussion.
-
----
-
-### Environment Response and State Evolution
-
-The **state space** $\mathcal{S}$ of the environment captures everything relevant to how function calls are executed and how outputs are produced.  
-In a computing setting, this state can correspond to the current memory of a Python REPL, a running kernel, or any in-memory data structure that evolves as function calls are executed.
-
-Given the initial state $s_0$, the environment defines two stochastic processes: one for **state transitions** and one for **response generation**.
-
-The **state transition kernel** updates the environment after each function call:
-
-$$
-s_{t+1} \sim P(s_{t+1} \mid s_t, f_t, x_t)
-$$
-
-The **observation kernel** produces the output seen by the agent based on the current state and executed function:
-
-$$
-y_t \sim P(y_t \mid s_t, f_t, x_t)
-$$
-
-In the general case, the environment is **stateful**. Functions may have **side effects**, meaning that while their input–output mapping remains constant, they can modify the internal state of the system.  
-For instance, executing a function that writes a variable in a Python kernel changes the REPL state even though the function interface itself is unchanged.
-
-Under this assumption, the environment’s state at time $t$ can be expressed as a deterministic or stochastic function of the initial state and the entire interaction history:
-
-$$
-s_t = g(s_0, ((y_i, (f_i, x_i)))_{i \lt t})
-$$
-
-The environment’s response distribution then becomes:
-
-$$
-P(y_t \mid f_t, x_t, h_t, s_0)
-$$
-
-This generalizes the observation kernel to account for implicit dependencies on the environment’s evolving state.
-
-Together, these form the environment kernel that mediates the agent’s interaction with the computing system.  
-In POMDP terms, $P(s_{t+1} \mid s_t, f_t, x_t)$ corresponds to the **transition kernel**, and $P(y_t \mid s_t, f_t, x_t)$ to the **observation kernel** $\Omega(o_t \mid s_t, a_t)$.
-
----
-
-### The POMDP Correspondence
-
-We can now summarize the correspondence between our empirical formulation and the general POMDP structure introduced earlier.  
-At the turn level, the process aligns with the standard components of a POMDP, while the underlying token dynamics provide the fine-grained implementation of each stochastic kernel.
-
-| POMDP Component | Function-Calling LLM Analogue |
-|--|--|
-| **State** $s_t$ | The internal memory of the computing environment (e.g., REPL, kernel, variable bindings) |
-| **Observation** $y_t$ | The environment’s emitted response (e.g., tool output, JSON object) |
-| **Belief / internal state** $b_t = \Phi(h_t)$ | The LLM’s hidden representation of the accumulated history (context window, KV cache, or neural state) |
-| **Action** $a_t$ | The generation of a complete turn: a structured function call or reasoning segment produced by the LLM |
-| **Policy** $\pi(a_t \mid b_t)$ | The LLM’s autoregressive generation process conditioned on its internal belief (compressed history) and constrained by valid-action support |
-| **Transition** $P(s_{t+1} \mid s_t, a_t)$ | The update of the environment’s internal state following a function execution |
-| **Observation kernel** $\Omega(y_t \mid s_t, a_t)$ | The process by which the environment produces the next visible output |
-| **Reward / Goal** $R(s_t, a_t, g)$ | A task- or user-conditioned objective that defines success in terms of terminal or intermediate states |
-
----
-
-The **policy** of the model begins at the token level, where the transformer defines a conditional distribution over the next token:
-
-$$
-P_\theta(\tau_t \mid \tau_{\lt t})
-$$
-
-Aggregating these local conditionals yields the probability of producing a complete turn: an entire segment between *start-of-turn* and *end-of-turn* tokens:
-
-$$
-P_\theta(\text{turn}_t \mid \text{turn}_{\lt t}) =
-\sum_L
-\left(
-\prod_{k=0}^{L-1} P_\theta(\tau_{k_t+k} \mid \tau_{\lt k_t+k})
-\right)
-\mathbb{I}[\tau_{k_t+L} = \text{EOT}]
-$$
-
-However, not every sequence that ends with an EOT token corresponds to a valid action for the environment.  
-The **action kernel** and **observation kernel** of the environment restrict this support to the subset of turns that are *semantically valid*—those that can be parsed, executed, and yield a well-formed response.  
-The effective behavioral policy of the function-calling agent is therefore the restriction of the autoregressive process to this joint support:
-
-$$
-\pi(a_t \mid b_t) \propto
-P_\theta(\text{turn}_t \mid \text{turn}_{\lt t}) \,
-\mathbb{I}[\text{turn}_t \in \mathcal{A}_{env}]
-$$
-
-where $\mathcal{A}_{env}$ denotes the set of admissible actions defined by the environment’s interface.  
-This is precisely where the **option perspective** becomes essential: each valid subsequence defines a temporally extended policy fragment whose termination condition (*end-of-turn*) must align with an action boundary meaningful to the environment.
-
-Once a valid action $(f_t, x_t)$ is generated, the **transition kernel** governs how the environment evolves:
-
-$$
-s_{t+1} \sim P(s_{t+1} \mid s_t, f_t, x_t)
-$$
-
-The **observation kernel** then determines the response visible to the agent:
-
-$$
-y_t \sim P(y_t \mid s_t, f_t, x_t)
-$$
-
-which is appended to the ongoing context forming the next history:
-
-$$
-h_{t+1} = ((y_i, (f_i, x_i)))_{i \leq t}
-$$
-
-Finally, the process is guided by a **goal specification** $g \in \mathcal{G}$ and a corresponding reward function $R(s_t, a_t, g)$ that evaluates whether the trajectory has reached a desired terminal or intermediate condition.  
-In practice, these correspond to user-defined success criteria—such as producing a correct answer, generating valid code, or completing a function chain that satisfies a constraint.
-
-Seen this way, the function-calling LLM forms a complete POMDP loop whose **action space** is defined jointly by the model’s language distribution and the environment’s executable semantics.  
-The **token-level autoregression** specifies a continuous generative policy, while the **environment kernels** discretize it into admissible options that carry meaning and consequence.  
-This layered view exposes how the structure of the environment and the model’s own representational limits jointly determine the observability, stochasticity, and effective agency of the system.
-
----
-
-## Can We Make It an MDP?
-
-In our current setup, the agent never observes the true environment state $s_t$ directly, either because functions may cause unobserved side effects or because the memory context is shared with other asynchronous processes.  
-The system is therefore **partially observable by construction**: the LLM only sees the *observable history* of previous interactions, not the full memory of the computing environment.
-
-### The agent stack as a parsing of history
-
-The key question is whether this visible history can be **parsed** into a sufficient state representation.  
-Let the observable history at time $t$ be
-
-$$
-h_t = ((y_i, (f_i, x_i)))_{i \lt t},
-$$
-
-where each $y_i$ is the environment’s emitted observation at step $i$.  
-We introduce a parsing function
-
-$$
-\Phi: \mathcal{H} \to \mathcal{S}_{\text{eff}}, \qquad \text{Stack}_t = \Phi(h_t),
-$$
-
-which extracts from the history a compact **agent stack**, a structured representation containing exactly the typed objects and references required for future computation.
-
-The process behaves like an **MDP** if this parser makes the environment’s future depend only on the parsed state and current action:
-
-$$
-P(s_{t+1} \mid h_{\le t}, a_t) = P(s_{t+1} \mid \text{Stack}_t, a_t),
-\qquad
-P(y_{t+1} \mid h_{\le t}, a_t) = P(y_{t+1} \mid \text{Stack}_t, a_t).
-$$
-
-Equivalently, $\text{Stack}_t$ is a **sufficient statistic** of the history and the history is a sufficient statistic of the memory state.  
-Intuitively, the agent stack acts as a *parser over the LLM’s context window*, turning the textual record of the past into a canonical computational state.
-
----
-
-### What breaks the parser
-
-Several common features of computing environments prevent any fixed $\Phi$ from making $h_t$ sufficient:
-
-1. **Mutability and in-place updates.** Later calls can read mutated memory that was not serialized in $y_t$.  
-2. **Implicit references/pointers.** Inputs refer to hidden locations rather than stable, serializable identifiers.  
-3. **Non-serialized side effects.** Effects relevant for future behavior (random seeds, file system changes, external services) do not appear in $y_t$.  
-4. **Concurrency and external actors.** The environment can change between turns due to other processes or threads.  
-5. **Nondeterminism/noise.** Stochastic functions without logged randomness make the same history compatible with multiple latent states.
-
-In these settings, the agent must maintain a **belief over hidden states**,
-
-$$
-b_t(s) = P(s_t = s \mid h_t, P(s_0)),
-$$
-
-and the process remains a genuine **POMDP**.
-
----
-
-### When does such a parser exist? (and what makes an environment desirable)
-
-A natural sufficient condition is the **pure functional** regime with immutability and no side effects beyond return values.  
-Then the output is conditionally independent of hidden state:
-
-$$
-P(y_t \mid f_t, x_t, s_t) = P(y_t \mid f_t, x_t),
-$$
-
-and the state is reconstructible from the initial state and visible history:
-
-$$
-s_t = \text{construct}(s_0, h_t),
-\qquad
-P(s_t \mid h_t, P(s_0)) = \mathbb{I}[s_t = \text{construct}(s_0, h_t)].
-$$
-
-Under these conditions, we can define the parsing function $\Phi$ explicitly as a **minimal typed stack** of unique, serializable objects sufficient for all future actions:
-
-$$
-\text{Stack}_t = M_t / \sim,
-$$
-
-where $M_t$ collects the bindings and outputs induced by $h_t$ and $\sim$ identifies equivalent objects of the same type.  
-The stack evolves by pushing new outputs, deduplicating repeats, and optionally collecting unreachable entries.  
-With such a parser, the history $h_t$ is enough, hence, the process **collapses to an MDP** on $\text{Stack}_t$.
-
-**Design conditions that make $\Phi(h_t)$ sufficient in practice:**
-1. **Immutability.** Each function call produces fresh outputs; no in-place mutations.  
-2. **Explicit references.** Inputs refer to prior outputs by stable identifiers or serialized content, not hidden pointers.  
-3. **Complete serialization.** All side effects relevant to future behavior are reflected in $y_t$ (or additional logged channels).  
-4. **Valid-action constraint.** The policy is restricted to admissible actions consistent with the current stack: $x_t \in \mathcal{X}(s_t)$.  
-5. **Deterministic or logged stochasticity.** If randomness is used, log seeds/outcomes so future behavior is reconstructible.
-
-**Relation to the typed program space.**  
-Under immutability, each function call is a morphism between typed objects, and $\Phi$ behaves as a **functor** mapping the turn trace to a canonical object graph of typed values.  
-The reconstructed stack is the accumulated composition of morphisms applied to initial objects.  
-With mutability, hidden morphisms act off-trace, the mapping from histories to states is not unique, and partial observability re-emerges.
 
