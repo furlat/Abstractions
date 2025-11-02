@@ -180,3 +180,224 @@ Hence (\hat S_t) can replace the full history without loss for learning θ.
 **In essence:**
 The decomposition (Z\to(A,O)) and the state split (S_{\mathrm{global}}\to(S_{\mathrm{ag}},S_{\mathrm{env}})) are consequences of which parts of the observable process depend on the learnable parameters θ.
 Agency, observability, and controllability thus emerge directly from the *parametric structure* of the stochastic process.
+
+# Other session notes independent of above
+
+If we start from a **single joint generator**
+[
+P(Z_{1:T}\mid S,\theta),
+]
+then the *right* move is to let the **dependency structure** between (\theta), (S) (latent structure), and the observed turn symbols (Z_t) **induce** the agents and the environment—no prior (S_{\text{env}}/S_{\text{agent}}) split needed.
+
+
+# Core setup (no priors on “who is who”)
+
+* (\theta\in\mathbb{R}^d): high-dimensional continuous parameters.
+* (S): **discrete latent structure** (unknown cardinality, unknown factorization).
+* (Z_t): observed turn symbols (already includes “actions+observations” as raw turn data).
+
+Assume stationarity and a 1st-order Markov blanket in ((S,\theta)) around each (Z_t):
+[
+P(Z_t, S_{t+1}\mid Z_{1:t-1}, S_t,\theta)=P(Z_t,S_{t+1}\mid S_t,\theta).
+]
+
+# Derive components from multiway information
+
+Let (\mathcal{A}) be the **partial/multiway information atoms** between (Z_t) and (\theta) given (S_t) (PID/MID over the predictors ({\theta,S_t}) and target (Z_t)). Compute/approximate atoms of
+[
+\text{Unique}*\theta,;\text{Unique}*S,;\text{Redundant}*{\theta,S},;\text{Synergy}*{\theta,S}\quad\text{for }Z_t.
+]
+
+Now **cluster atoms into connected components** in the interaction graph where nodes are latent sub-variables of (S_t) and the (\theta)-subspaces that carry nonzero atom mass with (Z_t). Each connected component (C^i) defines:
+
+* a latent sub-state (S^i_t\subset S_t),
+* a turn-slice (Z^i_t\subset Z_t),
+* and an associated (\theta)-subspace (\theta^i\subset\theta).
+
+We **name** a component “agent” if its **unique+synergistic** atoms explain the part of (Z_t) that is *causally controllable* from that component; the **environment** is the residual component(s) whose atoms explain the parts of (Z_t) not controlled by any agent.
+
+Formally, for each component (i), pick the partition ((Z^{A_i}_t, Z^{O_i}_t)\subseteq Z^i_t) that (approximately) minimizes
+[
+I!\left(Z^{A_i}_t; S^{\neg i}_t \mid S^i_t,\theta\right)+
+I!\left(Z^{O_i}_t; S^i_t \mid S^{\neg i}_t, Z^{A_i}_t,\theta\right),
+]
+subject to nondegeneracy and respecting the atom assignment. This is your “derive A/O from the **Markov blanket + multiway info**” move.
+
+# Resulting factorization (multi-agent, no ordering assumed)
+
+For components (i=1..M),
+[
+P(Z_t, S_{t+1}\mid S_t,\theta)=
+\Bigg[\prod_{i=1}^M P\big(Z^{A_i}*t \mid S^i_t,\theta^i\big)\Bigg];
+\cdot;
+P!\left({Z^{O_i}*t}*{i=1}^M \mid S_t,{Z^{A_i}*t}*{i=1}^M,\theta\right)
+\cdot
+P(S*{t+1}\mid S_t, Z_t,\theta).
+]
+
+* If the observation term further **factorizes across components**, you get **simultaneous actions with independent observations**.
+* If it factorizes **sequentially** (or via a DAG), you recover a **turn-based or partially ordered** interaction.
+* If you **force agent↔agent communication only via the observation channel**, you obtain clean boundaries and a proper stochastic game / Dec-POMDP presentation.
+
+# Predictive (observer-side) machine
+
+Define the **predictive state** (C_t=\varepsilon(Z_{1:t})). Regardless of generator unifilarity,
+[
+K_\theta(Z_t\mid C_t)=P(Z_t\mid Z_{1:t-1},\theta),\qquad
+C_{t+1}=\eta(C_t, Z_t),
+]
+is **unifilar** on (Z). After the atom-based split, you can read off per-component kernels
+[
+K^i_\theta(Z^{A_i}*t\mid C_t),\qquad
+K^i*\theta(Z^{O_i}_t\mid C_t,{Z^{A_j}*t}*j),
+]
+giving you a **data-driven multi-agent Dec-POMDP/stochastic game** without ever postulating (S*{\text{env}}) vs (S*{\text{agent}}) up front.
+
+# Why (\theta) is continuous and the rest discrete (and why that’s fine)
+
+* Treat (\theta) as a **continuous index of model family**; the **discrete** (S) captures structural dependencies (who talks to whom).
+* The **multiway info decomposition w.r.t. (\theta)** identifies which parts of (Z_t) are tied to which (\theta)-subspaces, carving out the components.
+* In practice you can approximate this with conditional mutual-information regularizers or variational PID surrogates while learning a compact discrete (S) (e.g., via discrete bottlenecks or IB).
+
+# Minimal “start-from-(p(Z\mid S,\theta))” claim (ready to drop in)
+
+> **Claim (Blanket/MID-induced multi-agent presentation).**
+> Let (P(Z_{1:T}\mid S,\theta)) be a stationary Markov process in ((S,\theta)). Suppose the multiway information atoms between (Z_t) and ((S,\theta)) admit a partition into disconnected components. Then there exists a **multi-agent** presentation with components (i=1..M) such that
+> [
+> P(Z_t,S_{t+1}\mid S_t,\theta)=\Big[\prod_i P(Z^{A_i}_t\mid S^i_t,\theta^i)\Big]; P({Z^{O_i}_t}_i\mid S_t,{Z^{A_i}_t}*i,\theta);P(S*{t+1}\mid S_t,Z_t,\theta),
+> ]
+> where the “agent” vs “environment” roles are induced by the atoms (no *a priori* split), and interaction structure (simultaneous vs turn-based) is determined by whether (P({Z^{O_i}}\mid\cdot)) factorizes jointly or sequentially. Observer-side predictive states (C_t) yield a unifilar presentation over (Z).
+
+Got it. Here’s a clean rewrite that does the **multiway decomposition over both (Z) and (S)** so you can *derive multiple distinct agent states* (and the environment) from a single (P_\theta).
+
+---
+
+# Multiway Decomposition Over (Z) **and** (S) to Induce Multiple Agents
+
+We start from a single parameterized generator
+[
+P_\theta(Z_{1:T},S_{0:T})=P(S_0)\prod_{t=0}^{T-1}P_\theta(Z_{t+1},S_{t+1}\mid S_t),
+]
+with high-dimensional continuous (\theta) and **discrete** latent structure (S_t) (no a-priori factorization). Our goal is to **derive** multiple agent states and observation channels by doing a **multiway information decomposition on both (Z_t) and (S_t)**.
+
+## 1) θ-blanket view and θ-activity
+
+A subpart (U\subseteq Z_t) is **θ-active** if (I(\theta;U\mid S_t)>0) and **θ-inactive** if (I(\theta;U\mid S_t,Z^{\text{active}}_t)=0). This isolates where (\theta) changes the likelihood. We will generalize this to *multiway* structure across **subparts of (Z_t)** and **subfactors of (S_t)**.
+
+## 2) Factor both (Z_t) and (S_t) into candidate subvariables
+
+Introduce (potentially overcomplete) dictionaries:
+
+* (Z_t = (Z_t^{(1)},\ldots,Z_t^{(m)})) (token fields, tool slots, turn segments, etc.)
+* (S_t = (S_t^{(1)},\ldots,S_t^{(n)})) (unknown subfactors to be discovered/learned)
+
+The specific parametrization of (S_t^{(j)}) can be *learned* via a discrete bottleneck/IB; here we only need that we can **probe** subvariables (or candidates) for information relations.
+
+## 3) Multiway (PID/MID) atoms across ({\theta, S_t^{(1:n)}}\to Z_t^{(1:m)})
+
+For each output subpart (Z_t^{(i)}), compute/approximate the **multiway information atoms** that distribute the predictive information among predictors ({\theta, S_t^{(1)},\ldots,S_t^{(n)}}):
+
+* unique(*\theta), unique(*{S^{(j)}}),
+* redundancy among subsets,
+* synergy among subsets.
+
+Denote the atom mass of predictor subset (U\subseteq{\theta,S_t^{(1:n)}}) contributing to (Z_t^{(i)}) by (\alpha(Z_t^{(i)};U)).
+
+## 4) Build a bipartite interaction hypergraph and find components
+
+Construct a **hypergraph** (H) with left nodes ({\theta, S_t^{(1)},\ldots,S_t^{(n)}}) and right nodes ({Z_t^{(1)},\ldots,Z_t^{(m)}}). For each nonzero atom (\alpha(Z_t^{(i)};U)), add a hyperedge connecting all predictors in (U) to the output node (Z_t^{(i)}), weighted by (\alpha).
+
+Compute **connected components** (or community structure) of (H). Each component (C^k) groups:
+
+* a subset of latent subfactors (S_t^{(J_k)}\subseteq{S_t^{(j)}}),
+* possibly a subspace of (\theta), call it (\theta^{(k)}\subseteq\theta),
+* and a subset of outputs (Z_t^{(I_k)}\subseteq{Z_t^{(i)}}).
+
+Intuition: components are **dependency islands** where certain (\theta) directions and certain parts of (S_t) jointly explain certain parts of (Z_t).
+
+## 5) Per-component action/observation split (now joint over (Z) and (S))
+
+Within each component (C^k), choose a partition of its output slice (Z_t^{(I_k)}) into
+[
+Z_t^{(I_k)} = A_t^{(k)} ;\uplus; O_t^{(k)}
+]
+by the **θ-activity criterion relative to the local state (S_t^{(J_k)})**:
+[
+\text{maximize } I(\theta^{(k)}; A_t^{(k)} \mid S_t^{(J_k)})
+\quad\text{and minimize } I(\theta^{(k)}; O_t^{(k)} \mid S_t^{(J_k)}, A_t^{(k)}).
+]
+This makes the θ-dependence **live** in (A_t^{(k)}), while (O_t^{(k)}) becomes θ-inactive given the local state and action.
+
+The **induced factorization** in component (k) is
+[
+P_\theta!\big(Z_t^{(I_k)} \mid S_t^{(J_k)}\big)
+= P!\big(O_t^{(k)} \mid S_t^{(J_k)}, A_t^{(k)}\big);
+R_{\theta^{(k)}}!\big(A_t^{(k)} \mid S_t^{(J_k)}\big).
+]
+
+## 6) Assemble a multi-agent/multi-channel presentation
+
+Let the components be (k=1,\dots,K). The global one-step kernel admits
+[
+P_\theta(Z_t,S_{t+1}\mid S_t)
+=============================
+
+\underbrace{\prod_{k=1}^K R_{\theta^{(k)}}!\big(A_t^{(k)} \mid S_t^{(J_k)}\big)}_{\text{agent (θ-active) channels}}
+;\cdot;
+\underbrace{P!\Big({O_t^{(k)}}*k ,\Big|, S_t, {A_t^{(k)}}*k\Big)}*{\text{environment (θ-inactive) coupling}}
+;\cdot;
+P(S*{t+1}\mid S_t,Z_t).
+]
+
+* If (P({O^{(k)}_t}\mid\cdot)) factorizes across (k), you have **simultaneous** independent observation channels.
+* If it has a conditional DAG over (k), you get a **turn/partial order**.
+* Disallowing direct (A^{(k)}\to A^{(\ell)}) links outside ({O^{(\cdot)}}) yields clean **agent boundaries**.
+
+Each component (k) is thus a **derived agent**, with **derived agent state** (S_t^{(J_k)}) and **derived action/observation** ((A_t^{(k)},O_t^{(k)})).
+
+## 7) Predictive (observer) state and unifilar update
+
+Define the predictive state (C_t=\varepsilon(Z_{1:t})) (mixed/ε-machine). Regardless of generator unifilarity,
+[
+P_\theta(Z_{t+1}\mid Z_{1:t}) = K_\theta(Z_{t+1}\mid C_t),
+\qquad C_{t+1}=\eta(C_t,Z_{t+1})
+]
+is **unifilar** in (Z). Per component:
+[
+K^k_\theta(A^{(k)}*t\mid C_t),\qquad
+K^k*\theta(O^{(k)}_t\mid C_t,{A^{(j)}_t}_j),
+]
+operationalize policies (θ-active) and world responses (θ-inactive) over the shared predictive interface (C_t).
+
+## 8) Minimal sufficient projections of (S_t) (now per component)
+
+Given the induced kernels, define component-wise minimal sufficient projections of the latent:
+[
+S^{(k),\text{ag}}*t
+= \arg\min*{S'} ;\text{s.t.}; R_{\theta^{(k)}}(A^{(k)}*t \mid S') = R*{\theta^{(k)}}(A^{(k)}_t \mid S_t^{(J_k)}),
+]
+[
+S^{(k),\text{env}}*t
+= \arg\min*{S''} ;\text{s.t.}; P!\big(O^{(k)}_t \mid S'', {A^{(j)}_t}_j\big)
+= P!\big(O^{(k)}_t \mid S_t, {A^{(j)}_t}_j\big).
+]
+These are **data-processing projections** of (S_t) preserving the per-component conditionals.
+
+## 9) Learning sketch (practical)
+
+1. **Propose (Z) subparts** (schema/fields/segments). **Learn (S) subfactors** with a discrete bottleneck/IB so that (S_t^{(j)}) are identifiable.
+2. **Estimate θ-activity** via per-span scores (U_{\theta,t}=\nabla_\theta \log P_\theta(Z_t\mid Z_{<t})) to flag candidate (Z_t^{(i)}).
+3. **Approximate PID/MID atoms** for ((\theta, S_t^{(1:n)})\to Z_t^{(1:m)}) (variational CMIs; redundancy/synergy surrogates).
+4. **Hypergraph clustering** to get components (C^k).
+5. **Per-component A/O split** by optimizing (I(\theta^{(k)};O^{(k)}\mid S^{(J_k)},A^{(k)})) downward with (I(\theta^{(k)};A^{(k)}\mid S^{(J_k)})) nontrivial.
+6. **Fit kernels** (R_{\theta^{(k)}},P(\cdot)) and a **predictive state** (C_t) sufficient for both.
+7. **Test interaction structure** (independence vs DAG) on ({O^{(k)}}).
+
+## 10) Takeaways
+
+* Multiple **agent states** emerge when **both** the output (Z) and the latent (S) are decomposed via **multiway information atoms** with (\theta).
+* Components are induced by **shared atom mass** linking (\theta), subsets of (S), and subsets of (Z).
+* The usual POMDP/Dec-POMDP forms are **presentations** of the induced factorization, not assumptions.
+* Boundaries are **relative to (\theta)** (change (\theta), change agents).
+
+This is the minimal, self-consistent path to “many agents” that *derives* both the action/observation channels and the **distinct agent states** by performing the multiway decomposition **on both sides**: (Z) and (S).
