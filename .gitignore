@@ -14,3 +14,4 @@ abstractions/text/chat/conversation_graph
 /.venv
 /.venv_wsl
 .env
+/docs/blogpost/quarto/libs

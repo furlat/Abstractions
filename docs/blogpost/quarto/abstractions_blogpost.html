@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.25">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>abstractions_blogpost</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="abstractions_blogpost_files/libs/clipboard/clipboard.min.js"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/popper.min.js"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="abstractions_blogpost_files/libs/quarto-html/anchor.min.js"></script>
+<link href="abstractions_blogpost_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="abstractions_blogpost_files/libs/quarto-html/quarto-syntax-highlighting-7b89279ff1a6dce999919e0e67d4d9ec.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="abstractions_blogpost_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="abstractions_blogpost_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="abstractions_blogpost_files/libs/bootstrap/bootstrap-9e3ffae467580fdb927a41352e75a2e0.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="from-next-token-prediction-to-agency" class="level1">
+<h1>From Next Token Prediction to Agency</h1>
+<section id="tags-vision-abstractions" class="level3">
+<h3 class="anchored" data-anchor-id="tags-vision-abstractions">tags: <span class="citation" data-cites="vision">@vision</span> <span class="citation" data-cites="abstractions">@abstractions</span></h3>
+<p>Building LLM agents has never been easier, with API providers directly exposing tool calls as a first-class primitive and a myriad of opinionated frameworks each harnessing the API in a slightly different way. This fertile ground has led to such a proliferation of open-source projects and startups that it is now common to conflate agents with LLMs interacting with some external system. Yes, we are finally able to write adaptive workflows, or even goal-oriented programs and sophisticated coding assistants, but the result often feels stitched together. There seems to be a disconnect between the way we conceptualize and train LLMs and the way we expect intelligent agents to behave. We generally understand agency as a high-level cognitive process involving abstractions like observations, states, actions, and rewards. On the other hand, we understand underlying language models through the lens of transformers approximating a finer-grained token-level stochastic process. Throughout this post, we will refer to these two different yet coexisting perspectives as the macro-level (agentic) and micro-level (autoregressive) views.</p>
+<p>Thankfully, both perspectives are amenable to mathematical formalization and have been explored by greater minds. Encouraged by the empirical certainty that LLM agents exist, we will formalize how an LLM can become an agent. We will draw on existing abstractions and known equivalences to construct a narrative that lifts the autoregression of symbolic sequences into a coherent theory of agentic decision-making. Without claiming any secret LLM training sauce, I hope to shed light on esoteric properties of LLM agents that follow from their mathematical nature.</p>
+<p>We will model high-level behavior as a Partially Observable Markov Decision Process (POMDP) emerging as the optimal decomposition of token sequences generated by turn-based interaction between the LLM and its environment. We will see how the original next-token formulation of the transformer, in conjunction with special turn-delimiting tokens, can express the probability of these sequences as a function of turns rather than raw token history. This gives us a clear view of two distinct problems and their connection. At the macro level, we have a turn-based POMDP with its own action, observation, and hidden state spaces. The agent observes the history of actions and observations and emits a new action; if valid, the environment updates its hidden state, emits a new observation that is appended to the history, and the process repeats. At the token level, the LLM observes a serialized representation of this history where each turn is separated by a special token and generates a new sequence of tokens; if valid, the environment emits a new sequence that is appended to the LLM context, and the process repeats. The connection is now evident: the macro process exists when the micro process generates sequences recognized as valid actions by the environment. We can think of the LLM as an optimizing agent when its micro-level token choices induce high-level actions that lead toward high-reward states.</p>
+<p>While this picture is getting complicated, this sort of problem is not novel in reinforcement learning. Think of a robotic arm controlled by a continuous controller that needs to play a video game using a keyboard. The high-level problem is the video game, while the low-level problem is the motor control of the arm. This setup is often interpreted as hierarchical reinforcement learning, where local policies generate temporally extended actions modeled as temporal options, while the high-level policy chooses which option to execute.</p>
+<p>By the end of this post, I hope to have persuaded you that we can interpret an LLM interacting with an environment as a hierarchical POMDP, where the transformer implements micro-level controllers at the level of options that compose into a coherent high-level policy.</p>
+</section>
+<section id="the-pomdp-frame-or-when-is-a-system-agentic" class="level3">
+<h3 class="anchored" data-anchor-id="the-pomdp-frame-or-when-is-a-system-agentic">The POMDP Frame or When is a System Agentic?</h3>
+<p>Agency developed historically as a model of what separates humans from the rest of physical matter, and more recently as a model of what makes a system intelligent. Being humans, we inherently perceive a separation between what we are as a mind, the agent, and the thing-in-itself we live in, the environment. This dualism seems to clash with our understanding of reality as a local physical process, yet it is reconciled in modern science as a conditional independence, or causal, structure that appears when we look at the world at a coarse enough scale. If we zoom out sufficiently, we can see how the states inside the agent are causally independent from the states in the environment given the information that leaks in at the boundary between them. We can think of this as the agent’s perceptual channel. Conversely, we can see how the state of the world is conditionally independent from what goes on inside the agent given the information that leaks out at the boundary, which we can call the causal or action channel.</p>
+<p>Think of a human typing on a computer. The computer’s RAM state is conditionally independent from the human’s mental state of intending to write given the key that was pressed. In turn, the human’s mental representation of the letter displayed on the screen is conditionally independent of what goes on inside the computer given the retinal image of the letter. In this sense, it is useful to speak about an agentic system when its measurable behavior can be decomposed into two components: actions and observations, each defining a clear causal boundary, or Markov blanket, between the environment and the agent. In this section, we formally derive the POMDP frame as a decomposition of an autoregressive stochastic process into two stationary components. This setup allows us to connect the dots with our understanding of LLMs as approximators of autoregressive stochastic processes, yielding insights into what an LLM trained on agentic traces would learn.</p>
+</section>
+<section id="agentic-traces-as-an-autoregressive-stochastic-process" class="level3">
+<h3 class="anchored" data-anchor-id="agentic-traces-as-an-autoregressive-stochastic-process">Agentic Traces as an Autoregressive Stochastic Process</h3>
+<p>To make our discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, <span class="math inline">\(Z\)</span> into a sequence of turns <span class="math inline">\(Z = \{z_1, z_2, \ldots, z_T\}\)</span>, where each turn <span class="math inline">\(z_t \in \mathcal{Z}\)</span> is a tuple <span class="math inline">\((a_t, o_t)\)</span> of an action <span class="math inline">\(a_t\)</span> and an observation <span class="math inline">\(o_t\)</span>. Intuitively the action <span class="math inline">\(a_t\)</span> in <span class="math inline">\(\mathcal{A}\)</span> defines the component of the observable turn that is causally controlled by the agent, while the observation <span class="math inline">\(o_t\)</span> in <span class="math inline">\(\mathcal{O}\)</span> defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets <span class="math inline">\(\mathcal{A}\)</span> and <span class="math inline">\(\mathcal{O}\)</span> decompose the degrees of freedom of <span class="math inline">\(z \in \mathcal{Z}\)</span> into the product <span class="math inline">\(\mathcal{A} \times \mathcal{O}\)</span>.</p>
+<p>Then we assume that the probability of the next joint turn <span class="math inline">\(z_{t+1} = (a_{t+1}, o_{t+1})\)</span> is only conditioned on the current environment and agent hidden states, respectively <span class="math inline">\(s_t\)</span> and agent’s <span class="math inline">\(\hat{s}_t\)</span>, and the agent’s parameters <span class="math inline">\(\theta\)</span>, defining a joint stochastic process with emissions <span class="math inline">\(P(z_{t+1} \mid s_t, \hat{s}_t; \theta)\)</span> whose temporal dynamics are modeled by the recurrent transition <span class="math inline">\(P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta)\)</span>. Or explicitly with respect to actions and observations <span class="math inline">\(P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta)\)</span>. In a POMDP it is possible to further decompose this joint process into the environment’s emission kernel <span class="math inline">\(P(o_{t+1} \mid s_t, a_{t+1})\)</span> and its <strong>emission-conditioned transition kernel</strong>, <span class="math inline">\(P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})\)</span>, together with the agent’s policy <span class="math inline">\(\pi(a_{t+1} \mid \hat{s}_t; \theta_\pi)\)</span> and the agent’s state transition kernel <span class="math inline">\(\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})\)</span>, with parameters <span class="math inline">\(\theta = (\theta_\pi, \theta_{\mathcal{M}})\)</span>. This choice yields a unifilar latent update at the environment level: once <span class="math inline">\(s_t\)</span>, <span class="math inline">\(a_{t+1}\)</span>, and the realized <span class="math inline">\(o_{t+1}\)</span> are known, the distribution over <span class="math inline">\(s_{t+1}\)</span> is conditionally concentrated along a single causal branch consistent with that symbol.</p>
+<p>The emission of the next turn decomposes into agent action selection and environment observation emission: <span class="math display">\[
+P(z_{t+1} \mid s_t, \hat{s}_t; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta) = \pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
+\]</span> This is the macro interface where the agent proposes <span class="math inline">\(a_{t+1}\)</span> and the environment commits to a symbol <span class="math inline">\(o_{t+1}\)</span> that will also drive the unifilar update of its hidden state.</p>
+<p>Given the emitted turn, both hidden states update according to their respective transition kernels: <span class="math display">\[
+P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta) = P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+\]</span> Here the unifilar dependence of <span class="math inline">\(s_{t+1}\)</span> on <span class="math inline">\((s_t, a_{t+1}, o_{t+1})\)</span> guarantees that the latent path is synchronizable from the turn process in the sense used in computational mechanics.</p>
+<p>Combining emission and transition dynamics, the complete joint update for each turn <span class="math inline">\(z_{t+1} = (a_{t+1}, o_{t+1})\)</span> becomes: <span class="math display">\[
+P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta) = P(z_{t+1} \mid s_t, \hat{s}_t; \theta) \cdot P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta).
+\]</span></p>
+<p>Which expands to the full factorization <span class="math inline">\(P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta)\)</span>: <span class="math display">\[
+\pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+\]</span></p>
+<p>For a complete trajectory <span class="math inline">\(Z = \{z_1, z_2, \ldots, z_T\}\)</span> with <span class="math inline">\(z_t = (a_t, o_t)\)</span>, the joint probability over all turns and hidden states given the agent parameters <span class="math inline">\(\theta\)</span> is: <span class="math display">\[
+P(Z, s_{1:T}, \hat{s}_{1:T} \mid \theta) = P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
+\]</span></p>
+<p>For a given agent, marginalizing over the hidden states gives the observable sequence probability: <span class="math display">\[
+P(Z \mid \theta) = \sum_{s_{1:T}, \hat{s}_{1:T}} P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
+\]</span></p>
+<p>With the latest formulation we can effectively define the likelihood of our data conditional on a generative model that can be effectively compartmentalized into a parametrized agent and a stationary environment, that is an agentic system. In this section we derived how a dynamical system can be decomposed into two interacting stationary processes, one representing the environment and the other the agent. In practice this construction guarantees that a sufficiently accurate autoregressive model trained on the joint process <span class="math inline">\(P(Z \mid \theta_\pi, \theta_{\mathcal{M}})\)</span> for a given parametrization <span class="math inline">\((\theta_\pi, \theta_{\mathcal{M}})\)</span> must learn a latent representation encompassing both the environment and the agent state, as well as emission kernels emulating both the agent’s policy and the environment’s response and their joint state update rules.</p>
+<p>That is, if we were to pretrain a Transformer model over sequences of turns <span class="math inline">\(Z = \{z_1, z_2, \ldots, z_T\}\)</span>, where each turn <span class="math inline">\(z_t \in \mathcal{Z}\)</span> is a tuple <span class="math inline">\((a_t, o_t)\)</span> of an action <span class="math inline">\(a_t \in \mathcal{A}\)</span> and an observation <span class="math inline">\(o_t \in \mathcal{O}\)</span>, it would be possible to marginalize the joint process and derive the marginal processes <span class="math inline">\(P(o_{t+1} \mid a_{t+1}, s_t)\)</span> and <span class="math inline">\(P(a_{t+1} \mid \hat{s}_t)\)</span>, which are the emission kernels of the environment and the policy, respectively. This is the first step toward understanding the informational relationship between agentic systems and autoregressive models trained on their traces.</p>
+</section>
+<section id="learning-from-optimal-traces" class="level3">
+<h3 class="anchored" data-anchor-id="learning-from-optimal-traces">Learning from Optimal Traces</h3>
+<p>When a reward function <span class="math inline">\(R : \mathcal{S} \times \mathcal{A} \to \mathbb{R}\)</span> exists, we define the objective functional:</p>
+<p><span class="math display">\[
+J(\theta) = \mathbb{E}_{Z \sim P(Z \mid \theta)}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+\]</span></p>
+<p>Learning then becomes a dynamical process over the parameter space, defined by the update operator <span class="math inline">\(\Phi: \Theta \to \Theta\)</span> such that <span class="math inline">\(\theta_{k+1} = \Phi(\theta_k)\)</span>, where <span class="math inline">\(\Phi\)</span> could be gradient ascent:</p>
+<p><span class="math display">\[
+\Phi(\theta) = \theta + \eta \nabla_\theta J(\theta)
+\]</span></p>
+<p>or any other optimization procedure. The reinforcement learning problem seeks the fixed point <span class="math inline">\(\theta^* \in \Theta\)</span> satisfying:</p>
+<p><span class="math display">\[
+\theta^* = \lim_{k \to \infty} \Phi^{(k)}(\theta_0) = \arg\max_{\theta \in \Theta} J(\theta)
+\]</span></p>
+<p>Since <span class="math inline">\(\theta = (\theta_\pi, \theta_{\mathcal{M}})\)</span>, we can make explicit that the optimization operates solely over the agent’s policy and world model parameters:</p>
+<p><span class="math display">\[
+(\theta_\pi^*, \theta_{\mathcal{M}}^*) = \arg\max_{\theta_\pi, \theta_{\mathcal{M}}} \mathbb{E}_{Z \sim P(Z \mid \theta_\pi, \theta_{\mathcal{M}})}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+\]</span></p>
+<p>where the expectation is taken with respect to trajectories generated by the agent’s policy <span class="math inline">\(\pi(\cdot \mid \cdot; \theta_\pi)\)</span> and state updates <span class="math inline">\(\mathcal{M}(\cdot \mid \cdot; \theta_{\mathcal{M}})\)</span>, while the environment dynamics <span class="math inline">\(P(o_{t+1} \mid s_t, a_{t+1})\)</span> and <span class="math inline">\(P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})\)</span> remain fixed and unparameterized. Here <span class="math inline">\(\Phi^{(k)}\)</span> denotes the <span class="math inline">\(k\)</span>-fold composition of <span class="math inline">\(\Phi\)</span>, assuming convergence from initial parameters <span class="math inline">\(\theta_0\)</span>. In practice, we settle for local optima or stationary points where <span class="math inline">\(\|\theta_{k+1} - \theta_k\| &lt; \epsilon\)</span> for some tolerance <span class="math inline">\(\epsilon &gt; 0\)</span>.</p>
+<p>To understand when can this happen in practice we will use the alternative interpretation of the world model <strong>belief representation</strong> over the true generative model of the environment. Let <span class="math inline">\(h_t = (z_1, z_2, \ldots, z_t)\)</span> denote the observable history up to time <span class="math inline">\(t\)</span>. The agent maintains a belief state:</p>
+<p><span class="math display">\[
+b_t(s) = P(s_t = s \mid h_t) = P(s_t = s \mid a_{1:t}, o_{1:t})
+\]</span></p>
+<p>This belief satisfies the Markov property with respect to the history:</p>
+<p><span class="math display">\[
+P(s_{t+1} \mid h_{t+1}) = P(s_{t+1} \mid b_t, a_{t+1}, o_{t+1})
+\]</span></p>
+<p>The belief update follows Bayes’ rule in the unifilar form consistent with the environment kernels above: <span class="math display">\[
+b_{t+1}(s') \propto \sum_{s \in \mathcal{S}} b_t(s)\, P(o_{t+1} \mid s, a_{t+1})\, P(s' \mid s, a_{t+1}, o_{t+1}),
+\]</span> with normalization so that <span class="math inline">\(\sum_{s'} b_{t+1}(s') = 1\)</span>. This keeps the update aligned with the fact that the next latent state depends on the realized observation symbol.</p>
+<p>In practice, the Predictive State Representation (PSR), which maintains beliefs over future observations rather than hidden states, has been demonstrated to be informationally equivalent to the belief representation. Specifically, for any belief state <span class="math inline">\(b_t\)</span>, there exists a corresponding PSR <span class="math inline">\(q_t\)</span> such that:</p>
+<p><span class="math display">\[
+P(o_{t+1:t+k} \mid a_{t+1:t+k}, h_t) = P(o_{t+1:t+k} \mid a_{t+1:t+k}, b_t) = P(o_{t+1:t+k} \mid a_{t+1:t+k}, q_t)
+\]</span></p>
+<p>For a recursive approximator this is equivalent to recursively satisfying the single-step case (k=1) and reduces to next-observation prediction:</p>
+<p><span class="math display">\[
+P(o_{t+1} \mid a_{t+1}, h_t) = P(o_{t+1} \mid a_{t+1}, b_t)
+\]</span></p>
+<p>The world model with parameters <span class="math inline">\(\theta_{\mathcal{M}}\)</span> learns to approximate this distribution. Let <span class="math inline">\(\hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}})\)</span> be the model’s prediction given its internal state <span class="math inline">\(\hat{s}_t\)</span> (which encodes the belief). The learning objective becomes minimizing the KL divergence:</p>
+<p><span class="math display">\[
+\mathcal{L}_{\mathcal{M}}(\theta_{\mathcal{M}}) = \mathbb{E}_{h_t, a_{t+1}} \left[ D_{KL}\!\left( P(o_{t+1} \mid a_{t+1}, h_t) \,\|\, \hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}}) \right) \right]
+\]</span></p>
+<p>This simplifies to the cross-entropy loss in practice:</p>
+<p><span class="math display">\[
+\mathcal{L}_{\mathcal{M}}(\theta_{\mathcal{M}}) = -\mathbb{E}_{h_t, a_{t+1}, o_{t+1}} \left[ \log \hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}}) \right]
+\]</span></p>
+<p>Given an optimal (or sufficiently accurate) world model <span class="math inline">\(\theta_{\mathcal{M}}^*\)</span>, the policy optimization becomes:</p>
+<p><span class="math display">\[
+\theta_\pi^* = \arg\max_{\theta_\pi} \mathbb{E}_{Z \sim P(Z \mid \theta_\pi, \theta_{\mathcal{M}}^*)}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+\]</span></p>
+<p>This decomposition reveals a fundamental principle: accurate state estimation (via the world model) is a prerequisite for optimal decision-making (via the policy). The world model provides the informational substrate upon which the policy operates, transforming partial observations into belief states that support reward-maximizing action selection.</p>
+<p>Intuitively, we can also observe how it must be easier to learn the joint process when the agent’s hidden state is a sufficient statistic of the environment state, drastically reducing the entropy that <span class="math inline">\(h_t\)</span> must encode.</p>
+</section>
+<section id="from-next-token-prediction-to-decision-making" class="level3">
+<h3 class="anchored" data-anchor-id="from-next-token-prediction-to-decision-making">From Next-Token Prediction to Decision-Making</h3>
+<p>In the previous section we derived the macro-level decision-making problem as a decomposition of the resulting stochastic process connecting the observable autoregressive dynamics to the underlying agent–environment relationship. The one caveat is that we were reasoning directly in terms of autoregression over high-level symbols, implicitly assuming that the transformer’s token space coincides with the union of the alphabets <span class="math inline">\(\mathcal{A}\)</span> and <span class="math inline">\(\mathcal{O}\)</span>, together with their Cartesian product <span class="math inline">\(\mathcal{A} \times \mathcal{O}\)</span>. In this section we relax that assumption. The underlying process operates on a much finer-grained alphabet <span class="math inline">\(\Sigma\)</span> whose only algebraic structure is right-side concatenation, and the coarser alphabet of turns <span class="math inline">\(\mathcal{Z}\)</span> is induced as a quotient space defined by special delimiter tokens. This construction allows the next-token process to realize an effective agent–environment interface where each completed segment of tokens corresponds to a full turn <span class="math inline">\((a_t, o_t)\)</span> in the macro POMDP. Crucially, this turn-level view aligns with the <strong>unifilar</strong> structure of the environment, where each emitted observation <span class="math inline">\(o_{t+1}\)</span> simultaneously marks the completion of a turn and determines the unique causal branch of the environment’s latent transition.</p>
+<p>We start from the basic autoregressive formulation of a language model, which defines a probability distribution over token sequences of length <span class="math inline">\(T\)</span> conditional on the semi-infinite prefix of previously generated tokens:</p>
+<p><span class="math display">\[
+P_\theta(\tau_{1:T}) = \prod_{t=1}^{T} P_\theta(\tau_t \mid \tau_{\lt t})
+\]</span></p>
+<p>where <span class="math inline">\(\tau_t\)</span> denotes the token generated at position <span class="math inline">\(t\)</span>, and <span class="math inline">\(\tau_{\lt t}\)</span> represents the prefix of previously generated tokens. This defines a left-to-right stochastic process that samples each token sequentially, conditioned on the textual history. In POMDP terms, this autoregressive process defines the <em>micro-dynamics</em> of the agent’s internal policy <span class="math inline">\(\pi\)</span>, acting within the observation space defined by its evolving textual context.</p>
+</section>
+<section id="from-tokens-to-turns-to-actions-and-observations" class="level3">
+<h3 class="anchored" data-anchor-id="from-tokens-to-turns-to-actions-and-observations">From Tokens to Turns to Actions and Observations</h3>
+<p>To lift this token-level process into a decision-making framework compatible with the POMDP perspective, we segment the token stream into turns using special control tokens inserted during assistant post-training. These tokens provide explicit syntactical boundaries between:</p>
+<ol type="1">
+<li>the agent’s generations (tool calls or textual reasoning),</li>
+<li>the environment’s responses, and</li>
+<li>the user’s requests.</li>
+</ol>
+<p>Each turn thus corresponds to a higher-level event in the stochastic process, marking a complete interaction step between the agent and the environment. This segmentation allows us to reinterpret the autoregressive process in terms of turn-level sequences, which naturally play the role of actions and observations within the POMDP framework.</p>
+<p>Let each turn be the contiguous block of tokens</p>
+<p><span class="math display">\[
+\text{turn}_t = (\tau_{k_t}, \ldots, \tau_{k_{t+1}-1})
+\]</span></p>
+<p>ending with a distinguished delimiter token <span class="math inline">\(\text{EOT}\)</span>. We can then define the induced distribution over turns as</p>
+<p><span class="math display">\[
+P_\theta(\text{turn}_{1:N}) = \prod_{t=1}^{N} P_\theta(\text{turn}_t \mid \text{turn}_{\lt t})
+\]</span></p>
+<p>Each conditional distribution represents the behavioral policy of the agent at the turn level. It describes how the model generates the next complete action sequence—its next decision—conditioned on its full observation history.</p>
+</section>
+<section id="stopping-times-and-measurability" class="level3">
+<h3 class="anchored" data-anchor-id="stopping-times-and-measurability">Stopping times and measurability</h3>
+<p>Let <span class="math inline">\((\mathcal{F}_k)_{k \ge 0}\)</span> be the natural filtration generated by the token sequence, where <span class="math inline">\(\mathcal{F}_k = \sigma(\tau_{1:k})\)</span>. Fix the distinguished delimiter <span class="math inline">\(\text{EOT} \in \Sigma\)</span>. Define the stopping times for turn boundaries by</p>
+<p><span class="math display">\[
+\kappa_1 = \inf\{\, k \ge 1 : \tau_k = \text{EOT} \,\},
+\qquad
+\kappa_{t+1} = \inf\{\, k &gt; \kappa_t : \tau_k = \text{EOT} \,\},
+\qquad
+\kappa_0 := 0.
+\]</span></p>
+<p>Each <span class="math inline">\(\kappa_t\)</span> is an <span class="math inline">\((\mathcal{F}_k)\)</span>-stopping time, and the <span class="math inline">\(t\)</span>-th completed turn block is</p>
+<p><span class="math display">\[
+\text{turn}_t = (\tau_{\kappa_{t-1}+1}, \ldots, \tau_{\kappa_t}).
+\]</span></p>
+<p>The mapping from a token path to its corresponding finite sequence of completed turns is therefore measurable with respect to the filtration. This formalizes that the end of a turn is determined by information available at the stopping time <span class="math inline">\(\kappa_t\)</span>. Under the unifilar formulation of the environment, the realized observation <span class="math inline">\(o_t\)</span> that closes turn <span class="math inline">\(t\)</span> uniquely determines the next environment branch, implying that the latent generator of the observable turn process can be taken to be the environment state <span class="math inline">\(s_t\)</span> itself. This property guarantees <strong>synchronizability</strong>: the macro process over turns is informationally equivalent to the hidden-state process <span class="math inline">\((s_t)\)</span>.</p>
+</section>
+<section id="quotient-mapping-by-independent-parsers" class="level3">
+<h3 class="anchored" data-anchor-id="quotient-mapping-by-independent-parsers">Quotient mapping by independent parsers</h3>
+<p>Let <span class="math inline">\(\Sigma\)</span> be the token alphabet and <span class="math inline">\(\Sigma^*\)</span> the set of finite token strings. Define two token-level parsers</p>
+<p><span class="math display">\[
+\rho_{\mathcal{A}} : \Sigma^* \to \mathcal{A},
+\qquad
+\rho_{\mathcal{O}} : \Sigma^* \to \mathcal{O}
+\]</span></p>
+<p>that independently extract the action and the observation components from a completed turn string. Define the joint parser</p>
+<p><span class="math display">\[
+\rho_{\mathcal{Z}}(x) = \big(\rho_{\mathcal{A}}(x), \rho_{\mathcal{O}}(x)\big) \in \mathcal{A} \times \mathcal{O}.
+\]</span></p>
+<p>Introduce the equivalence relation on <span class="math inline">\(\Sigma^*\)</span></p>
+<p><span class="math display">\[
+x \sim y
+\quad\Longleftrightarrow\quad
+\rho_{\mathcal{Z}}(x) = \rho_{\mathcal{Z}}(y).
+\]</span></p>
+<p>The quotient space of turn semantics is then</p>
+<p><span class="math display">\[
+\mathcal{Z} = \Sigma^* / \sim,
+\qquad
+[z] = \{\, x \in \Sigma^* : \rho_{\mathcal{Z}}(x) = z \,\},
+\qquad
+z = (a_t,o_t) \in \mathcal{A} \times \mathcal{O}.
+\]</span></p>
+<p>For any completed turn block <span class="math inline">\(x = \text{turn}_t\)</span> we write <span class="math inline">\(z_t = \rho_{\mathcal{Z}}(x)\)</span> and <span class="math inline">\(x \in [z_t]\)</span>.</p>
+</section>
+<section id="class-marginalization-from-tokens-to-turns" class="level3">
+<h3 class="anchored" data-anchor-id="class-marginalization-from-tokens-to-turns">Class-marginalization from tokens to turns</h3>
+<p>The token model induces a turn-level distribution by marginalizing over all token realizations in the equivalence class of the parsed turn. We restrict this marginalization to <strong>prefix-free</strong> token strings that contain exactly one delimiter at the end and none internally. Let <span class="math inline">\(L_{z_t} \subseteq [z_t]\)</span> denote this parser-recognized language of completed turns. Then</p>
+<p><span class="math display">\[
+P_\theta(z_t \mid \text{turn}_{\lt t})
+=
+\sum_{x \in L_{z_t}}
+P_\theta\big(x \mid \text{turn}_{\lt t}\big),
+\]</span></p>
+<p>where for any <span class="math inline">\(x = (\tau_{m}, \ldots, \tau_{n})\)</span> ending with the delimiter,</p>
+<p><span class="math display">\[
+P_\theta\big(x \mid \text{turn}_{\lt t}\big)
+=
+\prod_{k=m}^{n}
+P_\theta\big(\tau_k \mid \tau_{\lt k}\big).
+\]</span></p>
+<p>This recovers the desired turn-level process from the micro-level autoregression while ensuring that each turn is counted exactly once and ends at the first valid delimiter.</p>
+</section>
+<section id="concatenation-compatibility-and-class-projection" class="level3">
+<h3 class="anchored" data-anchor-id="concatenation-compatibility-and-class-projection">Concatenation compatibility and class projection</h3>
+<p>Define the projection <span class="math display">\[
+q : \Sigma^* \to \mathcal{Z},
+\qquad
+q(x) = [\,\rho_{\mathcal{Z}}(x)\,].
+\]</span></p>
+<p>Let <span class="math inline">\(\mathbin{\smallfrown}\)</span> denote token concatenation and let <span class="math inline">\(x \Vert y\)</span> denote concatenation along turn boundaries, that is, <span class="math inline">\(x\)</span> ends at a delimiter and <span class="math inline">\(y\)</span> begins immediately after. Then concatenation followed by class projection is compatible with turn concatenation modulo delimiters:</p>
+<p><span class="math display">\[
+q(x \Vert y) = q(x) \odot q(y),
+\]</span></p>
+<p>where <span class="math inline">\(\odot\)</span> is the induced concatenation of equivalence classes at the turn level. In particular, if <span class="math inline">\(x \in [z_t]\)</span> and <span class="math inline">\(y \in [z_{t+1}]\)</span> with both ending at delimiters, then <span class="math inline">\(x \Vert y \in [z_t] \odot [z_{t+1}]\)</span>. This factorization justifies composing probabilities turn by turn, since the projection <span class="math inline">\(q\)</span> respects the segmentation defined by the stopping times <span class="math inline">\(\kappa_t\)</span>.</p>
+</section>
+<section id="admissibility-and-semantic-support" class="level3">
+<h3 class="anchored" data-anchor-id="admissibility-and-semantic-support">Admissibility and semantic support</h3>
+<p>The parser-induced turn space interacts with the environment through admissibility constraints. For each environment state <span class="math inline">\(s_t\)</span>, define the admissible class set</p>
+<p><span class="math display">\[
+\mathcal{Z}_{\mathrm{env}}(s_t) \subseteq \mathcal{Z},
+\]</span></p>
+<p>and the corresponding semantic indicator</p>
+<p><span class="math display">\[
+\mathbb{I}_{\mathrm{env}}(x, s_t) = \mathbb{I}\!\big[q(x) \in \mathcal{Z}_{\mathrm{env}}(s_t)\big].
+\]</span></p>
+<p>In practice, <span class="math inline">\(\mathcal{Z}_{\mathrm{env}}(s_t)\)</span> is realized by a <strong>state-conditioned recognizer</strong> <span class="math inline">\(\mathcal{G}(s_t)\)</span> defining the language of admissible token sequences for that environment state. The recognizer constrains the micro policy during decoding, ensuring that only syntactically valid and executable actions are produced. The induced set of admissible high-level actions is then</p>
+<p><span class="math display">\[
+\mathcal{A}_{\mathrm{env}}(s_t) = \{\, a : \exists\, o \text{ s.t. } (a,o) \in \mathcal{Z}_{\mathrm{env}}(s_t) \,\},
+\]</span></p>
+<p>which aligns the grammar-constrained token policy with the reinforcement learning action space.</p>
+</section>
+<section id="induced-macro-kernels-from-micro-dynamics" class="level3">
+<h3 class="anchored" data-anchor-id="induced-macro-kernels-from-micro-dynamics">Induced macro kernels from micro dynamics</h3>
+<p>We now return to the parameterization <span class="math inline">\(\theta = (\theta_\pi, \theta_{\mathcal{M}})\)</span> introduced in the POMDP formulation. At the token level, the autoregressive model defines a generator</p>
+<p><span class="math display">\[
+\sigma_\theta(\tau_k \mid \tau_{\lt k})
+=
+P_\theta(\tau_k \mid \tau_{\lt k}),
+\]</span></p>
+<p>whose path probability for a completed turn block <span class="math inline">\(x = (\tau_m, \ldots, \tau_n)\)</span> ending at the delimiter is</p>
+<p><span class="math display">\[
+P_\theta(x \mid \text{turn}_{\lt t}) = \prod_{k=m}^{n} \sigma_\theta(\tau_k \mid \tau_{\lt k}).
+\]</span></p>
+<p>Through the equivalence relation <span class="math inline">\(x \sim y\)</span> induced by the joint parser <span class="math inline">\(\rho_{\mathcal{Z}}\)</span>, we recover the class-marginal turn distribution</p>
+<p><span class="math display">\[
+P_\theta(z_t \mid \text{turn}_{\lt t}, s_t)
+=
+\sum_{x \in L_{z_t}}
+P_\theta(x \mid \text{turn}_{\lt t}) \,
+\mathbb{I}_{\mathrm{env}}(x, s_t).
+\]</span></p>
+<p>The induced process over turns then defines the macro-level transition kernel</p>
+<p><span class="math display">\[
+P_\theta(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t)
+=
+P_\theta(z_{t+1} \mid s_t, \hat{s}_t)
+\cdot
+P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}),
+\]</span></p>
+<p>where under the <strong>emission-conditioned (unifilar)</strong> factorization we have</p>
+<p><span class="math display">\[
+P_\theta(z_{t+1} \mid s_t, \hat{s}_t)
+=
+\pi_\theta(a_{t+1} \mid \hat{s}_t; \theta_\pi)
+\cdot
+P(o_{t+1} \mid s_t, a_{t+1}),
+\]</span></p>
+<p>and equivalently, when marginalizing over the agent’s belief state,</p>
+<p><span class="math display">\[
+P_\theta(z_{t+1} \mid b_t, \hat{s}_t)
+=
+\pi_\theta(a_{t+1} \mid \hat{s}_t; \theta_\pi)
+\sum_{s_t} b_t(s_t)\, P(o_{t+1} \mid s_t, a_{t+1}).
+\]</span></p>
+<p>This expression mirrors the emission decomposition of the macro POMDP but now explicitly under the unifilar transition structure. Each factor arises directly from the token-level generator <span class="math inline">\(\sigma_\theta\)</span> through the quotient mapping, meaning that the same parameters <span class="math inline">\(\theta\)</span> induce both the <strong>macro policy</strong> <span class="math inline">\(\pi_\theta\)</span> and the <strong>macro world model</strong> <span class="math inline">\(\mathcal{M}_\theta\)</span>. This identification closes the loop between the micro and macro views: the low-level token generator <span class="math inline">\(\sigma_\theta\)</span> produces a synchronized, unifilar process whose class-marginals implement the high-level policy <span class="math inline">\(\pi_\theta\)</span> and transition model <span class="math inline">\(\mathcal{M}_\theta\)</span>.</p>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
