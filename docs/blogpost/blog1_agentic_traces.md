@@ -97,7 +97,7 @@ P(a_{t+1}\mid z_{\le t}) \quad \text{and} \quad P(o_{t+1}\mid a_{t+1}, z_{\le t}
 $$
 The internal state right after emitting $a_{t+1}$ is a sufficient statistic of the agent side $\hat s_t$ for the purpose of the policy. The internal state right after receiving $o_{t+1}$ is a sufficient statistic of the environment branch $s_{t+1}$ for the purpose of predicting the next observation. This boundary effect also explains a mild separability we observe in practice. A single shared head can support both factors, but the logits factor by conditioning order: action logits depend mostly on the agent slice of the predictive state, observation logits condition further on the realized action and align with the environment slice. That is the concrete story of what a transformer trained on these sequences has learned. It has learned a predictive state that simultaneously supports an action policy and a world model at the level of turns, and it updates that state at the two natural boundaries of the turn, first at action time and then at observation time.
 
-### Reward Maximization and Goal Directedness
+### Goal Directedness and State Representation
 
 When a reward function $R : \mathcal{S} \times \mathcal{A} \to \mathbb{R}$ exists, we define the objective functional:
 
@@ -146,5 +146,21 @@ $$
 
 This decomposition reveals a fundamental principle: accurate state estimation (via the world model) is a prerequisite for optimal decision-making (via the policy). The world model provides the informational substrate upon which the policy operates, transforming partial observations into belief states that support reward-maximizing action selection.
 
+### Learning to Please the Gods from a Drunken Pythia
 
+We conclude with a light-weight toy example inspired by the identity-not channel in computational mechanics. In the channel there are two modes. In the identity mode the output matches the input. In the not mode the output flips the input. The mode itself toggles every turn. The agent chooses the input each turn, so the evolution is controlled in the simple sense that what happens next depends both on the hidden mode and on the agent’s current act. 
 
+```
+On a mountain there is a shrine to two gods, one loyal and one a trickster. The statue has two plates, one marked offering and one marked nothing, and an omen returned after each turn is the only public signal of which god currently guards the shrine. The loyal god returns offering with blessing and nothing with curse, while the trickster returns nothing with blessing and offering with curse; after each turn the satisfied guardian departs and the other takes the watch. An old and drunken pythia serves the shrine by choosing between offering and nothing at random. She has done this for decades and still does not understand the pattern. To make matters worse, after one hundred turns the gods go on vacation for a week, the shrine falls silent, and when it returns it simply begins glowing again, ready for offering, and there is no way to know which guardian has come back to the post.
+She no longer knows whether blessing means the loyal god who mirrors the act or the trickster who inverts it, so she gave up trying to reason it out. We study the problem from the perspective of her disciple, who has observed this behavior for years and will soon take over. She wants to please the gods as well as possible and asks what can be inferred from the drunken policy to recover the correct strategy. 
+```
+
+We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t$ the act (offering or nothing) and $o_t$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
+$$
+s_t = \mathbb{1}[a_{t-1} = o_{t-1}], \qquad o_t = a_t \oplus s_t.
+$$
+Here $s_t=0$ is loyal and $s_t=1$ is trickster, so $o_t=a_t$ under loyal and $o_t\neq a_t$ under trickster. This also implies the period-2 alternation $s_t=\neg s_{t-1}$ since $o_{t-1}=a_{t-1}\oplus s_{t-1}$.
+
+Inputs alone do not suffice and outputs alone do not suffice. The joint pair $(a_{t-1}, o_{t-1})$ fixes the mode for the step, and once the turn $(a_t, o_t)$ is realized the environment updates unifilarly. This matches the agentic trace view above. The agent proposes $a_t$. The shrine emits $o_t$ given $s_t$ and $a_t$. The minimal predictive latent the model must carry is the phase $s_t$.
+
+To keep runs independent we add a renewal. After one hundred turns the gods leave for a week and the shrine falls silent. When the shrine restarts it simply begins glowing again, ready for offering, and the guarding mode is drawn as $s_0 \sim \text{Bernoulli}(1/2)$. That draw sets the phase for the new epoch. Within an epoch the one step joint history $(a_{t-1}, o_{t-1})$ together with the current act is sufficient to predict $o_t$ and to update $s_t$.
