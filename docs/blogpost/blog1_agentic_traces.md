@@ -4,7 +4,7 @@
 
 
 
-We start by characterizing a Partially Observable Markov Decision Process (POMDP) as an autoregressive stochastic process over actions and observations. We use this characterization as a generator for agentic traces and derive what information is stored in a model trained to autoregressively predict sequences sampled from such a generator. Concretely, we treat turn-labeled sequences as the observable process and the POMDP as the latent mechanism that produces them. We build intuition about what LLMs would implicitly learn during pretraining if trained on an extensive corpus of agentic traces, under the simple assumption that the tokenization space aligns with the action and observation spaces.
+We characterize a Partially Observable Markov Decision Process (POMDP) as an autoregressive stochastic process over actions and observations. We use this formulation as a generator for agentic traces and derive what information is stored in a model trained to autoregressively predict sequences sampled from such a generator. Concretely, we treat turn-labeled sequences as the observable process and the POMDP as the latent mechanism that produces them. We build intuition about what Large Language Models (LLMs) would implicitly learn during pretraining if trained on an extensive corpus of agentic traces, under the simple assumption that the tokenization space aligns with the action and observation spaces. 
 
  
 
