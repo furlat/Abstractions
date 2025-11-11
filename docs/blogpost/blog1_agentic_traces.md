@@ -67,19 +67,19 @@ In the previous section we showed how a partially observable dynamical system ca
 
 There are two standard ways to model hidden stochastic processes.
 
-**Belief over latent state.** We put a probabilistic model on the world and filter observations into a belief over latent state
+**Belief over latent state.** We put a probabilistic model on the world and filter observations into a belief over the joint latent state
 $$
-b_t(s)=P(s_t=s\mid a_{1:t},o_{1:t}) .
+b_t(s,\hat s)=P(s_t=s,\hat s_t=\hat s\mid a_{1:t},o_{1:t})
 $$
-After a new turn $(a_{t+1},o_{t+1})$ the belief updates with Bayes
+After a new turn $(a_{t+1},o_{t+1})$ the belief updates with Bayes: 
 $$
-b_{t+1}(s') \propto \sum_s b_t(s)\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1}) .
+ b_{t+1}(s',\hat s') \propto \sum_{s,\hat s} b_t(s,\hat s)\,\pi(a_{t+1}\mid \hat s)\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1})\,\mathcal M(\hat s'\mid \hat s,a_{t+1},o_{t+1})
 $$
-Under our setup the environment update is unifilar at the turn scale. Once $(s_t,a_{t+1},o_{t+1})$ are fixed, the next branch is unique almost surely. This gives synchronization: as turns accumulate, the belief concentrates along the causal branch consistent with the observations.
+Under our setup the environment update is unifilar at the turn scale. Once $(s_t,a_{t+1},o_{t+1})$ are fixed, the next environment state $s_{t+1}$ is unique almost surely. This gives synchronization: as turns accumulate, the belief concentrates along the causal branches consistent with the observations for both the environment and agent states.
 
 **Predictive state from data.** We can skip latent variables and learn a predictive state representation $q_t$ that summarizes the history by what it implies for future observations under future actions. For finite horizons $k$,
 $$
-P(o_{t+1:t+k}\mid a_{t+1:t+k}, z_{\le t}) = P(o_{t+1:t+k}\mid a_{t+1:t+k}, q_t) .
+P(o_{t+1:t+k}\mid a_{t+1:t+k}, z_{\le t}) = P(o_{t+1:t+k}\mid a_{t+1:t+k}, q_t)
 $$
 In practice it is enough to match the one step case and update $q_{t+1}$ deterministically from $(q_t,a_{t+1},o_{t+1})$. This is the world model view trained by next observation prediction.
 
@@ -87,73 +87,93 @@ These two views meet at the minimal predictive presentation. Among optimal nonli
 
 What does a strong autoregressive model have to encode to predict our traces. Recall the emission decomposition
 $$
-P(z_{t+1}\mid s_t,\hat s_t)=\pi(a_{t+1}\mid \hat s_t)\cdot P(o_{t+1}\mid s_t,a_{t+1}) .
+P(z_{t+1}\mid s_t,\hat s_t)=\pi(a_{t+1}\mid \hat s_t)\cdot P(o_{t+1}\mid s_t,a_{t+1})
 $$
 A good next turn predictor trained on $Z$ must internalize a predictive latent that is sufficient for after factors. Its internal state $h_{\theta_G}(z_{<t})$ needs to behave like a predictive state $q_t$: enough information about the history to produce the next action and to forecast the next observation in response to that action. Under unifilarity and stationarity this predictive latent aligns with the causal state of the $\varepsilon$-transducer at the level of turns.
 
 Finally, what does this mean for a transformer trained on sequences of turns. In practice each turn is a tuple $z_t=(a_t,o_t)$. The natural training target is two step: first predict the action, then predict the observation given that action and the history. Concretely the model estimates
 $$
-P(a_{t+1}\mid z_{\le t}) \quad \text{and} \quad P(o_{t+1}\mid a_{t+1}, z_{\le t}) .
+P(a_{t+1}\mid z_{\le t}) \quad \text{and} \quad P(o_{t+1}\mid a_{t+1}, z_{\le t})
 $$
 The internal state right after emitting $a_{t+1}$ is a sufficient statistic of the agent side $\hat s_t$ for the purpose of the policy. The internal state right after receiving $o_{t+1}$ is a sufficient statistic of the environment branch $s_{t+1}$ for the purpose of predicting the next observation. This boundary effect also explains a mild separability we observe in practice. A single shared head can support both factors, but the logits factor by conditioning order: action logits depend mostly on the agent slice of the predictive state, observation logits condition further on the realized action and align with the environment slice. That is the concrete story of what a transformer trained on these sequences has learned. It has learned a predictive state that simultaneously supports an action policy and a world model at the level of turns, and it updates that state at the two natural boundaries of the turn, first at action time and then at observation time.
 
 ### Goal Directedness and State Representation
 
-When a reward function $R : \mathcal{S} \times \mathcal{A} \to \mathbb{R}$ exists, we define the objective functional:
-
+Until now we only assumed a stationary behavioral policy without any interpretation of its meaning. We now focus on how the agent’s parameters could have come to be in an optimal way. In general an agent’s actions are interpreted as goal directed, that is we read the behavior as an attempt to lead the world toward desired states. We formalize reward as a function on action-conditioned state transitions
 $$
-J(\theta) = \mathbb{E}_{Z \sim P(Z \mid \theta)}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+R:\mathcal S\times\mathcal A\times\mathcal S\to\mathbb R,\qquad (s_t,a_t,s_{t+1})\mapsto R(s_t,a_t,s_{t+1})
 $$
+which can equivalently be seen as a function on the edges of the transducer graph. For discrete reward classes, this induces an edge coloring.
 
-Learning then becomes a dynamical process over the parameter space, defined by the update operator $\Phi: \Theta \to \Theta$ such that $\theta_{k+1} = \Phi(\theta_k)$, where $\Phi$ could be gradient ascent:
-
+Given parameters $\theta=(\theta_\pi,\theta_{\mathcal M})$ we interpret the agent's policy as its best attempt to maximize expected return over agent–environment traces $Z$:
 $$
-\Phi(\theta) = \theta + \eta \nabla_\theta J(\theta)
+J(\theta)=\mathbb E_{Z\sim P(Z\mid\theta)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
-
-or any other optimization procedure. The reinforcement learning problem seeks the fixed point $\theta^* \in \Theta$ satisfying:
-
+Learning becomes a dynamical process over parameter space, with an update operator $\Phi:\Theta\to\Theta$ and $\theta_{k+1}=\Phi(\theta_k)$. For example, gradient ascent
 $$
-\theta^* = \lim_{k \to \infty} \Phi^{(k)}(\theta_0) = \arg\max_{\theta \in \Theta} J(\theta)
+\Phi(\theta)=\theta+\eta\nabla_\theta J(\theta)
 $$
-
-Since $\theta = (\theta_\pi, \theta_{\mathcal{M}})$, we can make explicit that the optimization operates solely over the agent's policy and world model parameters:
-
+or any other optimization scheme. The reinforcement learning problem seeks a fixed point $\theta^*\in\Theta$ satisfying
 $$
-(\theta_\pi^*, \theta_{\mathcal{M}}^*) = \arg\max_{\theta_\pi, \theta_{\mathcal{M}}} \mathbb{E}_{Z \sim P(Z \mid \theta_\pi, \theta_{\mathcal{M}})}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+\theta^*=\lim_{k\to\infty}\Phi^{(k)}(\theta_0)=\arg\max_{\theta\in\Theta} J(\theta)
 $$
-
-where the expectation is taken with respect to trajectories generated by the agent's policy $\pi(\cdot \mid \cdot; \theta_\pi)$ and state updates $\mathcal{M}(\cdot \mid \cdot; \theta_{\mathcal{M}})$, while the environment dynamics $P(o_{t+1} \mid s_t, a_{t+1})$ and $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$ remain fixed and unparameterized. Here $\Phi^{(k)}$ denotes the $k$-fold composition of $\Phi$, assuming convergence from initial parameters $\theta_0$. In practice, we settle for local optima or stationary points where $\|\theta_{k+1} - \theta_k\| < \epsilon$ for some tolerance $\epsilon > 0$.
-
-
-The world model with parameters $\theta_{\mathcal{M}}$ learns to approximate this distribution. Let $\hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}})$ be the model's prediction given its internal state $\hat{s}_t$ (which encodes the belief). The learning objective becomes minimizing the KL divergence:
-
+Since $\theta=(\theta_\pi,\theta_{\mathcal M})$, we make explicit that optimization operates over the agent's policy and world model:
 $$
-\mathcal{L}_{\mathcal{M}}(\theta_{\mathcal{M}}) = \mathbb{E}_{h_t, a_{t+1}} \left[ D_{KL}\!\left( P(o_{t+1} \mid a_{t+1}, h_t) \,\|\, \hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}}) \right) \right]
+(\theta_\pi^*,\theta_{\mathcal M}^*)=\arg\max_{\theta_\pi,\theta_{\mathcal M}}
+\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
+with trajectories generated by $\pi(\cdot\mid\cdot;\theta_\pi)$ and $\mathcal M(\cdot\mid\cdot;\theta_{\mathcal M})$, while the environment kernels $P(o_{t+1}\mid s_t,a_{t+1})$ and $P(s_{t+1}\mid s_t,a_{t+1},o_{t+1})$ are fixed. In practice we settle for local optima or stationary points with $|\theta_{k+1}-\theta_k|<\epsilon$.
 
-This simplifies to the cross-entropy loss in practice:
+Since we are interested in stationary policies and the environment channel is stationary by construction, we focus on the long-run behavior induced by a given policy when it exists. The short answer to what the agent must understand is well known. By the Good Regulator connection, to implement reward maximizing behavior the agent requires a sufficient representation of the environment hidden states on the portion of state space actually visited by the policy that achieves the optimum. We keep the PSR and belief-state view to relate the agent's internal state $\hat s_t$ and the environment state $s_t$. Since the reward $R(s_t,a_t,s_{t+1})$ is a function of the transition, a world model that predicts the environment's response and updates belief consistently with that transition can also predict reward and support optimal action.
 
+Not all states have nonzero probability under the policy of interest. Given an initial state distribution $P(s_0)$, a policy $\pi$ may visit only a subset of states. We call this the coverage of the policy. Formally,
 $$
-\mathcal{L}_{\mathcal{M}}(\theta_{\mathcal{M}}) = -\mathbb{E}_{h_t, a_{t+1}, o_{t+1}} \left[ \log \hat{P}(o_{t+1} \mid a_{t+1}, \hat{s}_t; \theta_{\mathcal{M}}) \right]
+\mathcal S^\pi=\{s\in\mathcal S:\exists t\ \Pr_\pi(s_t=s\mid P(s_0))>0\}
 $$
-
-Given an optimal (or sufficiently accurate) world model $\theta_{\mathcal{M}}^*$, the policy optimization becomes:
-
+When a stationary distribution exists we write
 $$
-\theta_\pi^* = \arg\max_{\theta_\pi} \mathbb{E}_{Z \sim P(Z \mid \theta_\pi, \theta_{\mathcal{M}}^*)}\left[\sum_{t=1}^T R(s_t, a_t)\right]
+d^\pi(s)=\lim_{t\to\infty}\Pr_\pi(s_t=s)
 $$
+Two related measures quantify breadth and uncertainty of visitation,
+$$
+H_\pi(S_t)=-\sum_{s} \Pr_\pi(s_t=s)\log \Pr_\pi(s_t=s),\qquad
+H_\pi(S_{t+1}\mid S_t,A_t)
+$$
+Because the turn process is unifilar at this scale, the conditional entropy $H_\pi(S_{t+1}\mid S_t,A_t)$ concentrates the uncertainty into the leftover branches consistent with the emitted observation. Intuitively it counts how many outcome branches remain possible after fixing $(S_t,A_t)$, up to the identification that different observations can still map to the same next state.
 
-This decomposition reveals a fundamental principle: accurate state estimation (via the world model) is a prerequisite for optimal decision-making (via the policy). The world model provides the informational substrate upon which the policy operates, transforming partial observations into belief states that support reward-maximizing action selection.
+These definitions let us state the target for an optimal world model without referencing reward. The world model with parameters $\theta_{\mathcal M}$ is trained to predict the next observation given action and internal state. Let $\hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})$ be its emission. The objective is
+$$
+\mathcal L_{\mathcal M}(\theta_{\mathcal M})
+=\mathbb E_{h_t,a_{t+1}} \Big[ D_{KL}\big( P(o_{t+1}\mid a_{t+1},h_t)\ |\ \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M}) \big) \Big]
+$$
+implemented as cross entropy,
+$$
+\mathcal L_{\mathcal M}(\theta_{\mathcal M})
+=-\mathbb E_{h_t,a_{t+1},o_{t+1}}\big[\log \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})\big]
+$$
+Given an accurate world model $\theta_{\mathcal M}^*$, policy optimization becomes
+$$
+\theta_\pi^*=\arg\max_{\theta_\pi}\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M}^*)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
+$$
+The principle is simple. Accurate state estimation enables optimal decision making.
+
+Training the world model purely on on-policy data induces a clear importance-sampling relationship between the learned model and the policy. The data distribution is the one induced by $\pi$, so the learned predictor is most accurate on transitions with high probability under $\pi$ and can be weakly constrained on counterfactual branches. In other words, the effective model focuses on $\mathcal S^\pi$ and on the action branches actually tried. This is why coverage matters. Exploration strategies expand $\mathcal S^\pi$ and, in stochastic environments, can raise $H_\pi(S_t)$, which tightens the world model on more of the transition graph. Uniform random actions and $\varepsilon$-greedy policies guarantee coverage in the sense that every action branch receives nonzero probability, although they do not guarantee maximum state entropy.
+
+Three common regimes make this trade-off explicit.
+
+* Exploration. During training the agent balances exploitation with the discovery of rewarding states, expanding $\mathcal S^\pi$ and improving constraints on the model.
+* Multi-policy learning. When one agent solves multiple tasks in the same environment, overlapping coverage sets make it natural to decouple reward from the world model and reuse a shared predictive representation.
+* Goal-directed policies. When reward encodes only the desirability of a final state, the policy family lives on a common transition graph and searches for short paths between nodes of that graph.
+
+When the learning objective requires coverage, the world model must approach a sufficient statistic of the environment, so that its internal state supports any policy defined on the transition graph. The same boundary logic from agentic traces applies. After emitting $a_{t+1}$ the internal state is sufficient for action selection. After ingesting $o_{t+1}$ it is sufficient for predicting future observations and for scoring the colored edge $(s_t,a_t,s_{t+1})$.
 
 ### Learning to Please the Gods from a Drunken Pythia
 
 We conclude with a light-weight toy example inspired by the identity-not channel in computational mechanics. In the channel there are two modes. In the identity mode the output matches the input. In the not mode the output flips the input. The mode itself toggles every turn. The agent chooses the input each turn, so the evolution is controlled in the simple sense that what happens next depends both on the hidden mode and on the agent’s current act. 
 
-```
-On a mountain there is a shrine to two gods, one loyal and one a trickster. The statue has two plates, one marked offering and one marked nothing, and an omen returned after each turn is the only public signal of which god currently guards the shrine. The loyal god returns offering with blessing and nothing with curse, while the trickster returns nothing with blessing and offering with curse; after each turn the satisfied guardian departs and the other takes the watch. An old and drunken pythia serves the shrine by choosing between offering and nothing at random. She has done this for decades and still does not understand the pattern. To make matters worse, after one hundred turns the gods go on vacation for a week, the shrine falls silent, and when it returns it simply begins glowing again, ready for offering, and there is no way to know which guardian has come back to the post.
-She no longer knows whether blessing means the loyal god who mirrors the act or the trickster who inverts it, so she gave up trying to reason it out. We study the problem from the perspective of her disciple, who has observed this behavior for years and will soon take over. She wants to please the gods as well as possible and asks what can be inferred from the drunken policy to recover the correct strategy. 
-```
+
+*On a mountain there is a shrine to two gods, one loyal and one a trickster. The statue has two plates, one marked offering and one marked nothing, and an omen returned after each turn is the only public signal of which god currently guards the shrine. The loyal god returns offering with blessing and nothing with curse, while the trickster returns nothing with blessing and offering with curse; after each turn the satisfied guardian departs and the other takes the watch. An old and drunken pythia serves the shrine by choosing between offering and nothing at random. She has done this for decades and still does not understand the pattern. To make matters worse, after one hundred turns the gods go on vacation for a week, the shrine falls silent, and when it returns it simply begins glowing again, ready for offering, and there is no way to know which guardian has come back to the post.
+She no longer knows whether blessing means the loyal god who mirrors the act or the trickster who inverts it, so she gave up trying to reason it out. We study the problem from the perspective of her disciple, who has observed this behavior for years and will soon take over. She wants to please the gods as well as possible and asks what can be inferred from the drunken policy to recover the correct strategy.*
 
 We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t$ the act (offering or nothing) and $o_t$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
 $$
