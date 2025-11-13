@@ -13,6 +13,7 @@ format:
 
 
 
+
 ### tags: @vision @abstractions
 
 
@@ -110,9 +111,46 @@ P(a_{t+1}\mid z_{\le t}) \quad \text{and} \quad P(o_{t+1}\mid a_{t+1}, z_{\le t}
 $$
 The internal state right after emitting $a_{t+1}$ is a sufficient statistic of the agent side $\hat s_t$ for the purpose of the policy. The internal state right after receiving $o_{t+1}$ is a sufficient statistic of the environment branch $s_{t+1}$ for the purpose of predicting the next observation. This boundary effect also explains a mild separability we observe in practice. A single shared head can support both factors, but the logits factor by conditioning order: action logits depend mostly on the agent slice of the predictive state, observation logits condition further on the realized action and align with the environment slice. That is the concrete story of what a transformer trained on these sequences has learned. It has learned a predictive state that simultaneously supports an action policy and a world model at the level of turns, and it updates that state at the two natural boundaries of the turn, first at action time and then at observation time.
 
-### Goal Directedness and State Representation
 
-Until now we only assumed a stationary behavioral policy without any interpretation of its meaning. We now focus on how the agent’s parameters could have come to be in an optimal way. In general an agent’s actions are interpreted as goal directed, that is we read the behavior as an attempt to lead the world toward desired states. We formalize reward as a function on action-conditioned state transitions
+### Transformers as Sufficient Approximator
+
+At this point we know what the right phenomenological model class is. For a stationary agent–environment process over turns, the best predictive summarizer of history is an unifilar sufficient process: a latent chain whose state is a sufficient statistic of the past for predicting the future, and whose update is deterministic given the current state and the next emitted symbol. The belief process over $(s_t,\hat s_t)$ is of this type. The history-based $\varepsilon$-transducer is of this type. In the finite-state unifilar case, belief states synchronize onto the generator and the causal states of the $\varepsilon$-transducer are information-equivalent to the belief states.
+
+The remaining question is whether a transformer trained on turn sequences lands in this same class. For sequences shorter than its context window, it does.
+
+A decoder-only transformer with finite vocabulary and context window implements a deterministic map
+$$
+z_{\le t} \longmapsto h_t(z_{\le t})\in\mathbb R^d
+$$
+from discrete histories to continuous hidden states. Under mild assumptions on initialization and training this map is almost surely injective over the space of prompts (Nikolaou et al., 2025). Once the map is injective, the hidden state and the history generate the same $\sigma$-algebra: each can be recovered from the other by some, possibly very ugly, measurable function. In particular, $h_t$ is already a sufficient statistic of $z_{\le t}$ for any property of the history, including prediction of future turns. This is true before training and after any finite amount of training; sufficiency here is a structural property of the architecture, not something that appears only in a convergence limit.
+
+The latent update is unifilar as well. Given the current hidden state $h_t$ and the new turn $z_{t+1}$, the forward computation of the transformer returns a unique next state
+$$
+h_{t+1}=F(h_t,z_{t+1})
+$$
+There is no stochasticity inside the network; all randomness lives in sampling the next turn from the output distribution. Restricted to histories within its context window the transformer therefore defines an unifilar latent process over $(h_t)$ driven by the observed turns.
+
+So the hidden process of a well-defined transformer on sequences of length at most $K$ is an unifilar sufficient approximator of the agentic trace distribution. We are back in the same model class as the belief chain and the $\varepsilon$-transducer. In that class, the computational mechanics story applies: there is a unique minimal unifilar sufficient presentation, and any other unifilar sufficient presentation factors through it by a many-to-one map. Concretely, there exists a coarse-graining
+$$
+\phi:\ h_t\mapsto \text{causal state}
+$$
+such that the induced causal-state process has the same predictive content as the history and evolves with the correct unifilar update. The transformer latent chain is then a higher dimensional invertible refinement that contains the minimal world model as a quotient.
+
+The output heads tie this factorization back to behavior. For the action channel we have
+$$
+\ell_t^a = W_a h_t + b_a,\qquad P(a_{t+1}\mid z_{\le t}) = \operatorname{softmax}(\ell_t^a),
+$$
+and similarly for observations. These affine plus softmax maps pick out the predictive directions in latent space and collapse away null directions along which next-turn behavior does not change. The causal-state quotient identifies hidden states that are equivalent under all such predictive tests.
+
+Seen this way, auxiliary losses that explicitly train a latent transition model in representation space, such as next-latent prediction (Teoh et al., 2025), are best read as regularizers on a structure that is already there. They do not create belief states or unifilarity. The transformer is already an unifilar sufficient approximator of the agent–environment process and already contains the minimal $\varepsilon$-transducer up to coarse-graining. What these losses can do is encourage the network to choose a simpler coordinate system on its latent process, in which the embedded world model and its update look more like a small recurrent dynamics and less like an arbitrary invertible encoding of the full history.
+
+
+
+### Goal Directedness and State Coverage
+
+Until now we only assumed a stationary behavioral policy, without any interpretation of its meaning or of how much of the environment’s causal structure it reveals. We now focus on how the agent’s parameters could have come to be in an optimal way, and study the relationship between behavioral policies and the environment state coverage they induce.
+
+In general an agent’s actions are interpreted as goal directed, that is we read the behavior as an attempt to lead the world toward desired states. We formalize reward as a function on action-conditioned state transitions
 $$
 R:\mathcal S\times\mathcal A\times\mathcal S\to\mathbb R,\qquad (s_t,a_t,s_{t+1})\mapsto R(s_t,a_t,s_{t+1})
 $$
