@@ -1,5 +1,11 @@
 https://firstlaw.wordpress.com/wp-content/uploads/2011/10/goodregulator.pdf
 
+https://www.jstor.org/stable/168926
+
+https://www.jstor.org/stable/169635
+
+https://people.csail.mit.edu/lpk/papers/aij98-pomdp.pdf
+
 https://arxiv.org/abs/cond-mat/9907176
 
 https://arxiv.org/abs/cs/0406011
@@ -7,6 +13,8 @@ https://arxiv.org/abs/cs/0406011
 https://arxiv.org/abs/math/0703715
 
 https://arxiv.org/abs/1008.4182
+
+https://www.roboticsproceedings.org/rss04/p9.pdf
 
 https://arxiv.org/abs/1011.0036
 
@@ -24,7 +32,9 @@ https://arxiv.org/abs/1906.10437
 
 https://arxiv.org/abs/1912.03553
 
-https://www.roboticsproceedings.org/rss04/p9.pdf
+https://www.cs.cmu.edu/~ggordon/jpineau-ggordon-thrun.ijcai03.pdf
+
+https://icaps20subpages.icaps-conference.org/wp-content/uploads/2020/10/14-PlanRob_2020_paper_3.pdf
 
 https://arxiv.org/abs/2307.09702
 
