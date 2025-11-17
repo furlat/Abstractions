@@ -16,9 +16,13 @@ https://arxiv.org/abs/1309.1392
 
 https://arxiv.org/abs/1412.2690
 
+https://ojs.aaai.org/index.php/AIIDE/article/view/12876
+
 https://arxiv.org/abs/1811.12530
 
 https://arxiv.org/abs/1906.10437
+
+https://arxiv.org/abs/1912.03553
 
 https://arxiv.org/abs/2307.09702
 
@@ -27,6 +31,8 @@ https://arxiv.org/abs/2410.06045
 https://arxiv.org/abs/2503.00511
 
 https://arxiv.org/abs/2410.23506
+
+https://arxiv.org/abs/2509.08785
 
 https://arxiv.org/abs/2510.09312
 
