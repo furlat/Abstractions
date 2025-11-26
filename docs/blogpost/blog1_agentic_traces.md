@@ -1,18 +1,21 @@
-# Learning from Agentic Traces
+![abstractions](abstractions.gif)
+
+# Learning World Models from Agentic Traces
 
 ### tags: @vision @abstractions
 
 
 ## Introduction
 
-Building LLM agents has never been easier, with API providers directly exposing tool calls as a first-class primitive and a myriad of opinionated frameworks each harnessing the API in a slightly different way. This fertile ground has led to such a proliferation of open-source projects and startups that it is now common to conflate agents with LLMs interacting with some external system. Yes, we are finally able to write adaptive workflows, or even goal-oriented programs and sophisticated coding assistants, but the result often feels stitched together.
+With this blogpost I want to start demystifying the relationship between LLMs and agency. Like many others, I got my first aha moment with language models thanks to AI Dungeon. I had already worked on LSTMs for text generation during my internships at AWS a few years prior, but the relatively coherent ability of GPT-2 to simulate a dungeon-crawling video game was too interesting to ignore. 
 
-With this blogpost I want to start demystifying the relationship between LLMs and agency. Like many others, I got my first aha moment with language models thanks to AI-Dungeon. I had already worked on LSTMs for text generation during my internships at AWS a few years prior, but the relatively coherent ability of GPT-2 to simulate a dungeon-crawling video-game was too interesting to ignore. Of course the general understanding was that having the model pretrained on a large amount of fantasy books and RPG manuals, an initial story prompt, and the user input were enough for the model to autocomplete something somehow cohesive. In retrospect, what I find prescient was how the human-GPT alternation ended up creating a sort of agentic boundary. With the simple trick of anchoring human inputs to the protagonist’s actions, the generations could be naturally interpreted as the world’s responses to those inputs. My understanding now is that if a model trained on predicting text in novels learns to produce agentic traces, maybe it is because the novels themselves are just entertaining agentic traces.
+Of course the general understanding was that having the model pretrained on a large amount of fantasy books and RPG manuals, an initial story prompt, and the user input were enough for the model to autocomplete something somehow cohesive. In retrospect, what I find prescient was how the human-GPT alternation ended up creating an agentic boundary. The simple trick of anchoring human inputs to the presumably consistent protagonist's actions was enough for the generations to be naturally interpreted as the environment's responses to those inputs. While surprising, this boundary was quite feeble. It was far too easy for the human to modify the state of the environment by simply stating facts as part of its actions, and the AI would way too often attempt to take actions on the protagonist's behalf.
 
-I see in those rooms the first spurs of the ubiquitous turn-based behavior of today's chat-based assistants. The navigation of imaginary dungeons has been replaced with charting of the assistant's internal world, conveniently reshaped by RLHF to be as explorable as possible for humans.
+Nonetheless, we had a clear example that LLMs could be used as world models of potentially infinite reinforcement learning environments. Given that the duality between world modeling and agency is a rabbit hole I can't seem to escape, I will argue that the ability of language models to implicitly internalize world models from agentic traces is what makes them a powerful substrate for building agents. A corollary of this interpretation is that the modern success of assistant-models that use sophisticated chat-templates and various regimes of gradient-masking is due to the precise reinforcement of this agentic boundary. Similarly, many of the systematic failures of modern LLM agents can be traced to the laser-focus of post-training techniques on optimal Markovian decision making overshadowing the world modeling aspect. 
 
-I will argue here that the ability of language models to implicitly interiorize world models from agentic traces is what makes them a powerful substrate for building agents.
-We will start with a toy example to ground the discussion and show how transformers implicitly learn world models from agentic traces. Then we will formalize the problem in depth using some results from Computational Mechanics linking autoregressive stochastic processes and Partially Observable Markov Decision Processes (POMDPs). Finally we will discuss the relationship between goal directedness, state coverage and world model accuracy.
+
+
+We will start with a few toy examples to ground the discussion and show how transformers implicitly learn world models from agentic traces. Then we will formalize the problem in depth using some results from Computational Mechanics linking autoregressive stochastic processes and Partially Observable Markov Decision Processes (POMDPs). Finally we will discuss the relationship between goal directedness, state coverage and world model accuracy.
 
 
 ### Learning to Please the Gods Studying a Drunken Pythia
@@ -23,6 +26,9 @@ We start with a light-weight toy example inspired by the identity-not channel in
 *On a mountain there is a shrine to two gods, one loyal and one a trickster. The statue has two plates, one marked offering and one marked nothing, and an omen returned after each turn is the only public signal of which god currently guards the shrine. The loyal god returns offering with blessing and nothing with curse, while the trickster returns nothing with blessing and offering with curse; after each turn the satisfied guardian departs and the other takes the watch. An old and drunken pythia serves the shrine by choosing between offering and nothing at random. She has done this for decades and still does not understand the pattern. To make matters worse, after one hundred turns the gods go on vacation for a week, the shrine falls silent, and when it returns it simply begins glowing again, ready for offering, and there is no way to know which guardian has come back to the post.
 She no longer knows whether blessing means the loyal god who mirrors the act or the trickster who inverts it, so she gave up trying to reason it out. We study the problem from the perspective of her disciple, who has observed this behavior for years and will soon take over. She wants to please the gods as well as possible and asks what can be inferred from the drunken policy to recover the correct strategy.*
 
+![shrine](shrine_gif_8mb.gif)
+
+
 We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t$ the act (offering or nothing) and $o_t$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
 $$
 s_t = \mathbb{1}[a_{t-1} = o_{t-1}], \qquad o_t = a_t \oplus s_t.
@@ -32,6 +38,11 @@ Here $s_t=0$ is loyal and $s_t=1$ is trickster, so $o_t=a_t$ under loyal and $o_
 Inputs alone do not suffice and outputs alone do not suffice. The joint pair $(a_{t-1}, o_{t-1})$ fixes the mode for the step, and once the turn $(a_t, o_t)$ is realized the environment updates unifilarly. This matches the agentic trace view above. The agent proposes $a_t$. The shrine emits $o_t$ given $s_t$ and $a_t$. The minimal predictive latent the model must carry is the phase $s_t$.
 
 To keep runs independent we add a renewal. After one hundred turns the gods leave for a week and the shrine falls silent. When the shrine restarts it simply begins glowing again, ready for offering, and the guarding mode is drawn as $s_0 \sim \text{Bernoulli}(1/2)$. That draw sets the phase for the new epoch. Within an epoch the one step joint history $(a_{t-1}, o_{t-1})$ together with the current act is sufficient to predict $o_t$ and to update $s_t$.
+
+### My Years as a Drop-Rate Analyst in the Tiger Gacha Dungeon
+
+*In a dungeon there is a chamber with two identical doors. Behind one waits a tiger, behind the other a chest of gold. The tiger makes no sound and the doors give no indication. An adventurer can press their ear to the stone and listen; the acoustics carry a faint hint of which side holds danger, though the echo misleads roughly one time in six. Listening costs torchlight and time. Opening a door ends the expedition, gold meaning triumph and tiger meaning the evident alternative.
+A young bag-carrier has spent years hauling equipment through this chamber, watching adventurers make their choices. Some were reckless and opened a door on instinct. Some were cautious, listening several times before committing. A few seemed to know exactly when they had heard enough. She wrote down every action and every outcome in a worn notebook. After enough expeditions she no longer carries bags. She sits at the dungeon's entrance and advises those who ask. The question we study is what structure in her notebook could support such advice, and whether a model trained on these varied records could learn when to listen and when to act.*
 
 ### Empircal Section
 There will be training of transformer on pythia data and probes towards hidden state as well as reinforcement learning experimetnts starting from random, pretrained-frozen, pretraiend fionetuned models. We should be able to show that we can easily reach optimal behavior from this simple setup. 
@@ -55,6 +66,9 @@ In this sense, it is useful to speak about an agentic system when its measurable
 To make our discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
 
 Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_t$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_t; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_t; \theta_\pi)$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_\pi, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
+
+![Transition Graph](transition_correct_z_index.png)
+
 
 The emission of the next turn decomposes into agent action selection and environment observation emission:
 $$
@@ -234,3 +248,6 @@ Three common regimes make this trade-off explicit.
 
 When the learning objective requires coverage, the world model must approach a sufficient statistic of the environment, so that its internal state supports any policy defined on the transition graph. The same boundary logic from agentic traces applies. After emitting $a_{t+1}$ the internal state is sufficient for action selection. After ingesting $o_{t+1}$ it is sufficient for predicting future observations and for scoring the colored edge $(s_t,a_t,s_{t+1})$.
 
+### Conclusion
+
+I see in those rooms the first spurs of the ubiquitous turn-based behavior of today's chat-based assistants. The navigation of imaginary dungeons has been replaced with charting of the assistant's internal world, conveniently reshaped by RLHF to be as explorable as possible for humans.My understanding now is that if a model trained on predicting text in novels learns to produce agentic traces, maybe it is because the novels themselves are just entertaining agentic traces.
