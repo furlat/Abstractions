@@ -54,6 +54,8 @@ https://arxiv.org/abs/2005.08935
 
 https://arxiv.org/abs/2207.10342
 
+https://arxiv.org/abs/2303.11366
+
 https://arxiv.org/abs/2307.09702
 
 https://arxiv.org/abs/2307.11044
@@ -64,6 +66,8 @@ https://proceedings.neurips.cc/paper_files/paper/2022/file/d53538ba21c05fa361d2b
 
 
 https://proceedings.neurips.cc/paper_files/paper/2022/file/80b7bec60081f95d900973509744a306-Paper-Conference.pdf    
+
+https://arxiv.org/abs/2407.10583
 
 https://arxiv.org/abs/2410.06045
 
@@ -107,3 +111,6 @@ c71df24045cfddab4a963d3ac9bdc9a3-Paper.pdf
 https://arxiv.org/abs/2506.02923
 
 https://openreview.net/pdf?id=u5enPCwaLt
+
+
+props-llm.github.io
