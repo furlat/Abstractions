@@ -84,7 +84,7 @@ In this sense, it is useful to speak about an agentic system when its measurable
 
 To make our discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
 
-Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_t$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_t; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_t; \theta_\pi)$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_\pi, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
+Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_{t}$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi})$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_{\pi}, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
 
 ![Transition Graph](transition_correct_z_index.png)
 
@@ -92,7 +92,7 @@ Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, 
 The emission of the next turn decomposes into agent action selection and environment observation emission:
 
 $$
-P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta) = \pi(a_{t+1} \mid \hat{s}_{t}; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
+P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta) = \pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
 $$
 
 This is the macro interface where the agent proposes $a_{t+1}$ and the environment commits to a symbol $o_{t+1}$ that will also drive the unifilar update of its hidden state.
@@ -114,7 +114,7 @@ $$
 Which expands to the full factorization $P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta)$:
 
 $$
-\pi(a_{t+1} \mid \hat{s}_{t}; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
 $$
 
 For a complete trajectory $Z = \{z_1, z_2, \ldots, z_T\}$ with $z_t = (a_t, o_t)$, the joint probability over all turns and hidden states given the agent parameters $\theta$ is:
@@ -141,13 +141,13 @@ There are two standard ways to model hidden stochastic processes.
 **Belief over latent state.** We put a probabilistic model on the world and filter observations into a belief over the joint latent state
 
 $$
-b_t(s,\hat s)=P(s_t=s,\hat s_t=\hat s\mid a_{1:t},o_{1:t})
+b_t(s,\hat{s})=P(s_t=s,\hat{s}_{t}=\hat{s}\mid a_{1:t},o_{1:t})
 $$
 
 After a new turn $(a_{t+1},o_{t+1})$ the belief updates with Bayes: 
 
 $$
- b_{t+1}(s',\hat s') \propto \sum_{s,\hat s} b_t(s,\hat s)\,\pi(a_{t+1}\mid \hat s)\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1})\,\mathcal M(\hat s'\mid \hat s,a_{t+1},o_{t+1})
+ b_{t+1}(s',\hat{s}') \propto \sum_{s,\hat{s}} b_t(s,\hat{s})\,\pi(a_{t+1}\mid \hat{s})\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1})\,\mathcal{M}(\hat{s}'\mid \hat{s},a_{t+1},o_{t+1})
 $$
 
 Under our setup the environment update is unifilar at the turn scale. Once $(s_t,a_{t+1},o_{t+1})$ are fixed, the next environment state $s_{t+1}$ is unique almost surely. This gives synchronization: as turns accumulate, the belief concentrates along the causal branches consistent with the observations for both the environment and agent states.
@@ -165,7 +165,7 @@ These two views meet at the minimal predictive presentation. Among optimal nonli
 What does a strong autoregressive model have to encode to predict our traces. Recall the emission decomposition
 
 $$
-P(z_{t+1}\mid s_t,\hat s_t)=\pi(a_{t+1}\mid \hat s_t)\cdot P(o_{t+1}\mid s_t,a_{t+1})
+P(z_{t+1}\mid s_t,\hat{s}_{t})=\pi(a_{t+1}\mid \hat{s}_{t})\cdot P(o_{t+1}\mid s_t,a_{t+1})
 $$
 
 A good next turn predictor trained on $Z$ must internalize a predictive latent that is sufficient for after factors. Its internal state $h_{\theta_G}(z_{<t})$ needs to behave like a predictive state $q_t$: enough information about the history to produce the next action and to forecast the next observation in response to that action. Under unifilarity and stationarity this predictive latent aligns with the causal state of the $\varepsilon$-transducer at the level of turns.
@@ -254,11 +254,11 @@ $$
 Since $\theta=(\theta_\pi,\theta_{\mathcal M})$, we make explicit that optimization operates over the agent's policy and world model:
 
 $$
-(\theta_{\pi}^*,\theta_{\mathcal M}^*)=\arg\max_{\theta_\pi,\theta_{\mathcal M}}
-\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
+(\theta_{\pi}^{\ast},\theta_{\mathcal{M}}^{\ast})=\arg\max_{\theta_{\pi},\theta_{\mathcal{M}}}
+\ \mathbb E_{Z\sim P(Z\mid \theta_{\pi},\theta_{\mathcal{M}})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
 
-with trajectories generated by $\pi(\cdot\mid\cdot;\theta_\pi)$ and $\mathcal M(\cdot\mid\cdot;\theta_{\mathcal M})$, while the environment kernels $P(o_{t+1}\mid s_t,a_{t+1})$ and $P(s_{t+1}\mid s_t,a_{t+1},o_{t+1})$ are fixed. In practice we settle for local optima or stationary points with $|\theta_{k+1}-\theta_k|<\epsilon$.
+with trajectories generated by $\pi(\cdot\mid\cdot;\theta_{\pi})$ and $\mathcal{M}(\cdot\mid\cdot;\theta_{\mathcal{M}})$, while the environment kernels $P(o_{t+1}\mid s_t,a_{t+1})$ and $P(s_{t+1}\mid s_t,a_{t+1},o_{t+1})$ are fixed. In practice we settle for local optima or stationary points with $|\theta_{k+1}-\theta_k|<\epsilon$.
 
 Since we are interested in stationary policies and the environment channel is stationary by construction, we focus on the long-run behavior induced by a given policy when it exists. The short answer to what the agent must understand is well known. By the Good Regulator connection, to implement reward maximizing behavior the agent requires a sufficient representation of the environment hidden states on the portion of state space actually visited by the policy that achieves the optimum. We keep the PSR and belief-state view to relate the agent's internal state $\hat s_t$ and the environment state $s_t$. Since the reward $R(s_t,a_t,s_{t+1})$ is a function of the transition, a world model that predicts the environment's response and updates belief consistently with that transition can also predict reward and support optimal action.
 
@@ -283,24 +283,24 @@ $$
 
 Because the turn process is unifilar at this scale, the conditional entropy $H_\pi(S_{t+1}\mid S_t,A_t)$ concentrates the uncertainty into the leftover branches consistent with the emitted observation. Intuitively it counts how many outcome branches remain possible after fixing $(S_t,A_t)$, up to the identification that different observations can still map to the same next state.
 
-These definitions let us state the target for an optimal world model without referencing reward. The world model with parameters $\theta_{\mathcal M}$ is trained to predict the next observation given action and internal state. Let $\hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})$ be its emission. The objective is
+These definitions let us state the target for an optimal world model without referencing reward. The world model with parameters $\theta_{\mathcal{M}}$ is trained to predict the next observation given action and internal state. Let $\hat P(o_{t+1}\mid a_{t+1},\hat{s}_{t};\theta_{\mathcal{M}})$ be its emission. The objective is
 
 $$
-\mathcal L_{\mathcal M}(\theta_{\mathcal M})
-=\mathbb E_{h_t,a_{t+1}} \Big[ D_{KL}\big( P(o_{t+1}\mid a_{t+1},h_t)\ |\ \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M}) \big) \Big]
+\mathcal L_{\mathcal{M}}(\theta_{\mathcal{M}})
+=\mathbb E_{h_t,a_{t+1}} \Big[ D_{KL}\big( P(o_{t+1}\mid a_{t+1},h_t)\ |\ \hat P(o_{t+1}\mid a_{t+1},\hat{s}_{t};\theta_{\mathcal{M}}) \big) \Big]
 $$
 
 implemented as cross entropy,
 
 $$
-\mathcal L_{\mathcal M}(\theta_{\mathcal M})
-=-\mathbb E_{h_t,a_{t+1},o_{t+1}}\big[\log \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})\big]
+\mathcal L_{\mathcal{M}}(\theta_{\mathcal{M}})
+=-\mathbb E_{h_t,a_{t+1},o_{t+1}}\big[\log \hat P(o_{t+1}\mid a_{t+1},\hat{s}_{t};\theta_{\mathcal{M}})\big]
 $$
 
 Given an accurate world model $\theta_{\mathcal M}^*$, policy optimization becomes
 
 $$
-\theta_{\pi}^*=\arg\max_{\theta_\pi}\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M}^*)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
+\theta_{\pi}^{\ast}=\arg\max_{\theta_{\pi}}\ \mathbb E_{Z\sim P(Z\mid \theta_{\pi},\theta_{\mathcal{M}}^{\ast})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
 
 The principle is simple. Accurate state estimation enables optimal decision making.
