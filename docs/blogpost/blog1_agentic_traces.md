@@ -45,9 +45,11 @@ She no longer knows whether blessing means the loyal god who mirrors the act or 
 
 
 We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t$ the act (offering or nothing) and $o_t$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
+
 $$
 s_t = \mathbb{1}[a_{t-1} = o_{t-1}], \qquad o_t = a_t \oplus s_t.
 $$
+
 Here $s_t=0$ is loyal and $s_t=1$ is trickster, so $o_t=a_t$ under loyal and $o_t\neq a_t$ under trickster. This also implies the period-2 alternation $s_t=\neg s_{t-1}$ since $o_{t-1}=a_{t-1}\oplus s_{t-1}$.
 
 Inputs alone do not suffice and outputs alone do not suffice. The joint pair $(a_{t-1}, o_{t-1})$ fixes the mode for the step, and once the turn $(a_t, o_t)$ is realized the environment updates unifilarly. This matches the agentic trace view above. The agent proposes $a_t$. The shrine emits $o_t$ given $s_t$ and $a_t$. The minimal predictive latent the model must carry is the phase $s_t$.
@@ -96,27 +98,33 @@ $$
 This is the macro interface where the agent proposes $a_{t+1}$ and the environment commits to a symbol $o_{t+1}$ that will also drive the unifilar update of its hidden state.
 
 Given the emitted turn, both hidden states update according to their respective transition kernels:
+
 $$
 P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta) = P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
 $$
+
 Here the unifilar dependence of $s_{t+1}$ on $(s_t, a_{t+1}, o_{t+1})$ guarantees that the latent path is synchronizable from the turn process in the sense used in computational mechanics.
 
 Combining emission and transition dynamics, the complete joint update for each turn $z_{t+1} = (a_{t+1}, o_{t+1})$ becomes:
+
 $$
 P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta) = P(z_{t+1} \mid s_t, \hat{s}_t; \theta) \cdot P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta).
 $$
 
 Which expands to the full factorization $P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta)$:
+
 $$
 \pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
 $$
 
 For a complete trajectory $Z = \{z_1, z_2, \ldots, z_T\}$ with $z_t = (a_t, o_t)$, the joint probability over all turns and hidden states given the agent parameters $\theta$ is:
+
 $$
 P(Z, s_{1:T}, \hat{s}_{1:T} \mid \theta) = P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
 $$
 
 For a given agent, marginalizing over the hidden states gives the observable sequence probability:
+
 $$
 P(Z \mid \theta) = \sum_{s_{1:T}, \hat{s}_{1:T}} P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t; \theta).
 $$
@@ -131,33 +139,43 @@ In the previous section we showed how a partially observable dynamical system ca
 There are two standard ways to model hidden stochastic processes.
 
 **Belief over latent state.** We put a probabilistic model on the world and filter observations into a belief over the joint latent state
+
 $$
 b_t(s,\hat s)=P(s_t=s,\hat s_t=\hat s\mid a_{1:t},o_{1:t})
 $$
+
 After a new turn $(a_{t+1},o_{t+1})$ the belief updates with Bayes: 
+
 $$
  b_{t+1}(s',\hat s') \propto \sum_{s,\hat s} b_t(s,\hat s)\,\pi(a_{t+1}\mid \hat s)\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1})\,\mathcal M(\hat s'\mid \hat s,a_{t+1},o_{t+1})
 $$
+
 Under our setup the environment update is unifilar at the turn scale. Once $(s_t,a_{t+1},o_{t+1})$ are fixed, the next environment state $s_{t+1}$ is unique almost surely. This gives synchronization: as turns accumulate, the belief concentrates along the causal branches consistent with the observations for both the environment and agent states.
 
 **Predictive state from data.** We can skip latent variables and learn a predictive state representation $q_t$ that summarizes the history by what it implies for future observations under future actions. For finite horizons $k$,
+
 $$
 P(o_{t+1:t+k}\mid a_{t+1:t+k}, z_{\le t}) = P(o_{t+1:t+k}\mid a_{t+1:t+k}, q_t)
 $$
+
 In practice it is enough to match the one step case and update $q_{t+1}$ deterministically from $(q_t,a_{t+1},o_{t+1})$. This is the world model view trained by next observation prediction.
 
 These two views meet at the minimal predictive presentation. Among optimal nonlinear predictors of a stationary process, the $\varepsilon$-machine (and with inputs, the $\varepsilon$-transducer) collects histories that induce the same conditional futures into the same causal state. In the finite-state stationary case we care about, and under unifilarity, the history-based predictor is equivalent to a minimal unifilar generator. So the smallest sufficient predictive state you can build from data coincides with the smallest unifilar presentation of the turn process.
 
 What does a strong autoregressive model have to encode to predict our traces. Recall the emission decomposition
+
 $$
 P(z_{t+1}\mid s_t,\hat s_t)=\pi(a_{t+1}\mid \hat s_t)\cdot P(o_{t+1}\mid s_t,a_{t+1})
 $$
+
 A good next turn predictor trained on $Z$ must internalize a predictive latent that is sufficient for after factors. Its internal state $h_{\theta_G}(z_{<t})$ needs to behave like a predictive state $q_t$: enough information about the history to produce the next action and to forecast the next observation in response to that action. Under unifilarity and stationarity this predictive latent aligns with the causal state of the $\varepsilon$-transducer at the level of turns.
 
 Finally, what does this mean for a transformer trained on sequences of turns. In practice each turn is a tuple $z_t=(a_t,o_t)$. The natural training target is two step: first predict the action, then predict the observation given that action and the history. Concretely the model estimates
+
 $$
 P(a_{t+1}\mid z_{\le t}) \quad \text{and} \quad P(o_{t+1}\mid a_{t+1}, z_{\le t})
 $$
+
 The internal state right after emitting $a_{t+1}$ is a sufficient statistic of the agent side $\hat s_t$ for the purpose of the policy. The internal state right after receiving $o_{t+1}$ is a sufficient statistic of the environment branch $s_{t+1}$ for the purpose of predicting the next observation. This boundary effect also explains a mild separability we observe in practice. A single shared head can support both factors, but the logits factor by conditioning order: action logits depend mostly on the agent slice of the predictive state, observation logits condition further on the realized action and align with the environment slice. That is the concrete story of what a transformer trained on these sequences has learned. It has learned a predictive state that simultaneously supports an action policy and a world model at the level of turns, and it updates that state at the two natural boundaries of the turn, first at action time and then at observation time.
 
 
@@ -168,27 +186,35 @@ At this point we know what the right phenomenological model class is. For a stat
 The remaining question is whether a transformer trained on turn sequences lands in this same class. For sequences shorter than its context window, it does.
 
 A decoder-only transformer with finite vocabulary and context window implements a deterministic map
+
 $$
 z_{\le t} \longmapsto h_t(z_{\le t})\in\mathbb R^d
 $$
+
 from discrete histories to continuous hidden states. Under mild assumptions on initialization and training this map is almost surely injective over the space of prompts (Nikolaou et al., 2025). Once the map is injective, the hidden state and the history generate the same $\sigma$-algebra: each can be recovered from the other by some, possibly very ugly, measurable function. In particular, $h_t$ is already a sufficient statistic of $z_{\le t}$ for any property of the history, including prediction of future turns. This is true before training and after any finite amount of training; sufficiency here is a structural property of the architecture, not something that appears only in a convergence limit.
 
 The latent update is unifilar as well. Given the current hidden state $h_t$ and the new turn $z_{t+1}$, the forward computation of the transformer returns a unique next state
+
 $$
 h_{t+1}=F(h_t,z_{t+1})
 $$
+
 There is no stochasticity inside the network; all randomness lives in sampling the next turn from the output distribution. Restricted to histories within its context window the transformer therefore defines an unifilar latent process over $(h_t)$ driven by the observed turns.
 
 So the hidden process of a well-defined transformer on sequences of length at most $K$ is an unifilar sufficient approximator of the agentic trace distribution. We are back in the same model class as the belief chain and the $\varepsilon$-transducer. In that class, the computational mechanics story applies: there is a unique minimal unifilar sufficient presentation, and any other unifilar sufficient presentation factors through it by a many-to-one map. Concretely, there exists a coarse-graining
+
 $$
 \phi:\ h_t\mapsto \text{causal state}
 $$
+
 such that the induced causal-state process has the same predictive content as the history and evolves with the correct unifilar update. The transformer latent chain is then a higher dimensional invertible refinement that contains the minimal world model as a quotient.
 
 The output heads tie this factorization back to behavior. For the action channel we have
+
 $$
 \ell_t^a = W_a h_t + b_a,\qquad P(a_{t+1}\mid z_{\le t}) = \operatorname{softmax}(\ell_t^a),
 $$
+
 and similarly for observations. These affine plus softmax maps pick out the predictive directions in latent space and collapse away null directions along which next-turn behavior does not change. The causal-state quotient identifies hidden states that are equivalent under all such predictive tests.
 
 Seen this way, auxiliary losses that explicitly train a latent transition model in representation space, such as next-latent prediction (Teoh et al., 2025), are best read as regularizers on a structure that is already there. They do not create belief states or unifilarity. The transformer is already an unifilar sufficient approximator of the agent–environment process and already contains the minimal $\varepsilon$-transducer up to coarse-graining. What these losses can do is encourage the network to choose a simpler coordinate system on its latent process, in which the embedded world model and its update look more like a small recurrent dynamics and less like an arbitrary invertible encoding of the full history.
@@ -200,61 +226,83 @@ Seen this way, auxiliary losses that explicitly train a latent transition model 
 Until now we only assumed a stationary behavioral policy, without any interpretation of its meaning or of how much of the environment’s causal structure it reveals. We now focus on how the agent’s parameters could have come to be in an optimal way, and study the relationship between behavioral policies and the environment state coverage they induce.
 
 In general an agent’s actions are interpreted as goal directed, that is we read the behavior as an attempt to lead the world toward desired states. We formalize reward as a function on action-conditioned state transitions
+
 $$
 R:\mathcal S\times\mathcal A\times\mathcal S\to\mathbb R,\qquad (s_t,a_t,s_{t+1})\mapsto R(s_t,a_t,s_{t+1})
 $$
+
 which can equivalently be seen as a function on the edges of the transducer graph. For discrete reward classes, this induces an edge coloring.
 
 Given parameters $\theta=(\theta_\pi,\theta_{\mathcal M})$ we interpret the agent's policy as its best attempt to maximize expected return over agent–environment traces $Z$:
+
 $$
 J(\theta)=\mathbb E_{Z\sim P(Z\mid\theta)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
+
 Learning becomes a dynamical process over parameter space, with an update operator $\Phi:\Theta\to\Theta$ and $\theta_{k+1}=\Phi(\theta_k)$. For example, gradient ascent
+
 $$
 \Phi(\theta)=\theta+\eta\nabla_\theta J(\theta)
 $$
+
 or any other optimization scheme. The reinforcement learning problem seeks a fixed point $\theta^*\in\Theta$ satisfying
+
 $$
 \theta^*=\lim_{k\to\infty}\Phi^{(k)}(\theta_0)=\arg\max_{\theta\in\Theta} J(\theta)
 $$
+
 Since $\theta=(\theta_\pi,\theta_{\mathcal M})$, we make explicit that optimization operates over the agent's policy and world model:
+
 $$
 (\theta_\pi^*,\theta_{\mathcal M}^*)=\arg\max_{\theta_\pi,\theta_{\mathcal M}}
 \ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
+
 with trajectories generated by $\pi(\cdot\mid\cdot;\theta_\pi)$ and $\mathcal M(\cdot\mid\cdot;\theta_{\mathcal M})$, while the environment kernels $P(o_{t+1}\mid s_t,a_{t+1})$ and $P(s_{t+1}\mid s_t,a_{t+1},o_{t+1})$ are fixed. In practice we settle for local optima or stationary points with $|\theta_{k+1}-\theta_k|<\epsilon$.
 
 Since we are interested in stationary policies and the environment channel is stationary by construction, we focus on the long-run behavior induced by a given policy when it exists. The short answer to what the agent must understand is well known. By the Good Regulator connection, to implement reward maximizing behavior the agent requires a sufficient representation of the environment hidden states on the portion of state space actually visited by the policy that achieves the optimum. We keep the PSR and belief-state view to relate the agent's internal state $\hat s_t$ and the environment state $s_t$. Since the reward $R(s_t,a_t,s_{t+1})$ is a function of the transition, a world model that predicts the environment's response and updates belief consistently with that transition can also predict reward and support optimal action.
 
 Not all states have nonzero probability under the policy of interest. Given an initial state distribution $P(s_0)$, a policy $\pi$ may visit only a subset of states. We call this the coverage of the policy. Formally,
+
 $$
 \mathcal S^\pi=\{s\in\mathcal S:\exists t\ \Pr_\pi(s_t=s\mid P(s_0))>0\}
 $$
+
 When a stationary distribution exists we write
+
 $$
 d^\pi(s)=\lim_{t\to\infty}\Pr_\pi(s_t=s)
 $$
+
 Two related measures quantify breadth and uncertainty of visitation,
+
 $$
 H_\pi(S_t)=-\sum_{s} \Pr_\pi(s_t=s)\log \Pr_\pi(s_t=s),\qquad
 H_\pi(S_{t+1}\mid S_t,A_t)
 $$
+
 Because the turn process is unifilar at this scale, the conditional entropy $H_\pi(S_{t+1}\mid S_t,A_t)$ concentrates the uncertainty into the leftover branches consistent with the emitted observation. Intuitively it counts how many outcome branches remain possible after fixing $(S_t,A_t)$, up to the identification that different observations can still map to the same next state.
 
 These definitions let us state the target for an optimal world model without referencing reward. The world model with parameters $\theta_{\mathcal M}$ is trained to predict the next observation given action and internal state. Let $\hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})$ be its emission. The objective is
+
 $$
 \mathcal L_{\mathcal M}(\theta_{\mathcal M})
 =\mathbb E_{h_t,a_{t+1}} \Big[ D_{KL}\big( P(o_{t+1}\mid a_{t+1},h_t)\ |\ \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M}) \big) \Big]
 $$
+
 implemented as cross entropy,
+
 $$
 \mathcal L_{\mathcal M}(\theta_{\mathcal M})
 =-\mathbb E_{h_t,a_{t+1},o_{t+1}}\big[\log \hat P(o_{t+1}\mid a_{t+1},\hat s_t;\theta_{\mathcal M})\big]
 $$
+
 Given an accurate world model $\theta_{\mathcal M}^*$, policy optimization becomes
+
 $$
 \theta_\pi^*=\arg\max_{\theta_\pi}\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M}^*)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
+
 The principle is simple. Accurate state estimation enables optimal decision making.
 
 Training the world model purely on on-policy data induces a clear importance-sampling relationship between the learned model and the policy. The data distribution is the one induced by $\pi$, so the learned predictor is most accurate on transitions with high probability under $\pi$ and can be weakly constrained on counterfactual branches. In other words, the effective model focuses on $\mathcal S^\pi$ and on the action branches actually tried. This is why coverage matters. Exploration strategies expand $\mathcal S^\pi$ and, in stochastic environments, can raise $H_\pi(S_t)$, which tightens the world model on more of the transition graph. Uniform random actions and $\varepsilon$-greedy policies guarantee coverage in the sense that every action branch receives nonzero probability, although they do not guarantee maximum state entropy.
