@@ -84,7 +84,7 @@ In this sense, it is useful to speak about an agentic system when its measurable
 
 To make our discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
 
-Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_{t}$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_{t}; \theta_\pi)$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_\pi, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
+Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_t$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_t; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_t, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_t; \theta_\pi)$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_\pi, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
 
 ![Transition Graph](transition_correct_z_index.png)
 
@@ -212,7 +212,7 @@ such that the induced causal-state process has the same predictive content as th
 The output heads tie this factorization back to behavior. For the action channel we have
 
 $$
-\ell_t^a = W_a h_t + b_a,\qquad P(a_{t+1}\mid z_{\le t}) = \operatorname{softmax}(\ell_t^a),
+\ell_t^a = W_a h_t + b_a,\qquad P(a_{t+1}\mid z_{\le t}) = \mathrm{softmax}(\ell_t^a),
 $$
 
 and similarly for observations. These affine plus softmax maps pick out the predictive directions in latent space and collapse away null directions along which next-turn behavior does not change. The causal-state quotient identifies hidden states that are equivalent under all such predictive tests.
@@ -254,7 +254,7 @@ $$
 Since $\theta=(\theta_\pi,\theta_{\mathcal M})$, we make explicit that optimization operates over the agent's policy and world model:
 
 $$
-(\theta_\pi^*,\theta_{\mathcal M}^*)=\arg\max_{\theta_\pi,\theta_{\mathcal M}}
+(\theta_{\pi}^*,\theta_{\mathcal M}^*)=\arg\max_{\theta_\pi,\theta_{\mathcal M}}
 \ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M})}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
 
@@ -300,7 +300,7 @@ $$
 Given an accurate world model $\theta_{\mathcal M}^*$, policy optimization becomes
 
 $$
-\theta_\pi^*=\arg\max_{\theta_\pi}\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M}^*)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
+\theta_{\pi}^*=\arg\max_{\theta_\pi}\ \mathbb E_{Z\sim P(Z\mid \theta_\pi,\theta_{\mathcal M}^*)}\Big[\sum_{t=1}^T R(s_t,a_t,s_{t+1})\Big]
 $$
 
 The principle is simple. Accurate state estimation enables optimal decision making.
