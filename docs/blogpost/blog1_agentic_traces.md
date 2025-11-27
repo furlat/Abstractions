@@ -88,9 +88,11 @@ Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, 
 
 
 The emission of the next turn decomposes into agent action selection and environment observation emission:
+
 $$
 P(z_{t+1} \mid s_t, \hat{s}_t; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_t; \theta) = \pi(a_{t+1} \mid \hat{s}_t; \theta_\pi) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
 $$
+
 This is the macro interface where the agent proposes $a_{t+1}$ and the environment commits to a symbol $o_{t+1}$ that will also drive the unifilar update of its hidden state.
 
 Given the emitted turn, both hidden states update according to their respective transition kernels:
