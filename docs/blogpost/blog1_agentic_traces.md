@@ -23,10 +23,150 @@ When an environment is instead non-synchronizable, there is a decoupling between
 How is this perspective about reinforcement learning related to language models? First of all it gives us an information theoretic language to describe the joint agent-environment dynamics as a stochastic process, specifically the language we use to describe and develop autoregressive transformer models. Second, it tells us the limits of what we can expect an LLM agent to learn in a specific environment, potentially driving their design. I will argue throughout the blogpost that the ability of LLMs to implicitly internalize world models from agentic traces is what makes them a powerful substrate for building agents. A corollary of this interpretation is that the modern success of assistant-models that use sophisticated chat-templates and various regimes of gradient-masking is due to the precise reinforcement of this agentic boundary. Similarly, many of the systematic failures of modern LLM agents can be traced to the laser-focus of post-training techniques on optimal Markovian decision making overshadowing the world modeling and belief synchronization aspects.
 
 Because the full formalization of my theoretical claims vastly exceeds both what can be considered acceptable for a blogpost and, honestly, the empirical results I currently have, for this post we will make a few simplifying assumptions. First we will assume that the tokenization of the language model perfectly corresponds with the environment's observation and action space, and second we will derive a phenomenological theory that in many cases will inevitably conflate mixed belief states with the true underlying causal structure. While I do not have a solution for the second problem other than changing the environment, I promise a follow-up relaxing the tokenization assumption and extending the theory to the common scenario where both observations and actions are composed of multiple tokens.
-
+<!--
 We will start with a few toy examples to ground the discussion about synchronizable and non-synchronizable environments. After developing a theoretical intuition of how the latent structure of each environment can be used to develop interesting policies for each scenario, we will see in practice how transformers trained to predict agentic traces will respectively learn to approximate the generator or the belief process. We will then proceed to train deep reinforcement learning agents either using these frozen representations or from scratch, and show that optimal predictions give representations that are optimal for decision making and that optimal decision making gives representations that are optimal for prediction.
 
 After a hopefully solid empirical introduction we will formalize the problem in depth using some results from Computational Mechanics linking autoregressive stochastic processes and POMDPs. From that characterization we will focus on a few recent theoretical discoveries about the Transformer architecture that justify their use as sufficient approximators of the environment. With this theoretical baggage we will be able to appreciate what an LLM must learn when trained to predict agentic traces. Finally we will discuss the relationship between goal-directedness, state coverage and world model accuracy.
+
+[here we need to reorganize the promises because we are now using an alteranted order - when we speak about the examples we should say we solve them both in closed form using belifs and empirically with transformers] -->
+
+### The POMDP Frame or When is a System Agentic?
+
+We start by asking in what sense a dynamical system can be said to be agentic, and what latent structure can be recovered from the system’s measurable behavior when this assumption holds.
+Agency developed historically as a model of what separates humans from the rest of physical matter, and more recently as a model of what makes a system intelligent. Being humans, we inherently perceive a separation between what we are as a mind, the agent, and the thing-in-itself we live in, the environment. This dualism seems to clash with our understanding of reality as a local physical process, yet it is reconciled in modern science as a conditional independence, or causal, structure that appears when we measure the world at a coarse enough scale. If we zoom out sufficiently, we can see how the states inside the agent are causally independent of the states in the environment given the information that leaks in at the boundary between them. We can think of this as the agent’s perceptual channel. Conversely, we can see how the state of the world is conditionally independent of what goes on inside the agent given the information that leaks out at the boundary, which we can call the causal or action channel.
+
+Make the physical example concrete. Imagine a room with a robotic arm at a keyboard connected to an Atari console, a Raspberry Pi running the controller, and a camera watching the Atari’s monitor. We can leave the robot in the room until it learns to play the game at the best of its capacity, the we start measuring.
+If all we can monitor in that room are keypress events and camera frames, those two streams are our entire window into the dynamics at this resolution. Continuous time effectively unfolds in turns: a keypress is an action, the game produces pixels as a response, and the cycle repeats.
+
+Given these measurements, we could be tempted to build a complete bottom-up model of the room, starting from silicon steering electrons through transistors, up to the motor drivers and linkages that move the arm, and down again to the specific software implementation of the game and the hardware it runs on. That would be a daunting task, and it would change if the same behavioral input were generated by a different robot or if the game were implemented on different hardware. Thankfully, none of these details change the coarse-grained causal boundary between agent and environment. Given the keys that were pressed, the game’s next internal update does not depend on the Pi’s microstate; given the pixels that hit the camera, the Pi’s next update does not depend on the game’s microphysics. The decomposition between agent and environment gives us the structure to describe a stochastic generator of the measurement process that is invariant to the microscopic details of the system.
+
+In this sense, it is useful to speak about an agentic system when its measurable behavior can be decomposed into two components: actions and observations, each defining a clear causal boundary, or Markov blanket, between the environment and the agent. In this section, we formally derive the POMDP frame as a decomposition of an autoregressive stochastic process into two stationary components. This setup allows us to connect the dots with our understanding of LLMs as approximators of autoregressive stochastic processes, yielding insights into what an LLM trained on agentic traces would learn.
+
+
+### Agentic Traces as an Autoregressive Stochastic Process
+
+To make our discussion formal, we review the general language of POMDPs to define the agent–environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
+
+Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_{t}$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi})$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_{\pi}, \theta_{\mathcal{M}})$.
+
+In full generality the environment transition $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$ can have support on multiple next states for a given $(s_t,a_{t+1},o_{t+1})$. When we restrict attention to models where for each triple $(s_t,a_{t+1},o_{t+1})$ there is at most one $s_{t+1}$ with nonzero probability, the environment update becomes unifilar in the sense of computational mechanics: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the next state $s_{t+1}$ lies on a single causal branch consistent with that symbol. This unifilar structure at the turn scale is the class we will focus on in the next sections when discussing synchronization and belief processes.
+
+![Transition Graph](transition_correct_z_index.png)
+
+The emission of the next turn decomposes into agent action selection and environment observation emission:
+
+$$
+P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta) = \pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
+$$
+
+This is the interface where the agent proposes $a_{t+1}$ and the environment commits to a symbol $o_{t+1}$ that will also drive the update of its hidden state.
+
+Given the emitted turn, both hidden states update according to their respective transition kernels:
+
+$$
+P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta) = P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+$$
+
+
+Combining emission and transition dynamics, the complete joint update for each turn $z_{t+1} = (a_{t+1}, o_{t+1})$ becomes:
+
+$$
+P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) \cdot P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta).
+$$
+
+Which expands to the full factorization $P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta)$:
+
+$$
+\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
+$$
+
+For a complete trajectory $Z = \{z_1, z_2, \ldots, z_T\}$ with $z_t = (a_t, o_t)$, the joint probability over all turns and hidden states given the agent parameters $\theta$ is:
+
+$$
+P(Z, s_{1:T}, \hat{s}_{1:T} \mid \theta) = P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta).
+$$
+
+For a given agent, marginalizing over the hidden states gives the observable sequence probability:
+
+$$
+P(Z \mid \theta) = \sum_{s_{1:T}, \hat{s}_{1:T}} P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta).
+$$
+
+With the latest formulation we can effectively define the likelihood of our data conditional on a generative model that can be compartmentalized into a parametrized agent and a stationary environment, that is an agentic system.
+
+
+### Synchronizable Environments and Minimal Predictive Models
+
+In the previous section we decomposed the turn process into an environment channel and an agent channel, with hidden states $s_t$ and $\hat{s}_t$ and an internal agent update
+
+$$
+\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_t, a_{t+1}, o_{t+1}; \theta_{\mathcal M})
+$$
+
+Intuitively $\hat{s}_t$ is whatever summary of the past the agent carries forward in time. The environment state $s_t$ is whatever summary of the past the generator carries forward. The information theoretic relationship between these two chains is the core of synchronization.
+
+A useful way to look at this relationship is through the mutual information
+
+$$
+I(S_t ; \hat{S}_t) = H(S_t) - H(S_t \mid \hat{S}_t)
+$$
+
+measured under the stationary joint distribution induced by a fixed policy and world model. At one extreme we have $I(S_t ; \hat{S}_t) = 0$. In that regime the agent’s internal state is independent of the environment state. Whatever memory the agent carries is either pure noise or only about its own past actions. From the environment’s point of view the agent is blind; from the agent’s point of view the world has no latent structure that can be tracked.
+
+At the opposite extreme the conditional entropy $H(S_t \mid \hat{S}_t)$ vanishes. In that regime $\hat{s}_t$ determines $s_t$ almost surely, and the two chains become informationally equivalent:
+
+$$
+H(S_t \mid \hat{S}_t) = 0
+\quad\Longleftrightarrow\quad
+S_t = f(\hat{S}_t) \ \text{a.s.}
+$$
+
+for some measurable $f$. Here the agent has compressed its entire interaction history into an internal state that is as informative about the world’s latent as the world’s own state. This is the information theoretic sense in which the agent has synchronized to the environment.
+
+Of course the agent never sees $s_t$ directly. The only way to build up this relationship is through the turn process $Z_{1:t}$, with observations leaking information about $S_t$ through the environment kernel and $\mathcal{M}$ steering that information into $\hat{S}_t$. If the agent implements an optimal predictive model of the process, its internal state should also be a sufficient statistic of the history for predicting future observations under all future actions:
+
+$$
+P(o_{t+1:\infty} \mid a_{t+1:\infty}, z_{1:t})
+=
+P(o_{t+1:\infty} \mid a_{t+1:\infty}, \hat{s}_t)
+$$
+
+This condition implies that $\hat{s}_t$ sits at the intersection of two constraints. It must be a function of the past, $\hat{s}_t = g(z_{1:t})$, and it must capture exactly the information about the past that matters for forecasting the future. Among all such sufficient summaries there is a minimal one in an information theoretic sense, obtained by identifying histories that induce identical conditional futures. The quotient of histories by this relation gives a finite set of predictive states, and the resulting stochastic automaton is the $\varepsilon$-transducer of the process.
+
+The environment generator we wrote in terms of $s_t$ is another presentation of the same process. Under the unifilar assumption at the turn scale and the requirement that different generator states induce different conditional futures, there exists a unique minimal unifilar generator. Computational mechanics tells us that this minimal generator is isomorphic to the history-based $\varepsilon$-transducer: its states can be relabelled by the predictive equivalence classes of histories without changing the induced process. In that regime an optimal predictive agent that learns the $\varepsilon$-transducer from data is, up to an invertible change of coordinates, learning the minimal generator of the environment.
+
+Synchronization then becomes the statement that the agent’s internal chain $\hat{S}_t$ has converged to this minimal predictive chain and, through it, to the environment generator. Formally we can track the conditional entropy of the environment state given the observable history,
+
+$$
+H(S_t \mid Z_{1:t})
+$$
+
+and ask whether it vanishes in the long run. If the environment is synchronizable, there exists a finite random time $\tau$ such that for almost every agentic trace the posterior $P(s_t \mid z_{1:t})$ concentrates on a single generator state for all $t \ge \tau$. At that point the belief over $S_t$ becomes a delta, the predictive equivalence class of the history coincides with a single generator state, and the internal state of any optimal predictive agent can be mapped to $s_t$ without loss of information.
+
+This has a concrete decision theoretic consequence. Consider a reward function on generator transitions
+
+$$
+R(s_t,a_t,s_{t+1})
+$$
+
+and the corresponding MDP whose states are the latent $s_t$. We can also write a belief-MDP whose states are beliefs $b_t(s) = P(s_t = s \mid z_{1:t})$, and a predictive-state MDP whose states are the causal states of the $\varepsilon$-transducer. In a synchronizable environment these three decision problems are equivalent in the strong sense that after synchronization
+
+$$
+b_t \Rightarrow \delta_{s_t}, \qquad \xi_t \leftrightarrow s_t
+$$
+
+almost surely, and any optimal policy written as a function of histories, of beliefs, of predictive states or of latent states induces the same distribution over agentic traces and the same optimal value. The belief-MDP is not an approximation here, it is just a reparametrization of the latent MDP restricted to the observable interface.
+
+In this picture the role of $\mathcal{M}$ is to implement the dynamical law of the minimal predictive model. An optimal world model at the agent level is one whose internal chain $\hat{S}_t$ is sufficient for prediction and whose update
+
+$$
+\hat{s}_{t+1} \sim \mathcal{M}(\cdot \mid \hat{s}_t, a_{t+1}, o_{t+1})
+$$
+
+matches the unifilar update of the $\varepsilon$-transducer. When the environment is synchronizable and the agent has enough data to identify that structure, the information theoretic optimum $H(S_t \mid \hat{S}_t) = 0$ is reachable. The agent’s state becomes a sufficient statistic for both prediction and control and is informationally equivalent to the generator state. The shrine problem will give a concrete example of this regime, where one or two turns are enough for the agent to collapse its uncertainty and track the hidden phase of the environment exactly.
+
+
+
 
 ### Learning to Please the Gods Studying a Drunken Pythia
 
@@ -81,6 +221,59 @@ The following table enumerates all possible observation histories of length at m
 The table makes visible that all histories partition into exactly three equivalence classes based on their predictive content. The first class contains only the empty history at epoch start with maximum uncertainty. The second class contains the two turns where act equals omen, $(0,0)$ and $(1,1)$, corresponding to the loyal god now guarding with zero uncertainty. The third class contains the two turns where act differs from omen, $(0,1)$ and $(1,0)$, corresponding to the trickster with zero uncertainty. The last two columns show the predictive state representation: the probability of blessing under each action. These predictive probabilities cluster into the same three classes as the beliefs, $(1/2, 1/2)$, $(1, 0)$, and $(0, 1)$, which is no coincidence. In a synchronizable environment the belief process and the predictive state process are informationally equivalent.
 
 Once synchronized the optimal policy is trivial: always offer when $b = 1$ (loyal), always nothing when $b = 0$ (trickster). At $b = 1/2$ both actions have zero expected reward, so the first turn is a coin flip that reveals the phase. The disciple studying the pythia's notebook has enough information to recover these equivalence classes and, from them, the optimal policy.
+
+### Non Synchronizable Environments and Belief Processes
+
+The synchronizable case is the happy one where an optimal predictive agent can eventually turn its internal state into a sufficient statistic for the generator state. Information theoretically this meant that in the limit $H(S_t \mid \hat{S}_t)$ could be driven to zero and the minimal predictive model lined up with the minimal generator.
+
+Non synchronizable environments are those where this never happens. The interaction still generates a joint process over $(S_t, Z_{1:t})$, but even an optimal predictor fed the entire history cannot reduce the conditional entropy of the generator below a strictly positive floor,
+
+$$
+\lim_{t \to \infty} H(S_t \mid Z_{1:t}) = h_{\text{res}} > 0
+$$
+
+The environment keeps some of its structure permanently hidden behind the observation channel. There are generator states that are observationally indistinguishable in the strong sense that no finite history of actions and observations can tell them apart with certainty. From the point of view of an agent living at the turn interface, these latent distinctions might as well not exist.
+
+In this regime the natural latent object to track is not $S_t$ but the belief over $S_t$ induced by the generator model. Given a prior $b_0$ and a fixed environment kernel, each history $z_{1:t}$ maps to a belief
+
+$$
+b_t(s) = P(s_t = s \mid z_{1:t})
+$$
+
+and the belief update is again unifilar at the turn scale,
+
+$$
+b_{t+1} = F(b_t, a_{t+1}, o_{t+1})
+$$
+
+Unlike the synchronizable case the belief never collapses to a delta. Instead it wanders inside the simplex of distributions over $\mathcal{S}$ and its residual entropy mirrors the residual uncertainty of the generator. The information theoretic limit is now
+
+$$
+I(S_t ; Z_{1:t}) = H(S_t) - h_{\text{res}} < H(S_t)
+$$
+
+and there is no way for the agent’s internal chain $\hat{S}_t$ to carry more information about $S_t$ than the belief itself. Even an optimal world model cannot do better than being a sufficient statistic for this belief process.
+
+The phenomenological construction via predictive equivalence still goes through. We can again collapse histories $z_{1:t}$ and $z'_{1:t'}$ that induce the same conditional futures under all possible action sequences, and we again obtain a finite or countable set of causal states $\xi_t$. Each causal state represents an equivalence class of histories that are indistinguishable in terms of what they imply about future observations. The $\varepsilon$-transducer built from these classes is still the minimal sufficient predictive model of the agentic trace.
+
+What changes is the way this phenomenological object relates to the generator. In the synchronizable case each causal state corresponded to a single generator state almost surely. Here each causal state corresponds instead to a whole subset of generator states that remain forever entangled under the observation channel. The map from generator states to causal states becomes many-to-one: different $s$ that induce the same conditional futures share the same predictive state. The best we can do is to track their mixture.
+
+From the generator side this mixture is exactly the belief $b_t$. From the history side it is the causal state $\xi_t$. Computational mechanics lets us identify the two: in finite POMDPs with stationary dynamics the belief process induced by the exact filter and the causal-state process induced by predictive equivalence generate the same $\sigma$-algebra over futures. An optimal predictor that learns the $\varepsilon$-transducer from data is therefore, up to relabelling, learning the reachable portion of the belief simplex and its unifilar dynamics.
+
+Control now lives on this epistemic state space rather than on the generator itself. Given a belief $b_t$ and a reward function on generator transitions, the expected one-step reward of an action $a_{t+1}$ is
+
+$$
+\mathbb{E}[R_{t+1} \mid b_t, a_{t+1}]
+=
+\sum_{s_t,s_{t+1}} b_t(s_t)\, P(s_{t+1} \mid s_t, a_{t+1})\, R(s_t,a_{t+1},s_{t+1})
+$$
+
+and the Bellman equations can be written entirely in terms of beliefs. The resulting belief-MDP is fully observed and well-posed. Its states are either explicit beliefs $b_t$ or implicit predictive states $\xi_t$ that are information equivalent to those beliefs. An optimal policy for this belief-MDP is the best that any agent can do given the observational constraints of the environment.
+
+The gap is that this optimal policy is only approximate with respect to the latent generator. A hypothetical controller that could see $S_t$ directly and act on the underlying MDP might achieve a strictly higher return, because it could condition its actions on distinctions that the observation channel never reveals. The difference between these two optima is precisely the value lost to $h_{\text{res}} > 0$.
+
+From the point of view of representation learning the message is clean. In non synchronizable environments the latent structure that an optimal predictor can hope to recover is the belief process, not the generator. The minimal world model is the $\varepsilon$-transducer on predictive states, and this is equivalent to the reachable region of the belief simplex seen through the exact filter. Any internal state $\hat{S}_t$ that is sufficient for prediction and updated unifilarly at the turn scale must factor through this process. The tiger chamber we study next is an example where this belief dynamics lives on a thin, explicitly enumerable lattice inside the simplex, making the gap between generator and phenomenology very concrete.
+
 
 ### My Years as a Drop-Rate Analyst in the Tiger Gacha Dungeon
 
@@ -201,104 +394,11 @@ The core tension in this environment is now clear. The agent cannot synchronize 
 
 
 
-### Empirical Section
-There will be training of transformer on pythia data and probes towards hidden state as well as reinforcement learning experimetnts starting from random, pretrained-frozen, pretraiend fionetuned models. We should be able to show that we can easily reach optimal behavior from this simple setup. 
- 
-
-### The POMDP Frame or When is a System Agentic?
-
-We start by asking in what sense a dynamical system can be said to be agentic, and what latent structure can be recovered from the system’s measurable behavior when this assumption holds.
-Agency developed historically as a model of what separates humans from the rest of physical matter, and more recently as a model of what makes a system intelligent. Being humans, we inherently perceive a separation between what we are as a mind, the agent, and the thing-in-itself we live in, the environment. This dualism seems to clash with our understanding of reality as a local physical process, yet it is reconciled in modern science as a conditional independence, or causal, structure that appears when we measure the world at a coarse enough scale. If we zoom out sufficiently, we can see how the states inside the agent are causally independent of the states in the environment given the information that leaks in at the boundary between them. We can think of this as the agent’s perceptual channel. Conversely, we can see how the state of the world is conditionally independent of what goes on inside the agent given the information that leaks out at the boundary, which we can call the causal or action channel.
-
-Make the physical example concrete. Imagine a room with a robotic arm at a keyboard connected to an Atari console, a Raspberry Pi running the controller, and a camera watching the Atari’s monitor. We can leave the robot in the room until it learns to play the game at the best of its capacity, the we start measuring.
-If all we can monitor in that room are keypress events and camera frames, those two streams are our entire window into the dynamics at this resolution. Continuous time effectively unfolds in turns: a keypress is an action, the game produces pixels as a response, and the cycle repeats.
-
-Given these measurements, we could be tempted to build a complete bottom-up model of the room, starting from silicon steering electrons through transistors, up to the motor drivers and linkages that move the arm, and down again to the specific software implementation of the game and the hardware it runs on. That would be a daunting task, and it would change if the same behavioral input were generated by a different robot or if the game were implemented on different hardware. Thankfully, none of these details change the coarse-grained causal boundary between agent and environment. Given the keys that were pressed, the game’s next internal update does not depend on the Pi’s microstate; given the pixels that hit the camera, the Pi’s next update does not depend on the game’s microphysics. The decomposition between agent and environment gives us the structure to describe a stochastic generator of the measurement process that is invariant to the microscopic details of the system.
-
-In this sense, it is useful to speak about an agentic system when its measurable behavior can be decomposed into two components: actions and observations, each defining a clear causal boundary, or Markov blanket, between the environment and the agent. In this section, we formally derive the POMDP frame as a decomposition of an autoregressive stochastic process into two stationary components. This setup allows us to connect the dots with our understanding of LLMs as approximators of autoregressive stochastic processes, yielding insights into what an LLM trained on agentic traces would learn.
-
-
-### Agentic Traces as an Autoregressive Stochastic Process
-
-To make our discussion formal, we start from reviewing the general language of POMDPs to define the macro-level agent-environment interaction. In practice modelling a system as a POMDP corresponds to assuming a specific decomposition of the observable process, or agentic-trace, $Z$ into a sequence of turns $Z = \{z_1, z_2, \ldots, z_T\}$, where each turn $z_t \in \mathcal{Z}$ is a tuple $(a_t, o_t)$ of an action $a_t$ and an observation $o_t$. Intuitively the action $a_t$ in $\mathcal{A}$ defines the component of the observable turn that is causally controlled by the agent, while the observation $o_t$ in $\mathcal{O}$ defines the component that is causally controlled by the environment conditioned on the agent behavior. The sets $\mathcal{A}$ and $\mathcal{O}$ decompose the degrees of freedom of $z \in \mathcal{Z}$ into the product $\mathcal{A} \times \mathcal{O}$.
-
-Then we assume that the probability of the next joint turn $z_{t+1} = (a_{t+1}, o_{t+1})$ is only conditioned on the current environment and agent hidden states, respectively $s_t$ and agent's $\hat{s}_{t}$, and the agent's parameters $\theta$, defining a joint stochastic process with emissions $P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta)$ whose temporal dynamics are modeled by the recurrent transition $P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta)$. Or explicitly with respect to actions and observations $P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta)$. In a POMDP it is possible to further decompose this joint process into the environment's emission kernel $P(o_{t+1} \mid s_t, a_{t+1})$ and its emission-conditioned transition kernel, $P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1})$, together with the agent's policy $\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi})$ and the agent's state transition kernel $\mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}})$, with parameters $\theta = (\theta_{\pi}, \theta_{\mathcal{M}})$. This choice yields a unifilar latent update at the environment level: once $s_t$, $a_{t+1}$, and the realized $o_{t+1}$ are known, the distribution over $s_{t+1}$ is conditionally concentrated along a single causal branch consistent with that symbol. 
-
-![Transition Graph](transition_correct_z_index.png)
-
-
-The emission of the next turn decomposes into agent action selection and environment observation emission:
-
-$$
-P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(a_{t+1}, o_{t+1} \mid s_t, \hat{s}_{t}; \theta) = \pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}).
-$$
-
-This is the macro interface where the agent proposes $a_{t+1}$ and the environment commits to a symbol $o_{t+1}$ that will also drive the unifilar update of its hidden state.
-
-Given the emitted turn, both hidden states update according to their respective transition kernels:
-
-$$
-P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta) = P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
-$$
-
-Here the unifilar dependence of $s_{t+1}$ on $(s_t, a_{t+1}, o_{t+1})$ guarantees that the latent path is synchronizable from the turn process in the sense used in computational mechanics.
-
-Combining emission and transition dynamics, the complete joint update for each turn $z_{t+1} = (a_{t+1}, o_{t+1})$ becomes:
-
-$$
-P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta) = P(z_{t+1} \mid s_t, \hat{s}_{t}; \theta) \cdot P(s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}, z_{t+1}; \theta).
-$$
-
-Which expands to the full factorization $P(a_{t+1}, o_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta)$:
-
-$$
-\pi(a_{t+1} \mid \hat{s}_{t}; \theta_{\pi}) \cdot P(o_{t+1} \mid s_t, a_{t+1}) \cdot P(s_{t+1} \mid s_t, a_{t+1}, o_{t+1}) \cdot \mathcal{M}(\hat{s}_{t+1} \mid \hat{s}_{t}, a_{t+1}, o_{t+1}; \theta_{\mathcal{M}}).
-$$
-
-For a complete trajectory $Z = \{z_1, z_2, \ldots, z_T\}$ with $z_t = (a_t, o_t)$, the joint probability over all turns and hidden states given the agent parameters $\theta$ is:
-
-$$
-P(Z, s_{1:T}, \hat{s}_{1:T} \mid \theta) = P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta).
-$$
-
-For a given agent, marginalizing over the hidden states gives the observable sequence probability:
-
-$$
-P(Z \mid \theta) = \sum_{s_{1:T}, \hat{s}_{1:T}} P(s_1, \hat{s}_1) \cdot P(z_1 \mid s_1, \hat{s}_1; \theta) \cdot \prod_{t=1}^{T-1} P(z_{t+1}, s_{t+1}, \hat{s}_{t+1} \mid s_t, \hat{s}_{t}; \theta).
-$$
-
-With the latest formulation we can effectively define the likelihood of our data conditional on a generative model that can be effectively compartmentalized into a parametrized agent and a stationary environment, that is an agentic system. 
 
 
 ### Learning from a Dataset of Agentic Traces
+[TODO: since we moved a lot up we will not have to justify anymoer the psr / belief / tranduscer equivalence because basically we are going to besaying yo remember that trick of the transducer we used in the synchronization section to express teh analogy between the psr and the tranduscer and the generator belief process and the unifilarity conditions for synchronization that is exactly the specificaiton we have when train on agentic traces with a transformer ]
 
-In the previous section we showed how a partially observable dynamical system can be decomposed into two stationary parts: a fixed environment and a parameterized agent. Now let's develop an intuition for what can be learned from data generated by that process. Assume the agent has converged to a stationary policy and we can sample a large dataset of agentic traces $Z=\{z_1,\ldots,z_T\}$ with turns $z_t=(a_t,o_t)$. The question is simple: what is the informational relationship between the generator's hidden states $(s_t,\hat s_t)$ that produced a given $z_t$ and the internal state $h_{\theta_G}(z_{<t})$ of a strong autoregressive predictor $G(\hat z_t\mid z_{<t};\theta_G)$?
-
-There are two standard ways to model hidden stochastic processes.
-
-**Belief over latent state.** We put a probabilistic model on the world and filter observations into a belief over the joint latent state
-
-$$
-b_t(s,\hat{s})=P(s_t=s,\hat{s}_{t}=\hat{s}\mid a_{1:t},o_{1:t})
-$$
-
-After a new turn $(a_{t+1},o_{t+1})$ the belief updates with Bayes: 
-
-$$
- b_{t+1}(s',\hat{s}') \propto \sum_{s,\hat{s}} b_t(s,\hat{s})\,\pi(a_{t+1}\mid \hat{s})\,P(o_{t+1}\mid s,a_{t+1})\,P(s'\mid s,a_{t+1},o_{t+1})\,\mathcal{M}(\hat{s}'\mid \hat{s},a_{t+1},o_{t+1})
-$$
-
-Under our setup the environment update is unifilar at the turn scale. Once $(s_t,a_{t+1},o_{t+1})$ are fixed, the next environment state $s_{t+1}$ is unique almost surely. This gives synchronization: as turns accumulate, the belief concentrates along the causal branches consistent with the observations for both the environment and agent states.
-
-**Predictive state from data.** We can skip latent variables and learn a predictive state representation $q_t$ that summarizes the history by what it implies for future observations under future actions. For finite horizons $k$,
-
-$$
-P(o_{t+1:t+k}\mid a_{t+1:t+k}, z_{\le t}) = P(o_{t+1:t+k}\mid a_{t+1:t+k}, q_t)
-$$
-
-In practice it is enough to match the one step case and update $q_{t+1}$ deterministically from $(q_t,a_{t+1},o_{t+1})$. This is the world model view trained by next observation prediction.
-
-These two views meet at the minimal predictive presentation. Among optimal nonlinear predictors of a stationary process, the $\varepsilon$-machine (and with inputs, the $\varepsilon$-transducer) collects histories that induce the same conditional futures into the same causal state. In the finite-state stationary case we care about, and under unifilarity, the history-based predictor is equivalent to a minimal unifilar generator. So the smallest sufficient predictive state you can build from data coincides with the smallest unifilar presentation of the turn process.
 
 What does a strong autoregressive model have to encode to predict our traces. Recall the emission decomposition
 
@@ -316,6 +416,11 @@ $$
 
 The internal state right after emitting $a_{t+1}$ is a sufficient statistic of the agent side $\hat s_t$ for the purpose of the policy. The internal state right after receiving $o_{t+1}$ is a sufficient statistic of the environment branch $s_{t+1}$ for the purpose of predicting the next observation. This boundary effect also explains a mild separability we observe in practice. A single shared head can support both factors, but the logits factor by conditioning order: action logits depend mostly on the agent slice of the predictive state, observation logits condition further on the realized action and align with the environment slice. That is the concrete story of what a transformer trained on these sequences has learned. It has learned a predictive state that simultaneously supports an action policy and a world model at the level of turns, and it updates that state at the two natural boundaries of the turn, first at action time and then at observation time.
 
+
+### Empirical Section
+[todo: There will be training of transformer on pythia data  tiger problems and probes towards hidden state as well as reinforcement learning experimetnts starting from random, pretrained-frozen, pretraiend fionetuned models. We should be able to show that we can easily reach optimal behavior from pretrained world models and optimal wolrd models from pretrained policies.
+Status: alll experiments done with pythia]
+ 
 
 ### Transformers as Sufficient Approximator
 
