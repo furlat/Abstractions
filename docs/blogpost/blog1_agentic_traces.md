@@ -30,7 +30,7 @@ After a hopefully solid empirical introduction we will formalize the problem in 
 
 ### Learning to Please the Gods Studying a Drunken Pythia
 
-We start with a light-weight toy example inspired by the identity-not channel in computational mechanics. In the channel there are two modes. In the identity mode the output matches the input. In the not mode the output flips the input. The mode itself toggles every turn. The agent chooses the input each turn, so the evolution is controlled in the simple sense that what happens next depends both on the hidden mode and on the agent’s current act. 
+We start with a lightweight toy example inspired by the identity-not channel in computational mechanics. In the channel there are two modes. In the identity mode the output matches the input. In the not mode the output flips the input. The mode itself toggles every turn. The agent chooses the input each turn, so the evolution is controlled in the simple sense that what happens next depends both on the hidden mode and on the agent's current act.
 
 <img src="shrine_gif_8mb.gif"
      alt="shrine"
@@ -40,11 +40,7 @@ We start with a light-weight toy example inspired by the identity-not channel in
 *On a mountain there is a shrine to two gods, one loyal and one a trickster. The statue has two plates, one marked offering and one marked nothing, and an omen returned after each turn is the only public signal of which god currently guards the shrine. The loyal god returns offering with blessing and nothing with curse, while the trickster returns nothing with blessing and offering with curse; after each turn the satisfied guardian departs and the other takes the watch. An old and drunken pythia serves the shrine by choosing between offering and nothing at random. She has done this for decades and still does not understand the pattern. To make matters worse, after one hundred turns the gods go on vacation for a week, the shrine falls silent, and when it returns it simply begins glowing again, ready for offering, and there is no way to know which guardian has come back to the post.
 She no longer knows whether blessing means the loyal god who mirrors the act or the trickster who inverts it, so she gave up trying to reason it out. We study the problem from the perspective of her disciple, who has observed this behavior for years and will soon take over. She wants to please the gods as well as possible and asks what can be inferred from the drunken policy to recover the correct strategy.*
 
-
-
-
-
-We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t$ the act (offering or nothing) and $o_t$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
+We use the shrine as a toy environment. Each turn is a pair $z_t = (a_t, o_t)$ with $a_t \in \{0,1\}$ the act (offering or nothing) and $o_t \in \{0,1\}$ the omen (blessing or curse). The shrine has a hidden two-mode state $s_t \in \{0,1\}$, read as loyal versus trickster. Saying the update is controlled means the next omen is produced from the current act together with the current guardian, and the guardian for the next turn is determined by what just happened. In compact form,
 
 $$
 s_t = \mathbb{1}[a_{t-1} = o_{t-1}], \qquad o_t = a_t \oplus s_t.
@@ -54,14 +50,156 @@ Here $s_t=0$ is loyal and $s_t=1$ is trickster, so $o_t=a_t$ under loyal and $o_
 
 Inputs alone do not suffice and outputs alone do not suffice. The joint pair $(a_{t-1}, o_{t-1})$ fixes the mode for the step, and once the turn $(a_t, o_t)$ is realized the environment updates unifilarly. This matches the agentic trace view above. The agent proposes $a_t$. The shrine emits $o_t$ given $s_t$ and $a_t$. The minimal predictive latent the model must carry is the phase $s_t$.
 
-To keep runs independent we add a renewal. After one hundred turns the gods leave for a week and the shrine falls silent. When the shrine restarts it simply begins glowing again, ready for offering, and the guarding mode is drawn as $s_0 \sim \text{Bernoulli}(1/2)$. That draw sets the phase for the new epoch. Within an epoch the one step joint history $(a_{t-1}, o_{t-1})$ together with the current act is sufficient to predict $o_t$ and to update $s_t$.
+To keep runs independent we add a renewal. After one hundred turns the gods leave for a week and the shrine falls silent. When the shrine restarts it simply begins glowing again, ready for offering, and the guarding mode is drawn as $s_0 \sim \text{Bernoulli}(1/2)$. That draw sets the phase for the new epoch. We can interpret the renewal as a reset of the environment, and study each epoch as an episode in the RL sense associating positive rewards to blessings and negative rewards to curses. Within an epoch the one-step joint history $(a_{t-1}, o_{t-1})$ together with the current act is sufficient to predict $o_t$ and to update the belief about the phase $s_t$. Because the state updates deterministically this is enough for the agent's belief to remain synchronized with the environment for the duration of the epoch.
+
+When the dynamics are considered at the episode level it is easy to understand the synchronizable nature of the environment for all subsequences of action-observation pairs of length greater than one. At the beginning of each epoch the agent is completely uncertain about the phase $s_0$, but after processing a single turn $z_1$ the belief immediately converges to the correct generator value. To see this concretely we write out the generative model and trace how beliefs evolve.
+
+The emission kernel is deterministic given state and action:
+
+$$
+P(o_t \mid s_t, a_t) = \mathbb{1}[o_t = a_t \oplus s_t]
+$$
+
+and the transition kernel is deterministic, the state simply alternates:
+
+$$
+P(s_{t+1} \mid s_t) = \mathbb{1}[s_{t+1} = 1 - s_t]
+$$
+
+Let $b_t = P(s_t = 0 \mid z_{1:t})$ denote the agent's belief that the loyal god is guarding. At the start of an epoch no observations have been made, so $b_0 = 1/2$. After observing a turn $(a_1, o_1)$ the belief updates by Bayes. Since the emission is deterministic, observing $a_1 = o_1$ is only possible under the loyal god, and observing $a_1 \neq o_1$ is only possible under the trickster. In either case the posterior is zero or one. A single turn is enough to synchronize, and thereafter the belief depends only on the most recent turn.
+
+The following table enumerates all possible observation histories of length at most one, their associated beliefs, the entropy of the belief $H(b_t) = -b_t \log_2 b_t - (1-b_t) \log_2 (1-b_t)$ measuring the agent's uncertainty, the expected reward for each action, and the predictive probabilities of blessing ($o_{t+1} = 0$) conditional on each action. Let $R(\text{blessing}) = +1$ and $R(\text{curse}) = -1$.
+
+| $(a_t, o_t)$ | $b_{t+1}$ | $H(b_{t+1})$ | $\mathbb{E}[R \mid a{=}0]$ | $\mathbb{E}[R \mid a{=}1]$ | $P(o{=}0 \mid a{=}0)$ | $P(o{=}0 \mid a{=}1)$ |
+|--------------|-----------|--------------|---------------------------|---------------------------|----------------------|----------------------|
+| $\emptyset$ (start) | $1/2$ | $1$ | $0$ | $0$ | $1/2$ | $1/2$ |
+| $(0, 0)$ | $1$ | $0$ | $+1$ | $-1$ | $1$ | $0$ |
+| $(1, 1)$ | $1$ | $0$ | $+1$ | $-1$ | $1$ | $0$ |
+| $(0, 1)$ | $0$ | $0$ | $-1$ | $+1$ | $0$ | $1$ |
+| $(1, 0)$ | $0$ | $0$ | $-1$ | $+1$ | $0$ | $1$ |
+
+The table makes visible that all histories partition into exactly three equivalence classes based on their predictive content. The first class contains only the empty history at epoch start with maximum uncertainty. The second class contains the two turns where act equals omen, $(0,0)$ and $(1,1)$, corresponding to the loyal god now guarding with zero uncertainty. The third class contains the two turns where act differs from omen, $(0,1)$ and $(1,0)$, corresponding to the trickster with zero uncertainty. The last two columns show the predictive state representation: the probability of blessing under each action. These predictive probabilities cluster into the same three classes as the beliefs, $(1/2, 1/2)$, $(1, 0)$, and $(0, 1)$, which is no coincidence. In a synchronizable environment the belief process and the predictive state process are informationally equivalent.
+
+Once synchronized the optimal policy is trivial: always offer when $b = 1$ (loyal), always nothing when $b = 0$ (trickster). At $b = 1/2$ both actions have zero expected reward, so the first turn is a coin flip that reveals the phase. The disciple studying the pythia's notebook has enough information to recover these equivalence classes and, from them, the optimal policy.
 
 ### My Years as a Drop-Rate Analyst in the Tiger Gacha Dungeon
+
+The second problem we are going to use is the Tiger Problem from Cassandra et al (1994). The state dynamics are even simpler than in the shrine problem since the state is fixed for the duration of the episode, but due to a noisy emission kernel the belief dynamics and their relationship to the expected reward are not trivial at all.
 
 ![alt text](eye_of_the_tiger.png)
 
 *In a dungeon there is a chamber with two identical doors. Behind one waits a tiger, behind the other a chest of gold. The tiger makes no sound and the doors give no indication. An adventurer can press their ear to the stone and listen; the acoustics carry a faint hint of which side holds danger, though the echo misleads roughly one time in six. Listening costs torchlight and time. Opening a door ends the expedition, gold meaning triumph and tiger meaning the evident alternative.
 A young bag-carrier has spent years hauling equipment through this chamber, watching adventurers make their choices. Some were reckless and opened a door on instinct. Some were cautious, listening several times before committing. A few seemed to know exactly when they had heard enough. She wrote down every action and every outcome in a worn notebook. After enough expeditions she no longer carries bags. She sits at the dungeon's entrance and advises those who ask. The question we study is what structure in her notebook could support such advice, and whether a model trained on these varied records could learn when to listen and when to act.*
+
+Each turn is a pair $z_t = (a_t, o_t)$ with $a_t \in \{\text{listen}, \text{open-left}, \text{open-right}\}$ the action and $o_t$ the observation. When listening the observation is a noisy hint $o_t \in \{\text{hear-left}, \text{hear-right}\}$. When opening a door the observation is terminal $o_t \in \{\text{gold}, \text{tiger}\}$ and the episode ends. The chamber has a hidden state $s \in \{L, R\}$ indicating which door conceals the tiger, drawn uniformly at the start of each episode and fixed for its duration.
+
+The emission kernel for listening is noisy. The acoustics report the correct side with probability $p = 0.85$:
+
+$$
+P(o_t = \text{hear-left} \mid s = L, a_t = \text{listen}) = 0.85, \qquad P(o_t = \text{hear-left} \mid s = R, a_t = \text{listen}) = 0.15
+$$
+
+and symmetrically for hear-right. Opening a door is deterministic: if the tiger is behind the chosen door the adventurer meets the tiger, otherwise gold.
+
+$$
+P(o_t = \text{tiger} \mid s, a_t = \text{open-}d) = \mathbb{1}[s = d], \qquad P(o_t = \text{gold} \mid s, a_t = \text{open-}d) = \mathbb{1}[s \neq d]
+$$
+
+The transition kernel is trivial since the state never changes:
+
+$$
+P(s_{t+1} \mid s_t) = \mathbb{1}[s_{t+1} = s_t]
+$$
+
+The reward structure encodes the cost of information and the asymmetry between success and failure. Each listen costs $-1$ in torchlight and time. Opening the correct door yields $+10$ gold. Opening the tiger's door yields $-100$ in the evident consequences. Episodes last at most $L_{\max} = 10$ turns; if the adventurer has not opened a door by then the expedition ends with the accumulated listening cost.
+
+The key difference from the shrine is that no finite history can reveal the hidden state with certainty. Each listen provides evidence but the noise ensures that $P(s \mid z_{1:t})$ never reaches zero or one. The agent cannot synchronize with the environment before the episode ends. Instead it must maintain a belief distribution over states and decide when the accumulated evidence justifies the risk of acting. This is an optimal stopping problem: gather information until the expected value of opening exceeds the expected value of listening further, accounting for the cost of each additional observation.
+
+The pathological simplicity of this example and the finite episode length allow for a closed-form exploration of the belief space. Since opening a door is always terminal, the space of possible action sequences is small: any valid sequence consists of zero or more listens followed by a terminal action. For $x$ listens before acting, the number of distinct observation sequences is $2^x$, corresponding to the possible combinations of hear-left and hear-right. The total number of distinct histories up to length $L_{\max}$ is therefore $\sum_{x=0}^{L_{\max}} 2^x = 2^{L_{\max}+1} - 1$.
+
+For each observation sequence we can compute the posterior belief over states using Bayes' rule. Let $k$ denote the number of hear-left observations in a sequence of length $x$. The belief that the tiger is on the left is:
+
+$$
+b(L) = P(s = L \mid k, x) = \frac{p^k (1-p)^{x-k}}{p^k (1-p)^{x-k} + (1-p)^k p^{x-k}}
+$$
+
+Notice that the belief depends only on the count $k$, not on the order of observations. This means many distinct sequences map to the same belief, giving rise to a finite set of belief states at each depth. The number of distinct beliefs after $x$ listens is $x + 1$, corresponding to $k \in \{0, 1, \ldots, x\}$.
+
+Given a belief $b(L)$, the expected reward of opening each door is:
+
+$$
+\mathbb{E}[R \mid \text{open-right}] = b(L) \cdot 10 + b(R) \cdot (-100) = 110 \cdot b(L) - 100
+$$
+$$
+\mathbb{E}[R \mid \text{open-left}] = b(L) \cdot (-100) + b(R) \cdot 10 = -110 \cdot b(L) + 10
+$$
+
+A rational agent chooses the door with higher expected reward. When $b(L) > 0.5$ the agent opens the right door (tiger likely on left), and when $b(L) < 0.5$ the agent opens the left door. At $b(L) = 0.5$ both actions yield the same catastrophic expected reward of $-45$.
+
+The following table enumerates all observation sequences up to length 3, showing how beliefs and expected rewards evolve with evidence:
+
+| $x$ | seq | $P(\text{seq})$ | $P(\text{seq} \mid L)$ | $P(\text{seq} \mid R)$ | $b(L)$ | $b(R)$ | $H(b)$ | $\mathbb{E}[R \mid \text{argmax}]$ | $\mathbb{E}[R \mid \text{total}]$ |
+|-----|-----|-----------------|------------------------|------------------------|--------|--------|--------|-----------------------------------|-----------------------------------|
+| 0 | $\emptyset$ | — | — | — | 0.500 | 0.500 | 1.000 | -45.0 | -45.0 |
+| 1 | L | 0.500 | 0.850 | 0.150 | 0.850 | 0.150 | 0.610 | -6.5 | -7.5 |
+| 1 | R | 0.500 | 0.150 | 0.850 | 0.150 | 0.850 | 0.610 | -6.5 | -7.5 |
+| 2 | LL | 0.372 | 0.722 | 0.022 | 0.970 | 0.030 | 0.195 | +6.7 | +4.7 |
+| 2 | LR | 0.128 | 0.128 | 0.128 | 0.500 | 0.500 | 1.000 | -45.0 | -47.0 |
+| 2 | RL | 0.128 | 0.128 | 0.128 | 0.500 | 0.500 | 1.000 | -45.0 | -47.0 |
+| 2 | RR | 0.372 | 0.022 | 0.722 | 0.030 | 0.970 | 0.195 | +6.7 | +4.7 |
+| 3 | LLL | 0.309 | 0.614 | 0.003 | 0.995 | 0.005 | 0.049 | +9.4 | +6.4 |
+| 3 | LLR | 0.064 | 0.108 | 0.019 | 0.850 | 0.150 | 0.610 | -6.5 | -9.5 |
+| 3 | LRL | 0.064 | 0.108 | 0.019 | 0.850 | 0.150 | 0.610 | -6.5 | -9.5 |
+| 3 | LRR | 0.064 | 0.019 | 0.108 | 0.150 | 0.850 | 0.610 | -6.5 | -9.5 |
+| 3 | RLL | 0.064 | 0.108 | 0.019 | 0.850 | 0.150 | 0.610 | -6.5 | -9.5 |
+| 3 | RLR | 0.064 | 0.019 | 0.108 | 0.150 | 0.850 | 0.610 | -6.5 | -9.5 |
+| 3 | RRL | 0.064 | 0.019 | 0.108 | 0.150 | 0.850 | 0.610 | -6.5 | -9.5 |
+| 3 | RRR | 0.309 | 0.003 | 0.614 | 0.005 | 0.995 | 0.049 | +9.4 | +6.4 |
+
+Several patterns emerge from the table. First, sequences with equal counts of L and R (such as LR and RL at $x=2$) return the belief to $0.5$, yielding the worst possible expected reward. Second, the belief after $x$ listens with $k$ hear-lefts equals the belief after 1 listen when the net evidence $2k - x$ equals $\pm 1$. For instance, LLR and LRL at $x=3$ both give $b(L) = 0.85$, matching the belief after a single L at $x=1$. Third, the most likely sequences are the consistent ones (LLL, RRR) because they align with one state being true.
+
+Now that we have developed an intuition for how the number of listens influences the distribution over beliefs, we can evaluate different policies for this environment. The simplest approach is a fixed-length policy that listens for exactly $x$ steps and then opens the door favored by the current belief.
+
+| $L_{max}$ | Card($L_{max}$) | Card($\leq L_{max}$) | $\mathbb{E}[R \mid \text{act}]$ | Listen cost | $\mathbb{E}[R \mid \text{policy}]$ | $\mathbb{E}[R \mid \text{tiebreak}]$ | $\mathbb{E}[\text{steps}]$ |
+|-----|-----------------|----------------------|--------------------------------|-------------|-----------------------------------|--------------------------------------|----------------------------|
+| 0 | 1 | 1 | -45.00 | 0 | -45.00 | - | - |
+| 1 | 2 | 3 | -6.50 | -1 | -7.50 | - | - |
+| 2 | 3 | 5 | -6.50 | -2 | -8.50 | +1.06 | 2.25 |
+| 3 | 4 | 7 | +3.32 | -3 | +0.32 | - | - |
+| 4 | 5 | 9 | +3.32 | -4 | -0.68 | +2.98 | 4.10 |
+| 5 | 6 | 11 | +7.07 | -5 | +2.07 | - | - |
+| 6 | 7 | 13 | +7.07 | -6 | +1.07 | +2.63 | 6.04 |
+| 7 | 8 | 15 | +8.67 | -7 | +1.67 | - | - |
+| 8 | 9 | 17 | +8.67 | -8 | +0.67 | +1.36 | 8.02 |
+| 9 | 10 | 19 | +9.38 | -9 | +0.38 | - | - |
+| 10 | 11 | 21 | +9.38 | -10 | -0.62 | - | - |
+
+The column $|\mathcal{B}_x|$ shows the number of distinct beliefs reachable after exactly $x$ listens, and $|\mathcal{B}_{\leq x}|$ shows the cumulative count. The fixed-length policy trades higher listening costs for more information, but counterintuitively we see sharp drops in expected reward at even values of $x$. This happens because even-length sequences can produce perfectly contradictory evidence (LR, LLRR, etc.) that resets the belief to $0.5$, triggering the catastrophic $-45$ expected reward.
+
+The tiebreak columns show a simple modification: if the belief lands exactly at $0.5$, listen once more before acting. This adaptive policy dramatically improves performance at even $x$, with the best tiebreak policy at $x=4$ achieving $\mathbb{E}[R] = +2.98$ compared to the best fixed policy at $x=5$ with $\mathbb{E}[R] = +2.07$. The improvement comes from avoiding the $-45$ trap at the cost of an occasional extra listen.
+
+An interesting consequence of this enumeration is that although beliefs are continuous in principle, the finite observation structure induces a countable set of reachable beliefs. At each depth $x$ there are exactly $x+1$ distinct belief values, corresponding to the possible net evidence levels. This discretization means we can think of the agent as navigating a finite belief-MDP even though the underlying environment is non-synchronizable.
+
+Driven by this observation, we can ask how a variable-length policy based on reaching a specific confidence threshold would perform. Instead of committing to a fixed number of listens, the agent listens until $\max(b(L), b(R)) \geq \theta$ and then acts, with a fallback to forced action at $L_{\max}$ if the threshold is never reached.
+
+| Threshold | $\mathbb{E}[R]$ | $\mathbb{E}[\text{steps}]$ | $P(\text{timeout})$ |
+|-----------|-----------------|----------------------------|---------------------|
+| 0.5000 | -45.00 | 0.00 | 0.0000 |
+| 0.8500 | -7.50 | 1.00 | 0.0000 |
+| 0.9698 | +3.94 | 2.68 | 0.0011 |
+| 0.9945 | +4.87 | 4.19 | 0.0214 |
+| 0.9990 | +3.89 | 5.47 | 0.1290 |
+
+The threshold policy achieves substantially higher expected reward than any fixed-length policy. The best threshold ($\theta = 0.9945$, corresponding to three consistent observations) yields $\mathbb{E}[R] = +4.87$, more than double the best fixed policy. The gain comes from adapting the stopping time to the actual evidence: consistent sequences stop early, while contradictory sequences continue gathering information rather than acting on ambiguous beliefs.
+
+The plot shows the cumulative probability of reaching each confidence threshold by step $x$. Lower thresholds (0.85, 0.97) are reached quickly and with high probability. Higher thresholds (0.999, 0.9998) require more steps and may not be reached within the episode limit, leading to timeouts where the agent is forced to act on insufficient evidence. The optimal threshold balances the benefit of higher confidence against the cost of additional listening and the risk of timeout.
+
+![CDF: Probability of Reaching Belief Threshold by Step x](tiger_cdf_proper.png)
+
+The core tension in this environment is now clear. The agent cannot synchronize with the hidden state, so it must reason about its uncertainty. But the belief space is structured: only certain confidence levels are reachable, and the transitions between them follow deterministic rules given the observation. An optimal policy exploits this structure by conditioning its stopping decision on the current belief rather than on a fixed schedule. The bag-carrier's notebook, if it contains traces from adventurers with varied strategies, encodes exactly this belief structure. A model trained on such traces would need to learn the mapping from observation histories to beliefs and from beliefs to optimal stopping decisions.
+
+
+
 
 ### Empirical Section
 There will be training of transformer on pythia data and probes towards hidden state as well as reinforcement learning experimetnts starting from random, pretrained-frozen, pretraiend fionetuned models. We should be able to show that we can easily reach optimal behavior from this simple setup. 

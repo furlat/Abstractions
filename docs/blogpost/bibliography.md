@@ -44,6 +44,8 @@ https://arxiv.org/abs/1906.10184
 
 https://arxiv.org/abs/1906.10437
 
+https://www.learner.org/wp-content/uploads/2019/02/7.UnderstandingRubrics.pdf
+
 https://arxiv.org/abs/1912.03553
 
 https://www.cs.cmu.edu/~ggordon/jpineau-ggordon-thrun.ijcai03.pdf
