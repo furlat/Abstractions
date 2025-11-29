@@ -81,6 +81,7 @@ https://arxiv.org/abs/2502.21217
 
 https://arxiv.org/abs/2509.08785
 
+https://arxiv.org/pdf/2511.08892
 https://arxiv.org/abs/2510.09312
 
 https://arxiv.org/abs/2510.11686
@@ -92,6 +93,8 @@ https://arxiv.org/abs/2511.05963
 https://arxiv.org/abs/2511.00617
 
 https://arxiv.org/abs/2511.07378
+
+https://arxiv.org/abs/2511.08892
 
 https://david-abel.github.io/plasticity.pdf
 
@@ -114,5 +117,14 @@ https://arxiv.org/abs/2506.02923
 
 https://openreview.net/pdf?id=u5enPCwaLt
 
+https://openreview.net/pdf?id=qRyteMTgn0
 
 props-llm.github.io
+
+https://blog.ml.cmu.edu/2025/11/26/how-to-explore-to-scale-rl-training-of-llms-on-hard-problems/
+
+https://openreview.net/pdf?id=qaHrpITIvB
+
+https://arxiv.org/abs/2511.17879
+
+https://hazyresearch.stanford.edu/static/posts/2025-11-28-mlps/FactStoringMLPs.pdf
