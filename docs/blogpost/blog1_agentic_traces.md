@@ -378,10 +378,10 @@ Driven by this observation, we can ask how a variable-length policy based on rea
 | Threshold | $\mathbb{E}[R]$ | $\mathbb{E}[\text{steps}]$ | $P(\text{timeout})$ |
 |-----------|-----------------|----------------------------|---------------------|
 | 0.5000 | -45.00 | 0.00 | 0.0000 |
-| 0.8500 | -7.50 | 1.00 | 0.0000 |
-| 0.9698 | +3.94 | 2.68 | 0.0011 |
-| 0.9945 | +4.87 | 4.19 | 0.0214 |
-| 0.9990 | +3.89 | 5.47 | 0.1290 |
+| 0.8500 | -7.50 | 2.00 | 0.0000 |
+| 0.9698 | +3.94 | 3.68 | 0.0011 |
+| 0.9945 | +4.87 | 5.19 | 0.0214 |
+| 0.9990 | +3.89 | 6.47 | 0.1290 |
 
 The threshold policy achieves substantially higher expected reward than any fixed-length policy. The best threshold ($\theta = 0.9945$, corresponding to three consistent observations) yields $\mathbb{E}[R] = +4.87$, more than double the best fixed policy. The gain comes from adapting the stopping time to the actual evidence: consistent sequences stop early, while contradictory sequences continue gathering information rather than acting on ambiguous beliefs.
 
