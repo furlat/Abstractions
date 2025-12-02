@@ -3,9 +3,13 @@ https://onlinelibrary.wiley.com/doi/abs/10.1002/qua.560090854
 https://firstlaw.wordpress.com/wp-content/uploads/2011/10/goodregulator.pdf
 
 https://www.jstor.org/stable/168926
+
 https://people.cs.umass.edu/~barto/courses/cs687/Cassandra-etal-POMDP.pdf [benchmarks for tiger experiment]
+
 https://www.jstor.org/stable/169635
+
 https://cdn.aaai.org/AAAI/1994/AAAI94-157.pdf
+
 https://people.csail.mit.edu/lpk/papers/aij98-pomdp.pdf
 
 https://arxiv.org/abs/cond-mat/9901352
@@ -54,6 +58,8 @@ https://icaps20subpages.icaps-conference.org/wp-content/uploads/2020/10/14-PlanR
 
 https://arxiv.org/abs/2005.08935
 
+https://arxiv.org/abs/2109.03939?utm_source=chatgpt.com
+
 https://arxiv.org/abs/2207.10342
 
 https://arxiv.org/abs/2303.11366
@@ -71,17 +77,26 @@ https://proceedings.neurips.cc/paper_files/paper/2022/file/80b7bec60081f95d90097
 
 https://arxiv.org/abs/2407.10583
 
+https://arxiv.org/abs/2410.04368
+
 https://arxiv.org/abs/2410.06045
+
+https://arxiv.org/abs/2410.17517
+
 
 https://arxiv.org/abs/2503.00511
 
 https://arxiv.org/abs/2410.23506
 
 https://arxiv.org/abs/2502.21217
-
+https://arxiv.org/abs/2504.02732
+https://arxiv.org/abs/2506.01622
 https://arxiv.org/abs/2509.08785
 
+https://arxiv.org/abs/2505.06708
+
 https://arxiv.org/pdf/2511.08892
+
 https://arxiv.org/abs/2510.09312
 
 https://arxiv.org/abs/2510.11686
@@ -107,11 +122,7 @@ https://ojs.aaai.org/index.php/AAAI/article/download/26790/26562
 https://colah.github.io/posts/2015-09-Visual-Information/
 
 
-https://arxiv.org/abs/2506.01622
-
-https://proceedings.neurips.cc/paper/2021/file/
-
-c71df24045cfddab4a963d3ac9bdc9a3-Paper.pdf   
+https://proceedings.neurips.cc/paper/2021/file/c71df24045cfddab4a963d3ac9bdc9a3-Paper.pdf   
 
 https://arxiv.org/abs/2506.02923
 
@@ -119,7 +130,7 @@ https://openreview.net/pdf?id=u5enPCwaLt
 
 https://openreview.net/pdf?id=qRyteMTgn0
 
-props-llm.github.io
+https://props-llm.github.io
 
 https://blog.ml.cmu.edu/2025/11/26/how-to-explore-to-scale-rl-training-of-llms-on-hard-problems/
 
@@ -128,3 +139,7 @@ https://openreview.net/pdf?id=qaHrpITIvB
 https://arxiv.org/abs/2511.17879
 
 https://hazyresearch.stanford.edu/static/posts/2025-11-28-mlps/FactStoringMLPs.pdf
+
+https://arxiv.org/abs/2511.16997
+
+https://arxiv.org/abs/2511.21689
