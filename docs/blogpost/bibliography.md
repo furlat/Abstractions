@@ -143,3 +143,15 @@ https://hazyresearch.stanford.edu/static/posts/2025-11-28-mlps/FactStoringMLPs.p
 https://arxiv.org/abs/2511.16997
 
 https://arxiv.org/abs/2511.21689
+
+
+https://developers.openai.com/blog/responses-api
+
+https://openreview.net/pdf/25a90e713fc46deded4551da4389bae437fa428b.pdf
+
+https://openreview.net/pdf/6e3e28bb12ed15998e2dca8745e443428dcd8ba0.pdf
+
+https://proceedings.neurips.cc/paper_files/paper/2022/file/51053d7b8473df7d5a2165b2a8ee9629-Paper-Conference.pdf
+
+
+https://arxiv.org/abs/2511.07919
