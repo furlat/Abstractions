@@ -2,6 +2,8 @@ https://onlinelibrary.wiley.com/doi/abs/10.1002/qua.560090854
 
 https://firstlaw.wordpress.com/wp-content/uploads/2011/10/goodregulator.pdf
 
+https://wayback.archive-it.org/5456/20240920160117/https://www.eecs.harvard.edu/cs286r/courses/fall12/papers/McCarthy56.pdf
+
 https://www.jstor.org/stable/168926
 
 https://people.cs.umass.edu/~barto/courses/cs687/Cassandra-etal-POMDP.pdf [benchmarks for tiger experiment]
@@ -155,3 +157,43 @@ https://proceedings.neurips.cc/paper_files/paper/2022/file/51053d7b8473df7d5a216
 
 
 https://arxiv.org/abs/2511.07919
+
+https://www.nature.com/articles/s41586-024-08328-6.pdf
+
+https://arxiv.org/abs/2508.13113
+
+https://arxiv.org/abs/2512.00984
+
+https://arxiv.org/abs/2412.05265
+
+https://arxiv.org/abs/2512.03442
+
+https://blog.ionelmc.ro/2015/02/09/understanding-python-metaclasses/
+
+https://openreview.net/forum?id=8vWIXno8LW
+
+https://www.mdpi.com/1099-4300/23/1/79
+
+https://proceedings.neurips.cc/paper/2021/file/cf0d02ec99e61a64137b8a2c3b03e030-Paper.pdf
+
+https://proceedings.mlr.press/v48/steeg16.pdf
+
+https://arxiv.org/pdf/2303.06992
+
+https://arxiv.org/pdf/2302.03792    
+
+https://arxiv.org/pdf/2310.07972
+
+https://arxiv.org/pdf/2411.05855
+
+https://arxiv.org/pdf/2509.20609
+
+https://arxiv.org/abs/2511.03773
+
+https://worrydream.com/refs/Hamming_1997_-_The_Art_of_Doing_Science_and_Engineering.pdf
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC11377027/pdf/nihms-1961155.pdf
+
+https://arxiv.org/abs/2512.04220
+
+https://arxiv.org/abs/2505.13697
