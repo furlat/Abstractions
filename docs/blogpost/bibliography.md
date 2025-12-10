@@ -26,6 +26,10 @@ https://arxiv.org/abs/math/0703715
 
 https://www.alexwg.org/publications/PhysRevLett_110-168702.pdf
 
+https://arxiv.org/abs/0902.1209
+
+https://arxiv.org/abs/0905.3587
+
 https://arxiv.org/abs/1008.4182
 
 https://www.roboticsproceedings.org/rss04/p9.pdf
@@ -123,6 +127,7 @@ https://ojs.aaai.org/index.php/AAAI/article/download/26790/26562
 
 https://colah.github.io/posts/2015-09-Visual-Information/
 
+https://csc.ucdavis.edu/~cmg/papers/iacp.pdf
 
 https://proceedings.neurips.cc/paper/2021/file/c71df24045cfddab4a963d3ac9bdc9a3-Paper.pdf   
 
@@ -197,3 +202,68 @@ https://pmc.ncbi.nlm.nih.gov/articles/PMC11377027/pdf/nihms-1961155.pdf
 https://arxiv.org/abs/2512.04220
 
 https://arxiv.org/abs/2505.13697
+
+https://arxiv.org/abs/2506.04098
+
+https://arxiv.org/abs/2512.01775
+
+https://arxiv.org/abs/0906.5099
+
+https://arxiv.org/pdf/1309.3792
+
+https://arxiv.org/pdf/1108.1510
+
+https://arxiv.org/abs/1808.06723
+
+https://arxiv.org/abs/1610.07685
+
+https://link.springer.com/chapter/10.1007/978-3-642-02466-5_25
+
+https://csc.ucdavis.edu/~cmg/papers/gmc.pdf
+
+https://arxiv.org/abs/2510.02263
+
+https://arxiv.org/abs/2511.18538
+
+https://arxiv.org/abs/2510.14129
+
+https://redwood.berkeley.edu/wp-content/uploads/2020/08/Plate-HRR-IEEE-TransNN.pdf
+
+https://huggingface.co/papers/2512.01374
+
+https://arxiv.org/abs/2512.05962
+
+https://arxiv.org/abs/2511.04647
+
+https://arxiv.org/abs/2405.15943
+
+https://arxiv.org/abs/2504.04608
+
+https://arxiv.org/abs/2505.18373
+
+https://arxiv.org/abs/2502.01954
+
+https://arxiv.org/abs/1702.08565
+
+https://arxiv.org/abs/2512.05117
+
+https://www.alignmentforum.org/posts/xw8P8H4TRaTQHJnoP/reward-function-design-a-starter-pack
+
+
+https://www-users.cse.umn.edu/~olver/sm_/j.pdf
+
+https://transformer-circuits.pub/2021/framework/index.html
+
+https://arxiv.org/abs/1910.07663
+
+https://arxiv.org/abs/0902.0600
+
+https://arxiv.org/abs/2011.14821
+
+https://arxiv.org/abs/2410.19034
+
+https://arxiv.org/abs/1801.05420
+
+https://www.mdpi.com/1099-4300/23/1/127
+
+https://arxiv.org/abs/2509.22489
